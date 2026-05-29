@@ -6,7 +6,7 @@
 
 `say` (dire) + `know` (savoir) — dites-le, il comprendra.
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français** · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français** · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ Votre clé API OpenRouter est une donnée facturable, jamais stockée en clair :
 
 ## Licence
 
-[MIT](LICENSE) — voir le [README anglais](README.en.md) pour plus de détails
+[MIT](LICENSE) — voir le [README anglais](README.md) pour plus de détails

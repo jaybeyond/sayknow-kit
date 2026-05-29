@@ -6,7 +6,7 @@
 
 `say`(話す) + `know`(知る) — 言えばすぐに伝わる。
 
-[한국어](README.md) · [English](README.en.md) · **日本語** · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
+[한국어](README.ko.md) · [English](README.md) · **日本語** · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ OpenRouter API キーは課金が発生する認証情報のため、平文で�
 
 ## ライセンス
 
-[MIT](LICENSE) — 詳細は [English README](README.en.md) を参照
+[MIT](LICENSE) — 詳細は [English README](README.md) を参照

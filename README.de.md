@@ -6,7 +6,7 @@
 
 `say` (sagen) + `know` (wissen) — sag's, er versteht.
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · **Deutsch** · [Tiếng Việt](README.vi.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · **Deutsch** · [Tiếng Việt](README.vi.md)
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ Dein OpenRouter-Key ist abrechnungsrelevant — SayKnow speichert ihn nie im Kla
 
 ## Lizenz
 
-[MIT](LICENSE) — Details im [englischen README](README.en.md)
+[MIT](LICENSE) — Details im [englischen README](README.md)

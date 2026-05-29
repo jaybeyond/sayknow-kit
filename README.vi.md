@@ -6,7 +6,7 @@
 
 `say` (nói) + `know` (biết) — nói là hiểu.
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · **Tiếng Việt**
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · **Tiếng Việt**
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ Key OpenRouter là thông tin tính phí, SayKnow không bao giờ lưu plaintex
 
 ## Giấy phép
 
-[MIT](LICENSE) — chi tiết xem [README tiếng Anh](README.en.md)
+[MIT](LICENSE) — chi tiết xem [README tiếng Anh](README.md)

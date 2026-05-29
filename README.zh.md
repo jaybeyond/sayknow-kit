@@ -6,7 +6,7 @@
 
 `say`(说) + `know`(懂) — 一说就懂。
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md) · **中文** · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · **中文** · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ OpenRouter API 密钥涉及计费,SayKnow 不以明文存储:
 
 ## 许可
 
-[MIT](LICENSE) — 详情见 [English README](README.en.md)
+[MIT](LICENSE) — 详情见 [English README](README.md)

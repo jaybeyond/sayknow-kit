@@ -6,7 +6,7 @@
 
 `say` (decir) + `know` (saber) — díselo, lo entenderá al instante.
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md) · [中文](README.zh.md) · **Español** · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · **Español** · [Français](README.fr.md) · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
 
 [![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
@@ -106,4 +106,4 @@ La clave API es una credencial facturable, así que SayKnow nunca la guarda en t
 
 ## Licencia
 
-[MIT](LICENSE) — más detalles en el [README en inglés](README.en.md)
+[MIT](LICENSE) — más detalles en el [README en inglés](README.md)
