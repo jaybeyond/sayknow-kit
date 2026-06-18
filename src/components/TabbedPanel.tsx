@@ -1,14 +1,19 @@
 import { useState } from "react"
-import { Languages as TranslateIcon, MessageSquare } from "lucide-react"
+import {
+  Clipboard as ClipboardIcon,
+  Languages as TranslateIcon,
+  MessageSquare,
+} from "lucide-react"
 import { TranslatePanel } from "./TranslatePanel"
 import { ChatPanel } from "./ChatPanel"
+import { ClipboardPanel } from "./ClipboardPanel"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { useT } from "@/i18n"
 import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 
-type Tab = "translate" | "chat"
+type Tab = "translate" | "chat" | "clipboard"
 const TAB_KEY = "active-tab"
 
 type Props = {
@@ -24,10 +29,21 @@ export function TabbedPanel(props: Props) {
   const [tab, setTab] = useState<Tab>(
     () => (storage.get<Tab>(TAB_KEY) ?? "translate") as Tab,
   )
+  // Text the clipboard tab wants the translate tab to pick up. nonce changes
+  // every dispatch so identical text can be re-sent.
+  const [pendingTranslateInput, setPendingTranslateInput] = useState<{
+    text: string
+    nonce: number
+  } | null>(null)
 
   function selectTab(next: Tab) {
     setTab(next)
     storage.set(TAB_KEY, next)
+  }
+
+  function sendToTranslate(text: string) {
+    setPendingTranslateInput({ text, nonce: Date.now() })
+    selectTab("translate")
   }
 
   return (
@@ -49,14 +65,28 @@ export function TabbedPanel(props: Props) {
           label={t("tab.chat")}
           onClick={() => selectTab("chat")}
         />
+        <TabButton
+          active={tab === "clipboard"}
+          icon={ClipboardIcon}
+          label={t("tab.clipboard")}
+          onClick={() => selectTab("clipboard")}
+        />
       </div>
 
       {/* Active panel */}
       <div className="flex-1 overflow-hidden">
         {tab === "translate" ? (
-          <TranslatePanel {...props} />
-        ) : (
+          <TranslatePanel
+            {...props}
+            injectedInput={pendingTranslateInput ?? undefined}
+          />
+        ) : tab === "chat" ? (
           <ChatPanel settings={props.settings} update={props.update} />
+        ) : (
+          <ClipboardPanel
+            settings={props.settings}
+            onSendToTranslate={sendToTranslate}
+          />
         )}
       </div>
     </div>

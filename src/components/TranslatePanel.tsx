@@ -61,9 +61,15 @@ type Props = {
   onLogout?: () => void
   themeMode?: ThemeMode
   setThemeMode?: (m: ThemeMode) => void
+  /**
+   * Externally injected text — e.g. user clicked "send to translate" on a
+   * clipboard history entry. We use a nonce so re-injecting the same text
+   * still triggers the effect.
+   */
+  injectedInput?: { text: string; nonce: number }
 }
 
-export function TranslatePanel({ settings, update }: Props) {
+export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const { t } = useT(settings.uiLocale)
   const [input, setInput] = useState("")
   const [output, setOutput] = useState("")
@@ -121,6 +127,19 @@ export function TranslatePanel({ settings, update }: Props) {
       void unlisten.then((fn) => fn())
     }
   }, [settings.clipboardOnHotkey, input])
+
+  // Pull in text injected from the clipboard history tab. nonce changes even
+  // for identical text so the user can re-send the same entry repeatedly.
+  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!injectedInput) return
+    const text = injectedInput.text.trim()
+    if (!text) return
+    setInput(text)
+    setOutput("")
+    setError(null)
+  }, [injectedInput?.nonce])
+  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   function runTranslate(text: string) {
     const trimmed = text.trim()

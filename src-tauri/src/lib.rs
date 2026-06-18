@@ -1,3 +1,5 @@
+mod clipboard;
+
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -1187,7 +1189,17 @@ pub fn run() {
             start_ocp,
             stop_ocp,
             disconnect_ocp,
-            uninstall_ocp
+            uninstall_ocp,
+            clipboard::get_clipboard_history,
+            clipboard::set_clipboard_text,
+            clipboard::delete_clipboard_entry,
+            clipboard::toggle_clipboard_pin,
+            clipboard::set_clipboard_entry_note,
+            clipboard::clear_clipboard_history,
+            clipboard::wipe_clipboard_history,
+            clipboard::set_clipboard_capture,
+            clipboard::get_clipboard_capture,
+            clipboard::set_clipboard_max_entries
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");
@@ -1203,6 +1215,13 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Clipboard history capture. Polls the system pasteboard every
+            // 800ms and emits `clipboard:new` for fresh entries. Runs whether
+            // the popover is visible or not — that's the whole point.
+            let clipboard_handle = clipboard::ClipboardHandle::new();
+            app.manage(clipboard_handle.clone());
+            clipboard::spawn_poller(app.handle().clone(), clipboard_handle);
 
             // Tracks the last show() time so the focus-loss handler can ignore
             // the brief blur that fires while the window is being raised.
