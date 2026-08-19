@@ -91,7 +91,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "settings.about.repo": "GitHub",
     "settings.about.openrouter": "OpenRouter 설정",
     "settings.connection.apiKeyShown": "API 키는 macOS Keychain에 안전하게 저장되어 있습니다.",
-    "app.tagline": "메뉴바 AI 키트 — 번역 · 채팅 · 클립보드",
+    "app.tagline": "번역 · 채팅 · 클립보드를 메뉴바에서 한 번에",
     "login.title": "SayKnow Kit",
     "login.subtitle": "OpenRouter 키로 시작하기",
     "login.label": "OpenRouter API Key",
@@ -287,7 +287,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "settings.about.repo": "GitHub",
     "settings.about.openrouter": "OpenRouter dashboard",
     "settings.connection.apiKeyShown": "Your API key is stored safely in macOS Keychain.",
-    "app.tagline": "Menu bar AI kit — translate, chat, clipboard",
+    "app.tagline": "Translate, chat, and clipboard history from your menu bar",
     "login.title": "SayKnow Kit",
     "login.subtitle": "Get started with your OpenRouter key",
     "login.label": "OpenRouter API Key",
@@ -412,7 +412,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   ja: {
-    "app.tagline": "メニューバーのAIキット — 翻訳・チャット・クリップボード",
+    "app.tagline": "翻訳・チャット・クリップボードをメニューバーから",
     "login.title": "SayKnow Kit",
     "login.subtitle": "OpenRouterキーで開始",
     "login.label": "OpenRouter APIキー",
@@ -609,7 +609,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   zh: {
-    "app.tagline": "菜单栏 AI 工具包 — 翻译 · 聊天 · 剪贴板",
+    "app.tagline": "翻译、聊天、剪贴板,都在菜单栏里",
     "login.title": "SayKnow Kit",
     "login.subtitle": "用 OpenRouter 密钥开始",
     "login.label": "OpenRouter API 密钥",
@@ -806,7 +806,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   es: {
-    "app.tagline": "Kit de IA en la barra de menú — traducir, chatear, portapapeles",
+    "app.tagline": "Traducción, chat y portapapeles desde la barra de menú",
     "login.title": "SayKnow Kit",
     "login.subtitle": "Empieza con tu clave de OpenRouter",
     "login.label": "Clave API de OpenRouter",
@@ -1003,7 +1003,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   fr: {
-    "app.tagline": "Kit IA dans la barre de menu — traduction, chat, presse-papiers",
+    "app.tagline": "Traduction, chat et presse-papiers depuis la barre de menu",
     "login.title": "SayKnow Kit",
     "login.subtitle": "Démarrer avec votre clé OpenRouter",
     "login.label": "Clé API OpenRouter",
@@ -1200,7 +1200,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   de: {
-    "app.tagline": "KI-Kit in der Menüleiste — Übersetzen, Chat, Zwischenablage",
+    "app.tagline": "Übersetzen, Chat und Zwischenablage aus der Menüleiste",
     "login.title": "SayKnow Kit",
     "login.subtitle": "Mit deinem OpenRouter-Key starten",
     "login.label": "OpenRouter API-Key",
@@ -1397,7 +1397,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   vi: {
-    "app.tagline": "Bộ công cụ AI trên thanh menu — dịch, chat, clipboard",
+    "app.tagline": "Dịch, chat và clipboard ngay trên thanh menu",
     "login.title": "SayKnow Kit",
     "login.subtitle": "Bắt đầu với khóa OpenRouter",
     "login.label": "Khóa API OpenRouter",
