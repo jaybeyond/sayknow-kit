@@ -1,7 +1,7 @@
 [package]
 name = "sayknow"
 version = "0.2.0"
-description = "SayKnow — AI translator that lives in your menu bar"
+description = "SayKnow Kit — menu bar AI kit for translation, chat, and clipboard"
 authors = ["SayKnow"]
 license = ""
 repository = ""

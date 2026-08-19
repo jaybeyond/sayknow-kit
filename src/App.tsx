@@ -29,14 +29,17 @@ function MainRoot() {
   const pinnedRef = useRef(settings.pinned)
   pinnedRef.current = settings.pinned
 
-  // Push the resolved "Quit SayKnow" label to the native tray menu whenever
-  // the UI locale settles. The Rust default is English; this overrides it
-  // for users on any of the other 7 locales.
+  // Push the resolved "Quit SayKnow Kit" label and the tray tooltip to the native
+  // tray whenever the UI locale settles. The Rust side only bakes in a
+  // locale-neutral default; this localizes both for all 8 locales.
   useEffect(() => {
     if (!isTauri() || !loaded) return
     const label = t("tray.quit")
-    if (!label) return
-    void invoke("set_tray_quit_label", { label }).catch(() => {})
+    if (label) void invoke("set_tray_quit_label", { label }).catch(() => {})
+    const tagline = t("app.tagline")
+    if (tagline) {
+      void invoke("set_tray_tooltip", { tooltip: `SayKnow Kit — ${tagline}` }).catch(() => {})
+    }
   }, [t, loaded])
 
   useEffect(() => {

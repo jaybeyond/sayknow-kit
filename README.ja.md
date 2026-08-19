@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**メニューバーに住むAI翻訳 — 入力しながら翻訳します。**
+**メニューバーのAIキット — 翻訳・チャット・クリップボードを1つのポップオーバーに。**
 
 `say`(話す) + `know`(知る) — 言えばすぐに伝わる。
 
@@ -18,7 +18,7 @@
 
 ## 概要
 
-SayKnow は **macOS のメニューバー**に常駐する AI 翻訳ツールです。ショートカット一つでポップアップが開き、タイピングが止まると自動で翻訳します。翻訳サイトと行き来してコピペを繰り返す手間がなくなります。
+SayKnow Kit は **macOS のメニューバー**に常駐する AI キットです。ショートカット一つでポップオーバーが開き、毎日使う 3 つの道具がそこに揃っています — **翻訳**(タイピングが止まると自動実行)、**チャット**、**クリップボード履歴**。翻訳サイトと行き来してコピペを繰り返す手間がなくなります。
 
 **3 つのプロバイダー**(OpenRouter / OCP / Custom エンドポイント)を 1 つの画面から切り替えられます。OpenRouter 単体でも GPT-4o, Claude, Gemini, Llama など 360 種類以上のモデルをキー一つで利用可能。
 
@@ -56,18 +56,18 @@ SayKnow は **macOS のメニューバー**に常駐する AI 翻訳ツールで
 
 ### 方法 1 — DMG(推奨)
 
-1. [Releases](https://github.com/jaybeyond/sayknow_translate/releases) から `SayKnow_x.x.x_aarch64.dmg` をダウンロード
-2. DMG を開いて SayKnow.app を `/Applications` にドラッグ
+1. [Releases](https://github.com/jaybeyond/sayknow-kit/releases) から `SayKnow Kit_x.x.x_aarch64.dmg` をダウンロード
+2. DMG を開いて SayKnow Kit.app を `/Applications` にドラッグ
 3. コードサインなしのため、初回起動時に Gatekeeper がブロックしたら:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### 方法 2 — ソースからビルド
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```

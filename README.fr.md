@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**Traducteur IA dans la barre de menu — traduit pendant que vous tapez.**
+**Kit IA dans la barre de menu — traduction, chat et presse-papiers dans une seule fenêtre.**
 
 `say` (dire) + `know` (savoir) — dites-le, il comprendra.
 
@@ -18,7 +18,7 @@
 
 ## Aperçu
 
-SayKnow vit dans la **barre de menu macOS**. Un raccourci ouvre une petite fenêtre ; arrêtez de taper et la traduction s'affiche. Plus besoin de jongler entre onglets et copier-coller.
+SayKnow Kit vit dans la **barre de menu macOS**. Un raccourci ouvre une petite fenêtre contenant les trois outils du quotidien : **traduction** (déclenchée dès que vous arrêtez de taper), **chat** et **historique du presse-papiers**. Plus besoin de jongler entre onglets et copier-coller.
 
 **Trois fournisseurs** dans la même fenêtre (OpenRouter / OCP / endpoint personnalisé). OpenRouter seul donne déjà accès à plus de 360 modèles (GPT-4o, Claude, Gemini, Llama, ...) avec une unique clé.
 
@@ -56,18 +56,18 @@ SayKnow vit dans la **barre de menu macOS**. Un raccourci ouvre une petite fenê
 
 ### Option 1 — DMG (recommandé)
 
-1. Téléchargez `SayKnow_x.x.x_aarch64.dmg` depuis [Releases](https://github.com/jaybeyond/sayknow_translate/releases).
-2. Ouvrez le DMG, glissez SayKnow.app dans `/Applications`.
+1. Téléchargez `SayKnow Kit_x.x.x_aarch64.dmg` depuis [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+2. Ouvrez le DMG, glissez SayKnow Kit.app dans `/Applications`.
 3. Build non signée, Gatekeeper bloquera au premier lancement :
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### Option 2 — Build depuis les sources
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```

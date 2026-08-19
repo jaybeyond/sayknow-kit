@@ -68,9 +68,9 @@ jobs:
           # and uploads the platform artifacts to it. On workflow_dispatch (no tag),
           # it just builds and uploads to the workflow artifact storage.
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('SayKnow {0}', github.ref_name) || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('SayKnow Kit {0}', github.ref_name) || '' }}
           releaseBody: |
-            See [README](https://github.com/jaybeyond/sayknow_translate#readme) for usage.
+            See [README](https://github.com/jaybeyond/sayknow-kit#readme) for usage.
 
             ### Downloads
             - **macOS (Apple Silicon)**: `.dmg`
@@ -79,7 +79,7 @@ jobs:
             ### macOS first launch
             The build is unsigned. Either right-click → Open, or:
             ```bash
-            xattr -dr com.apple.quarantine /Applications/SayKnow.app
+            xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
             ```
           releaseDraft: true
           prerelease: false

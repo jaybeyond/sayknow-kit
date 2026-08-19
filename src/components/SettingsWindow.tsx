@@ -592,7 +592,7 @@ function AboutSection({ settings }: { settings: Settings }) {
             <LangIcon className="h-6 w-6" />
           </div>
           <div>
-            <div className="text-lg font-semibold">SayKnow</div>
+            <div className="text-lg font-semibold">SayKnow Kit</div>
             <div className="text-xs text-muted-foreground">
               {t("settings.about.version")} 0.1.0
             </div>
@@ -606,7 +606,7 @@ function AboutSection({ settings }: { settings: Settings }) {
       <div className="space-y-2">
         <button
           type="button"
-          onClick={() => openExternal("https://github.com/jaybeyond/sayknow_translate")}
+          onClick={() => openExternal("https://github.com/jaybeyond/sayknow-kit")}
           className="inline-flex items-center gap-1 text-sm text-foreground hover:text-foreground/80"
         >
           {t("settings.about.repo")}

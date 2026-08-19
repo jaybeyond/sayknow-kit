@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**KI-Übersetzer in der Menüleiste — übersetzt während du tippst.**
+**KI-Kit in der Menüleiste — Übersetzen, Chat und Zwischenablage in einem Popover.**
 
 `say` (sagen) + `know` (wissen) — sag's, er versteht.
 
@@ -18,7 +18,7 @@
 
 ## Übersicht
 
-SayKnow lebt in der **macOS-Menüleiste**. Ein Tastenkürzel öffnet ein kleines Fenster; sobald du aufhörst zu tippen, erscheint die Übersetzung. Kein Hin- und Herwechseln zwischen Tabs und Copy-Paste mehr.
+SayKnow Kit lebt in der **macOS-Menüleiste**. Ein Tastenkürzel öffnet ein kleines Fenster mit den drei Werkzeugen für den Alltag: **Übersetzen** (startet von selbst, sobald du aufhörst zu tippen), **Chat** und **Zwischenablage-Verlauf**. Kein Hin- und Herwechseln zwischen Tabs und Copy-Paste mehr.
 
 **Drei Anbieter** im selben Fenster (OpenRouter / OCP / Custom-Endpoint). Schon OpenRouter allein bringt Zugriff auf über 360 Modelle (GPT-4o, Claude, Gemini, Llama, ...) mit nur einem Schlüssel.
 
@@ -56,18 +56,18 @@ SayKnow lebt in der **macOS-Menüleiste**. Ein Tastenkürzel öffnet ein kleines
 
 ### Option 1 — Vorgefertigtes DMG (empfohlen)
 
-1. Lade `SayKnow_x.x.x_aarch64.dmg` von [Releases](https://github.com/jaybeyond/sayknow_translate/releases) herunter.
-2. DMG öffnen, SayKnow.app nach `/Applications` ziehen.
+1. Lade `SayKnow Kit_x.x.x_aarch64.dmg` von [Releases](https://github.com/jaybeyond/sayknow-kit/releases) herunter.
+2. DMG öffnen, SayKnow Kit.app nach `/Applications` ziehen.
 3. Da nicht signiert, blockiert Gatekeeper beim ersten Start:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### Option 2 — Aus dem Quellcode bauen
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```
@@ -98,7 +98,7 @@ pnpm tauri build
 
 ## Sicherheit
 
-Dein OpenRouter-Key ist abrechnungsrelevant — SayKnow speichert ihn nie im Klartext:
+Dein OpenRouter-Key ist abrechnungsrelevant — SayKnow Kit speichert ihn nie im Klartext:
 
 - macOS **Keychain** (`com.sayknow.app`)
 - AES-256-Verschlüsselung mit Schlüssel aus deinem macOS-Login-Passwort

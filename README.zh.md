@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**菜单栏 AI 翻译 — 边打字边翻译。**
+**菜单栏 AI 工具包 — 翻译、聊天、剪贴板集于一个弹窗。**
 
 `say`(说) + `know`(懂) — 一说就懂。
 
@@ -18,7 +18,7 @@
 
 ## 简介
 
-SayKnow 常驻 **macOS 菜单栏**。一个快捷键打开小窗口,停止输入后自动翻译,无需在翻译网站和当前应用间来回切换复制粘贴。
+SayKnow Kit 常驻 **macOS 菜单栏**。一个快捷键打开弹窗,里面是每天都会用到的三件工具 —— **翻译**(停止输入后自动执行)、**聊天**、**剪贴板历史**,无需在翻译网站和当前应用间来回切换复制粘贴。
 
 **三种提供商**(OpenRouter / OCP / 自定义端点)可在同一界面切换;仅 OpenRouter 即可一把密钥调用 GPT-4o、Claude、Gemini、Llama 等 360+ 模型。
 
@@ -56,18 +56,18 @@ SayKnow 常驻 **macOS 菜单栏**。一个快捷键打开小窗口,停止输入
 
 ### 方式 1 — 预编译 DMG(推荐)
 
-1. 从 [Releases](https://github.com/jaybeyond/sayknow_translate/releases) 下载 `SayKnow_x.x.x_aarch64.dmg`
-2. 打开 DMG 将 SayKnow.app 拖入 `/Applications`
+1. 从 [Releases](https://github.com/jaybeyond/sayknow-kit/releases) 下载 `SayKnow Kit_x.x.x_aarch64.dmg`
+2. 打开 DMG 将 SayKnow Kit.app 拖入 `/Applications`
 3. 由于未代码签名,首次启动会被 Gatekeeper 拦截:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### 方式 2 — 从源码构建
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```
@@ -98,7 +98,7 @@ pnpm tauri build
 
 ## 安全
 
-OpenRouter API 密钥涉及计费,SayKnow 不以明文存储:
+OpenRouter API 密钥涉及计费,SayKnow Kit 不以明文存储:
 
 - macOS **Keychain**(`com.sayknow.app`)
 - 由 macOS 登录密码派生的密钥进行 AES-256 加密

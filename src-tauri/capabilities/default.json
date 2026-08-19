@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "SayKnow window + tray + shortcut + keychain capabilities",
+  "description": "SayKnow Kit window + tray + shortcut + keychain capabilities",
   "windows": ["main", "settings"],
   "permissions": [
     "core:default",

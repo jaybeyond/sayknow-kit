@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**타이핑하면 바로 번역되는 macOS 메뉴바 AI 번역기**
+**번역 · 채팅 · 클립보드를 팝오버 하나에 담은 macOS 메뉴바 AI 키트**
 
 `say` (말하다) + `know` (알다) — 말하면 바로 이해되는 컨셉.
 
@@ -18,7 +18,7 @@
 
 ## 개요
 
-SayKnow는 **macOS 메뉴바에 상주**하는 AI 번역기입니다. 단축키 한 번으로 팝업이 뜨고, 타이핑이 멈추면 자동으로 번역해 줍니다. 번역기 사이트를 새 탭으로 띄우고 복사·붙여넣기를 반복하던 작업을 한 화면에서 끊김 없이 처리합니다.
+SayKnow Kit는 **macOS 메뉴바에 상주**하는 AI 키트입니다. 단축키 한 번이면 팝오버가 열리고, 하루 종일 손이 가는 도구 세 가지가 한자리에 있습니다 — **번역**(타이핑을 멈추면 알아서 실행), **채팅**, **클립보드 히스토리**. 번역기 사이트를 새 탭으로 띄우고 복사·붙여넣기를 반복할 일이 없어집니다.
 
 **OpenRouter BYOK (Bring Your Own Key)** + **OCP (Open Claude Proxy)** + **Custom 엔드포인트** — 세 프로바이더 중 골라 쓰며, OpenRouter만으로도 GPT-4o · Claude · Gemini · Llama 등 360+ 모델을 키 하나로 호출할 수 있습니다.
 
@@ -64,22 +64,22 @@ SayKnow는 **macOS 메뉴바에 상주**하는 AI 번역기입니다. 단축키 
 
 ### 방법 1 — 빌드 결과물 사용 (권장)
 
-1. [Releases](https://github.com/jaybeyond/sayknow_translate/releases) 페이지에서 `SayKnow_x.x.x_aarch64.dmg` 다운로드
-2. DMG 열고 SayKnow.app을 `/Applications`로 드래그
+1. [Releases](https://github.com/jaybeyond/sayknow-kit/releases) 페이지에서 `SayKnow Kit_x.x.x_aarch64.dmg` 다운로드
+2. DMG 열고 SayKnow Kit.app을 `/Applications`로 드래그
 3. 코드사이닝 안 된 빌드라 처음 실행 시 Gatekeeper가 막을 수 있음:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
-   또는 Finder에서 SayKnow.app **우클릭 → 열기** → "열기" 한 번 더.
+   또는 Finder에서 SayKnow Kit.app **우클릭 → 열기** → "열기" 한 번 더.
 
 ### 방법 2 — 소스 빌드
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
-# → src-tauri/target/release/bundle/dmg/SayKnow_x.x.x_aarch64.dmg
+# → src-tauri/target/release/bundle/dmg/SayKnow Kit_x.x.x_aarch64.dmg
 ```
 
 ## 사용법
@@ -124,7 +124,7 @@ pnpm tauri build
 
 설정 → 일반 → "⌘⇧T로 열 때 클립보드 자동 가져오기" 켠 뒤:
 1. 다른 앱에서 텍스트 선택 → ⌘C
-2. ⌘⇧T → SayKnow 열림 → 입력창에 자동 채움
+2. ⌘⇧T → SayKnow Kit 열림 → 입력창에 자동 채움
 3. (자동 모드면) 1.5초 후 번역됨
 
 ## 보안

@@ -24,7 +24,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
 
 /// Wrapper that kills the child process when dropped. Ensures OCP doesn't
-/// outlive SayKnow if the app crashes / quits before the JS-side stop.
+/// outlive SayKnow Kit if the app crashes / quits before the JS-side stop.
 struct OcpChild(Option<Child>);
 
 impl Drop for OcpChild {
@@ -523,7 +523,7 @@ fn bootout_ocp_service() {
 // Node. No sudo, no global PATH changes — we just point `start_ocp`'s shell
 // at our private bin directory.
 
-/// Bundled Node.js runtime that SayKnow downloads when the user's system
+/// Bundled Node.js runtime that SayKnow Kit downloads when the user's system
 /// Node is too old (or missing). Node 24 LTS "Krypton" is what OCP's
 /// `node:sqlite` import actually expects — node:sqlite was promoted out
 /// of experimental in the 23.x → 24.x window, so this version runs
@@ -628,7 +628,7 @@ fn install_node_runtime_inner(app: &AppHandle) -> Result<PathBuf, String> {
 
     // Clean up any older bundled Node we don't reference anymore. Keeps the
     // ~/.sayknow-runtime/ directory from accumulating dead versions across
-    // SayKnow upgrades.
+    // SayKnow Kit upgrades.
     if let Ok(entries) = std::fs::read_dir(&dir) {
         let current = node_subdir();
         for entry in entries.flatten() {
@@ -757,7 +757,7 @@ fn detect_ocp_env(base_url: Option<String>) -> OcpEnv {
     let sys_node = which_via_shell("node").map(|p| p.to_string_lossy().into_owned());
     // Scan known OCP ports plus whatever the user has configured. We don't
     // assume 3456 — any candidate that responds with a Claude-flavored
-    // `/v1/models` answer counts. This way SayKnow connects to OCP whether
+    // `/v1/models` answer counts. This way SayKnow Kit connects to OCP whether
     // the user (or another tool) started it on 3456, 3457, or wherever.
     let running_port = find_running_ocp_port(base_url.as_deref());
     OcpEnv {
@@ -791,7 +791,7 @@ fn cloned_ocp_cli_path() -> Option<PathBuf> {
 /// Last-resort OCP runner. On some machines `setup.mjs` successfully writes
 /// and loads the launchd plist but the service never binds before the
 /// installer's health check (or launchd is disabled/broken for the user
-/// domain). In that case, keep OCP alive as a SayKnow child process instead
+/// domain). In that case, keep OCP alive as a SayKnow Kit child process instead
 /// of leaving the user stuck at "setup exited 1".
 fn start_ocp_direct(
     app: &AppHandle,
@@ -812,7 +812,7 @@ fn start_ocp_direct(
 
     emit_and_persist_ocp_log(app, format!("Spawning OCP server ({reason})"));
 
-    // Clean any old launchd service from previous SayKnow versions so it
+    // Clean any old launchd service from previous SayKnow Kit versions so it
     // can't fight us for the port. Harmless when no service exists.
     bootout_ocp_service();
 
@@ -911,13 +911,13 @@ fn install_ocp() -> Result<String, String> {
 }
 
 /// Install/upgrade the OCP repo and dependencies, then spawn `node server.mjs`
-/// directly as a SayKnow child process. setup.mjs and launchd are deliberately
+/// directly as a SayKnow Kit child process. setup.mjs and launchd are deliberately
 /// bypassed — setup.mjs's 5-second health check kept failing, and launchd-
 /// spawned servers were flaky across user environments. Direct spawn is much
 /// more reliable and lets us stream logs straight to the UI.
 ///
 /// The child is parked in AppState.ocp (Drop kills it), so OCP cleanly stops
-/// when SayKnow quits.
+/// when SayKnow Kit quits.
 #[tauri::command]
 fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     eprintln!("[sayknow] start_ocp invoked");
@@ -1109,6 +1109,17 @@ fn set_tray_quit_label(app: AppHandle, label: String) -> Result<(), String> {
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())
 }
 
+/// Update the tray icon's hover tooltip. Same rationale as the quit label:
+/// the builder can only bake in a locale-neutral default, so React pushes
+/// the resolved i18n string once the WebView is up.
+#[tauri::command]
+fn set_tray_tooltip(app: AppHandle, tooltip: String) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("sayknow-tray")
+        .ok_or_else(|| "tray not found".to_string())?;
+    tray.set_tooltip(Some(&tooltip)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     // Only allow http(s) URLs — no file://, no scheme injection.
@@ -1133,7 +1144,7 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         "settings",
         WebviewUrl::App("index.html?window=settings".into()),
     )
-    .title("SayKnow")
+    .title("SayKnow Kit")
     .inner_size(820.0, 580.0)
     .min_inner_size(720.0, 500.0)
     .resizable(true)
@@ -1181,6 +1192,7 @@ pub fn run() {
             open_settings,
             open_external,
             set_tray_quit_label,
+            set_tray_tooltip,
             detect_claude_cli,
             claude_chat,
             detect_ocp_env,
@@ -1257,14 +1269,14 @@ pub fn run() {
 
             // Default to English; React calls `set_tray_quit_label` with the
             // resolved i18n string once the WebView is up.
-            let quit_item = MenuItem::with_id(app, "quit", "Quit SayKnow", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit SayKnow Kit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&quit_item])?;
 
             let shown_at_for_tray = shown_at.clone();
             let tray = TrayIconBuilder::with_id("sayknow-tray")
                 .icon(icon)
                 .icon_as_template(true)
-                .tooltip("SayKnow — AI 번역")
+                .tooltip("SayKnow Kit")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| {

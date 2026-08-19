@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**Trình dịch AI trên thanh menu — dịch khi bạn gõ.**
+**Bộ công cụ AI trên thanh menu — dịch, chat và clipboard trong một cửa sổ.**
 
 `say` (nói) + `know` (biết) — nói là hiểu.
 
@@ -18,7 +18,7 @@
 
 ## Tổng quan
 
-SayKnow nằm trên **thanh menu macOS**. Một phím tắt mở popup nhỏ; khi bạn ngừng gõ, bản dịch xuất hiện. Không cần chuyển tab giữa trang dịch và copy-paste qua lại nữa.
+SayKnow Kit nằm trên **thanh menu macOS**. Một phím tắt mở popup chứa ba công cụ bạn dùng mỗi ngày: **dịch** (tự chạy khi bạn ngừng gõ), **chat** và **lịch sử clipboard**. Không cần chuyển tab giữa trang dịch và copy-paste qua lại nữa.
 
 **Ba nhà cung cấp** trong cùng một cửa sổ (OpenRouter / OCP / endpoint tùy chỉnh). Chỉ riêng OpenRouter đã cho phép dùng hơn 360 model (GPT-4o, Claude, Gemini, Llama,...) bằng một khóa duy nhất.
 
@@ -56,18 +56,18 @@ SayKnow nằm trên **thanh menu macOS**. Một phím tắt mở popup nhỏ; kh
 
 ### Cách 1 — DMG đóng gói sẵn (khuyến nghị)
 
-1. Tải `SayKnow_x.x.x_aarch64.dmg` từ [Releases](https://github.com/jaybeyond/sayknow_translate/releases).
-2. Mở DMG, kéo SayKnow.app vào `/Applications`.
+1. Tải `SayKnow Kit_x.x.x_aarch64.dmg` từ [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+2. Mở DMG, kéo SayKnow Kit.app vào `/Applications`.
 3. Build chưa code-sign nên Gatekeeper sẽ chặn lần đầu:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### Cách 2 — Build từ source
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```
@@ -98,7 +98,7 @@ pnpm tauri build
 
 ## Bảo mật
 
-Key OpenRouter là thông tin tính phí, SayKnow không bao giờ lưu plaintext:
+Key OpenRouter là thông tin tính phí, SayKnow Kit không bao giờ lưu plaintext:
 
 - macOS **Keychain** (`com.sayknow.app`)
 - Mã hóa AES-256, key dẫn xuất từ mật khẩu đăng nhập macOS

@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**Traductor IA en la barra de menú — traduce mientras escribes.**
+**Kit de IA en la barra de menú — traducción, chat y portapapeles en una sola ventana.**
 
 `say` (decir) + `know` (saber) — díselo, lo entenderá al instante.
 
@@ -18,7 +18,7 @@
 
 ## Resumen
 
-SayKnow vive en la **barra de menú de macOS**. Un atajo abre una ventana pequeña; cuando dejas de escribir, aparece la traducción. Adiós a saltar entre pestañas y pegar texto.
+SayKnow Kit vive en la **barra de menú de macOS**. Un atajo abre una ventana pequeña con las tres herramientas que usas a diario: **traducción** (se lanza sola cuando dejas de escribir), **chat** e **historial del portapapeles**. Adiós a saltar entre pestañas y pegar texto.
 
 **Tres proveedores** en la misma ventana (OpenRouter / OCP / endpoint personalizado). Solo con OpenRouter ya tienes acceso a más de 360 modelos (GPT-4o, Claude, Gemini, Llama, etc.) con una única clave.
 
@@ -56,18 +56,18 @@ SayKnow vive en la **barra de menú de macOS**. Un atajo abre una ventana peque�
 
 ### Opción 1 — DMG precompilado (recomendado)
 
-1. Descarga `SayKnow_x.x.x_aarch64.dmg` desde [Releases](https://github.com/jaybeyond/sayknow_translate/releases).
-2. Abre el DMG y arrastra SayKnow.app a `/Applications`.
+1. Descarga `SayKnow Kit_x.x.x_aarch64.dmg` desde [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+2. Abre el DMG y arrastra SayKnow Kit.app a `/Applications`.
 3. La build no está firmada, así que Gatekeeper lo bloqueará la primera vez:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
 
 ### Opción 2 — Compilar desde el código
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
 ```
@@ -98,7 +98,7 @@ pnpm tauri build
 
 ## Seguridad
 
-La clave API es una credencial facturable, así que SayKnow nunca la guarda en texto plano:
+La clave API es una credencial facturable, así que SayKnow Kit nunca la guarda en texto plano:
 
 - macOS **Keychain** (`com.sayknow.app`)
 - Cifrado AES-256 derivado de tu contraseña de inicio de sesión

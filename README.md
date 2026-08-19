@@ -1,8 +1,8 @@
 <div align="center">
 
-# SayKnow
+# SayKnow Kit
 
-**Menu bar AI translator for macOS — translates as you type.**
+**Menu bar AI kit for macOS — translate, chat, and clipboard history in one popover.**
 
 `say` + `know` — speak it, understand it.
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-SayKnow lives in your **macOS menu bar**. One shortcut opens a small popover; stop typing for a moment and the translation appears. No more switching tabs to a translator and pasting back and forth.
+SayKnow Kit lives in your **macOS menu bar**. One shortcut opens a small popover holding the three tools you reach for all day: **translate** (fires on its own when you stop typing), **chat**, and **clipboard history**. No more switching tabs to a translator and pasting back and forth.
 
 Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ models), **OCP (Open Claude Proxy)** for using your local Claude CLI as an OpenAI-compatible API, or any **Custom** OpenAI-compatible endpoint you point it at.
 
@@ -64,22 +64,22 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ### Option 1 — prebuilt DMG (recommended)
 
-1. Download `SayKnow_x.x.x_aarch64.dmg` from [Releases](https://github.com/jaybeyond/sayknow_translate/releases).
-2. Open the DMG and drag `SayKnow.app` into `/Applications`.
+1. Download `SayKnow Kit_x.x.x_aarch64.dmg` from [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+2. Open the DMG and drag `SayKnow Kit.app` into `/Applications`.
 3. The build is unsigned, so Gatekeeper will block it on first launch:
    ```bash
-   xattr -dr com.apple.quarantine /Applications/SayKnow.app
+   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
    ```
    Or right-click the app in Finder → **Open** → **Open** again.
 
 ### Option 2 — build from source
 
 ```bash
-git clone https://github.com/jaybeyond/sayknow_translate.git
-cd sayknow_translate
+git clone https://github.com/jaybeyond/sayknow-kit.git
+cd sayknow-kit
 pnpm install
 pnpm tauri build
-# output: src-tauri/target/release/bundle/dmg/SayKnow_x.x.x_aarch64.dmg
+# output: src-tauri/target/release/bundle/dmg/SayKnow Kit_x.x.x_aarch64.dmg
 ```
 
 ## Usage
@@ -124,12 +124,12 @@ Click ⚙️ in the popover → **Settings** opens a full window with a sidebar:
 
 In **Settings → General**, enable "Auto-fill clipboard on ⌘⇧T". Then:
 1. Select text in any app → ⌘C
-2. ⌘⇧T → SayKnow opens with that text already in the input
+2. ⌘⇧T → SayKnow Kit opens with that text already in the input
 3. In auto mode, it translates 1.5s later
 
 ## Security
 
-Your OpenRouter key is a **billable credential**, so SayKnow never stores it in plaintext.
+Your OpenRouter key is a **billable credential**, so SayKnow Kit never stores it in plaintext.
 
 - macOS **Keychain** (service: `com.sayknow.app`, key: `openrouter_api_key`)
 - AES-256 encrypted, derived from your macOS login password
@@ -171,7 +171,7 @@ pnpm tauri build    # production .app + .dmg
 ### Features
 - **Chat tab** — multi-conversation with regenerate / edit / copy / stop per message
 - **Multi-provider** — switch between OpenRouter, OCP, and Custom endpoints in one place
-- **One-tap OCP install** — SayKnow runs `git clone → npm install → node setup.mjs` for you and streams the output live
+- **One-tap OCP install** — SayKnow Kit runs `git clone → npm install → node setup.mjs` for you and streams the output live
 - **Compact horizontal mode** — 720×240 side-by-side layout, designed for keep-on-screen use
 - **Window size toggle** — header button flips compact ↔ normal instantly
 

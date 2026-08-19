@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SayKnow",
+  "productName": "SayKnow Kit",
   "version": "0.2.0",
   "identifier": "com.sayknow.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SayKnow",
+        "title": "SayKnow Kit",
         "width": 480,
         "height": 580,
         "minWidth": 320,
@@ -39,8 +39,8 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "AI translator in your menu bar",
-    "longDescription": "SayKnow is a menu bar AI translator powered by OpenRouter. Type to translate instantly.",
+    "shortDescription": "Menu bar AI kit — translate, chat, clipboard",
+    "longDescription": "SayKnow Kit is a menu bar AI toolkit: instant translation, chat, and clipboard history in one popover. Bring your own OpenRouter key, or point it at any OpenAI-compatible endpoint.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

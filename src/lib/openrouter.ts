@@ -113,7 +113,7 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
       Authorization: `Bearer ${opts.apiKey}`,
       // OpenRouter-specific attribution headers. Other providers ignore them.
       "HTTP-Referer": window.location.origin,
-      "X-Title": "SayKnow",
+      "X-Title": "SayKnow Kit",
     },
     body: JSON.stringify(body),
     signal: opts.signal,

@@ -4,7 +4,7 @@
 
 set -e
 
-PLIST="$(dirname "$0")/../target/release/bundle/macos/SayKnow.app/Contents/Info.plist"
+PLIST="$(dirname "$0")/../target/release/bundle/macos/SayKnow Kit.app/Contents/Info.plist"
 [ -f "$PLIST" ] || exit 0  # nothing to patch (different target)
 
 # Stop macOS from offering "Reopen windows from last time" — irrelevant for
