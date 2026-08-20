@@ -363,38 +363,64 @@ function RateLimitRows({
     if (w) rows.push({ label: windowLabel(w.window_minutes, t), w })
   }
 
-  // A snapshot is only valid until its reset time; past that the window has
-  // rolled over and the percentage means nothing.
-  const stale = rows.every((r) => r.w.resets_at * 1000 < nowMs)
+  // Every window is judged on its own reset time. Once that has passed the
+  // quota has rolled over, so the recorded percentage describes a window that
+  // no longer exists — it must not be drawn as if it were the current level.
+  const allExpired = rows.every((r) => r.w.resets_at * 1000 < nowMs)
 
   return (
     <div className="rounded-md bg-muted/40 px-2 py-1.5">
       <div className="mb-1 flex items-baseline justify-between gap-2">
         <span className="text-[10px] text-muted-foreground">
-          {t("usage.limit.label")}
+          {allExpired ? t("usage.limit.lastSeen") : t("usage.limit.label")}
           {limits.plan_type ? ` · ${limits.plan_type}` : ""}
         </span>
         <span className="text-[10px] text-muted-foreground">
           {limits.captured_at.slice(0, 10)}
-          {stale ? ` · ${t("usage.limit.stale")}` : ""}
         </span>
       </div>
-      {rows.map((r) => (
-        <div key={r.label} className="mb-1 last:mb-0">
-          <div className="flex items-baseline justify-between gap-2 text-[10px]">
-            <span className="text-muted-foreground">{r.label}</span>
-            <span className="tabular-nums">
-              {r.w.used_percent.toFixed(1)}%
-            </span>
+      {rows.map((r) => {
+        const expired = r.w.resets_at * 1000 < nowMs
+        return (
+          <div key={r.label} className="mb-1 last:mb-0">
+            <div className="flex items-baseline justify-between gap-2 text-[10px]">
+              <span className="text-muted-foreground">{r.label}</span>
+              <span
+                className={cn(
+                  "tabular-nums",
+                  expired && "text-muted-foreground line-through",
+                )}
+              >
+                {r.w.used_percent.toFixed(1)}%
+              </span>
+            </div>
+            {expired ? (
+              // No bar: a filled bar reads as "this is where you are now".
+              <div className="text-[10px] text-muted-foreground">
+                {t("usage.limit.notCurrent")}
+              </div>
+            ) : (
+              <>
+                <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-border">
+                  <div
+                    className="h-full bg-primary"
+                    style={{ width: `${Math.min(100, r.w.used_percent)}%` }}
+                  />
+                </div>
+                <div className="mt-0.5 text-right text-[10px] tabular-nums text-muted-foreground">
+                  {t("usage.limit.resetIn")}{" "}
+                  {formatRemaining(r.w.resets_at * 1000 - nowMs, t)}
+                </div>
+              </>
+            )}
           </div>
-          <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-border">
-            <div
-              className={cn("h-full", stale ? "bg-muted-foreground/40" : "bg-primary")}
-              style={{ width: `${Math.min(100, r.w.used_percent)}%` }}
-            />
-          </div>
-        </div>
-      ))}
+        )
+      })}
+      {allExpired && (
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+          {t("usage.limit.refreshHint")}
+        </p>
+      )}
     </div>
   )
 }
