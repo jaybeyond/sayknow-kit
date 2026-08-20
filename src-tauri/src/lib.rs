@@ -1,3 +1,4 @@
+mod agent_usage;
 mod clipboard;
 
 use std::fs::OpenOptions;
@@ -1211,7 +1212,8 @@ pub fn run() {
             clipboard::wipe_clipboard_history,
             clipboard::set_clipboard_capture,
             clipboard::get_clipboard_capture,
-            clipboard::set_clipboard_max_entries
+            clipboard::set_clipboard_max_entries,
+            agent_usage::agent_usage
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");

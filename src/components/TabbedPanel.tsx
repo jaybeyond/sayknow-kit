@@ -1,19 +1,21 @@
 import { useState } from "react"
 import {
   Clipboard as ClipboardIcon,
+  Gauge,
   Languages as TranslateIcon,
   MessageSquare,
 } from "lucide-react"
 import { TranslatePanel } from "./TranslatePanel"
 import { ChatPanel } from "./ChatPanel"
 import { ClipboardPanel } from "./ClipboardPanel"
+import { UsagePanel } from "./UsagePanel"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { useT } from "@/i18n"
 import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 
-type Tab = "translate" | "chat" | "clipboard"
+type Tab = "translate" | "chat" | "clipboard" | "usage"
 const TAB_KEY = "active-tab"
 
 type Props = {
@@ -71,6 +73,12 @@ export function TabbedPanel(props: Props) {
           label={t("tab.clipboard")}
           onClick={() => selectTab("clipboard")}
         />
+        <TabButton
+          active={tab === "usage"}
+          icon={Gauge}
+          label={t("tab.usage")}
+          onClick={() => selectTab("usage")}
+        />
       </div>
 
       {/* Active panel */}
@@ -82,11 +90,13 @@ export function TabbedPanel(props: Props) {
           />
         ) : tab === "chat" ? (
           <ChatPanel settings={props.settings} update={props.update} />
-        ) : (
+        ) : tab === "clipboard" ? (
           <ClipboardPanel
             settings={props.settings}
             onSendToTranslate={sendToTranslate}
           />
+        ) : (
+          <UsagePanel settings={props.settings} active={tab === "usage"} />
         )}
       </div>
     </div>
