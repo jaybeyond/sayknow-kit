@@ -21,7 +21,8 @@ export type AgentReport = {
   /** The agent's logs carry a real price. When false, never render money. */
   has_cost: boolean
   hours: Record<string, Bucket>
-  models: { model: string; tokens: number }[]
+  /** model -> "YYYY-MM-DD" -> tokens. */
+  model_days: Record<string, Record<string, number>>
   last_ts: string | null
   files: number
 }
@@ -103,6 +104,28 @@ export function recentHours(
     const key = d.toISOString().slice(0, 13)
     out.push({ key, bucket: hours[key] ?? EMPTY_BUCKET })
   }
+  return out
+}
+
+/** Model breakdown restricted to the last `days` local days, descending.
+ *  Scoping matters: an agent's lifetime totals will happily show a model the
+ *  user retired weeks ago, with a number larger than the window above it. */
+export function modelsInWindow(
+  modelDays: Record<string, Record<string, number>>,
+  nowMs: number,
+  days: number,
+): { model: string; tokens: number }[] {
+  const from = new Date(nowMs - days * 86_400_000)
+  const limit = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`
+  const out: { model: string; tokens: number }[] = []
+  for (const [model, byDay] of Object.entries(modelDays)) {
+    let tokens = 0
+    for (const [day, n] of Object.entries(byDay)) {
+      if (day >= limit) tokens += n
+    }
+    if (tokens > 0) out.push({ model, tokens })
+  }
+  out.sort((a, b) => b.tokens - a.tokens)
   return out
 }
 

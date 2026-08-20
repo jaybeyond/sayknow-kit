@@ -8,6 +8,7 @@ import { useT } from "@/i18n"
 import {
   formatTokens,
   formatUsd,
+  modelsInWindow,
   recentHours,
   windowsOf,
   type AgentReport,
@@ -148,23 +149,31 @@ function AgentCard({
   lastActive: string | null
 }) {
   const w = useMemo(() => windowsOf(agent.hours, nowMs), [agent.hours, nowMs])
+  // Same 30-day window as the widest total above, so the chips can never sum
+  // to more than the number they sit under.
+  const models = useMemo(
+    () => modelsInWindow(agent.model_days, nowMs, 30),
+    [agent.model_days, nowMs],
+  )
   const spark = useMemo(
     () => recentHours(agent.hours, nowMs, 24),
     [agent.hours, nowMs],
   )
   const peak = Math.max(1, ...spark.map((s) => s.bucket.total))
-  const hasAny = w.month.total > 0
+  // Gate on the whole scan window, not on the 30-day total: an agent last used
+  // 38 days ago still has real numbers to show, and hiding them behind
+  // "no records" while the scan window is 45 days was simply wrong.
+  const hasAny = Object.keys(agent.hours).length > 0
 
   return (
     <section className="rounded-lg border p-2.5">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium">{agent.label}</span>
         <span className="text-[10px] text-muted-foreground">
-          {!agent.detected
-            ? t("usage.notDetected")
-            : !hasAny
-              ? t("usage.noRecent")
-              : (lastActive ?? "")}
+          {/* Last activity is the most useful fact even when every window
+              reads zero, so it outranks the empty-state label. */}
+          {lastActive ??
+            (agent.detected ? t("usage.noRecent") : t("usage.notDetected"))}
         </span>
       </div>
 
@@ -208,9 +217,12 @@ function AgentCard({
             ))}
           </div>
 
-          {agent.models.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {agent.models.slice(0, 3).map((m) => (
+          {models.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              <span className="text-[10px] text-muted-foreground">
+                {t("usage.modelsWindow")}
+              </span>
+              {models.slice(0, 3).map((m) => (
                 <span
                   key={m.model}
                   className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"

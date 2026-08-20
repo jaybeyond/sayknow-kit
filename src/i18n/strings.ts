@@ -22,6 +22,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   ko: {
     "tab.usage": "사용량",
     "usage.heading": "에이전트 사용량",
+    "usage.modelsWindow": "30일 모델",
     "usage.justNow": "방금",
     "usage.refresh": "다시 스캔",
     "usage.scanning": "세션 로그 스캔 중…",
@@ -235,6 +236,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   en: {
     "tab.usage": "Usage",
     "usage.heading": "Agent usage",
+    "usage.modelsWindow": "30-day models",
     "usage.justNow": "just now",
     "usage.refresh": "Rescan",
     "usage.scanning": "Scanning session logs…",
@@ -448,6 +450,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   ja: {
     "tab.usage": "使用量",
     "usage.heading": "エージェント使用量",
+    "usage.modelsWindow": "30日のモデル",
     "usage.justNow": "たった今",
     "usage.refresh": "再スキャン",
     "usage.scanning": "セッションログをスキャン中…",
@@ -663,6 +666,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   zh: {
     "tab.usage": "用量",
     "usage.heading": "智能体用量",
+    "usage.modelsWindow": "30天模型",
     "usage.justNow": "刚刚",
     "usage.refresh": "重新扫描",
     "usage.scanning": "正在扫描会话日志…",
@@ -878,6 +882,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   es: {
     "tab.usage": "Uso",
     "usage.heading": "Uso de agentes",
+    "usage.modelsWindow": "Modelos 30 días",
     "usage.justNow": "ahora mismo",
     "usage.refresh": "Reescanear",
     "usage.scanning": "Escaneando registros de sesión…",
@@ -1093,6 +1098,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   fr: {
     "tab.usage": "Usage",
     "usage.heading": "Usage des agents",
+    "usage.modelsWindow": "Modèles 30 j",
     "usage.justNow": "à l'instant",
     "usage.refresh": "Rescanner",
     "usage.scanning": "Analyse des journaux de session…",
@@ -1308,6 +1314,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   de: {
     "tab.usage": "Verbrauch",
     "usage.heading": "Agenten-Verbrauch",
+    "usage.modelsWindow": "Modelle 30 Tage",
     "usage.justNow": "gerade eben",
     "usage.refresh": "Neu scannen",
     "usage.scanning": "Sitzungsprotokolle werden gescannt…",
@@ -1523,6 +1530,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   vi: {
     "tab.usage": "Mức dùng",
     "usage.heading": "Mức dùng của agent",
+    "usage.modelsWindow": "Model 30 ngày",
     "usage.justNow": "vừa xong",
     "usage.refresh": "Quét lại",
     "usage.scanning": "Đang quét nhật ký phiên…",

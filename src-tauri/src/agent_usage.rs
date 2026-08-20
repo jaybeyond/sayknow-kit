@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-const CACHE_FILE: &str = "agent-usage.json";
+// v2: model totals became day-bucketed, so v1 aggregates are unusable.
+const CACHE_FILE: &str = "agent-usage-v2.json";
 /// Session files older than this are ignored outright — the panel only ever
 /// shows 30-day windows, and the extra margin keeps month boundaries honest.
 const MAX_SCAN_DAYS: u64 = 45;
@@ -64,7 +65,10 @@ struct FileAgg {
     mtime: u64,
     size: u64,
     hours: HashMap<String, Bucket>,
-    models: HashMap<String, u64>,
+    /// model -> "YYYY-MM-DD" -> tokens. Day-bucketed so the UI can scope the
+    /// model breakdown to the same window as the totals it sits under;
+    /// a flat lifetime total made retired models look current.
+    model_days: HashMap<String, HashMap<String, u64>>,
     last_ts: Option<String>,
 }
 
@@ -87,16 +91,10 @@ pub struct AgentReport {
     /// than inventing a price.
     pub has_cost: bool,
     pub hours: HashMap<String, Bucket>,
-    /// Top models by total tokens, descending.
-    pub models: Vec<ModelTotal>,
+    /// model -> "YYYY-MM-DD" -> tokens, for window-scoped breakdowns.
+    pub model_days: HashMap<String, HashMap<String, u64>>,
     pub last_ts: Option<String>,
     pub files: usize,
-}
-
-#[derive(Serialize)]
-pub struct ModelTotal {
-    pub model: String,
-    pub tokens: u64,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -374,7 +372,7 @@ fn parse_file(kind: Kind, path: &Path, mtime: u64, size: u64) -> FileAgg {
         mtime,
         size,
         hours: HashMap::new(),
-        models: HashMap::new(),
+        model_days: HashMap::new(),
         last_ts: None,
     };
     let Ok(file) = fs::File::open(path) else {
@@ -398,7 +396,8 @@ fn parse_file(kind: Kind, path: &Path, mtime: u64, size: u64) -> FileAgg {
         };
         agg.hours.entry(key).or_default().merge(&turn.b);
         if let Some(m) = turn.model {
-            *agg.models.entry(m).or_insert(0) += turn.b.total;
+            let day = turn.ts[..10].to_string();
+            *agg.model_days.entry(m).or_default().entry(day).or_insert(0) += turn.b.total;
         }
         if agg.last_ts.as_deref().map(|p| turn.ts.as_str() > p).unwrap_or(true) {
             agg.last_ts = Some(turn.ts);
@@ -447,7 +446,7 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
         }
 
         let mut hours: HashMap<String, Bucket> = HashMap::new();
-        let mut models: HashMap<String, u64> = HashMap::new();
+        let mut model_days: HashMap<String, HashMap<String, u64>> = HashMap::new();
         let mut last_ts: Option<String> = None;
 
         for (path, mtime, size) in &files {
@@ -461,8 +460,11 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             for (hk, b) in &agg.hours {
                 hours.entry(hk.clone()).or_default().merge(b);
             }
-            for (m, t) in &agg.models {
-                *models.entry(m.clone()).or_insert(0) += t;
+            for (m, days) in &agg.model_days {
+                let target = model_days.entry(m.clone()).or_default();
+                for (day, t) in days {
+                    *target.entry(day.clone()).or_insert(0) += t;
+                }
             }
             if let Some(ts) = &agg.last_ts {
                 if last_ts.as_deref().map(|p| ts.as_str() > p).unwrap_or(true) {
@@ -472,20 +474,13 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             next.insert(key, agg);
         }
 
-        let mut model_totals: Vec<ModelTotal> = models
-            .into_iter()
-            .map(|(model, tokens)| ModelTotal { model, tokens })
-            .collect();
-        model_totals.sort_by(|a, b| b.tokens.cmp(&a.tokens));
-        model_totals.truncate(6);
-
         reports.push(AgentReport {
             id: spec.id.to_string(),
             label: spec.label.to_string(),
             detected,
             has_cost: spec.has_cost,
             hours,
-            models: model_totals,
+            model_days,
             last_ts,
             files: files.len(),
         });
