@@ -489,6 +489,98 @@ fn parse_file(kind: Kind, path: &Path, mtime: u64, size: u64) -> FileAgg {
     agg
 }
 
+/// Unix seconds -> `YYYY-MM-DDTHH:MM:SSZ`, so snapshots taken from a file's
+/// mtime compare and display the same way as Codex's inline timestamps.
+fn epoch_to_iso(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    // Civil-from-days (Howard Hinnant), epoch-shifted to 0000-03-01.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn claude_window(v: Option<&Value>, window_minutes: u64) -> Option<RateWindow> {
+    let o = v?.as_object()?;
+    Some(RateWindow {
+        used_percent: o.get("used_percentage")?.as_f64()?,
+        window_minutes,
+        resets_at: o.get("resets_at").and_then(|x| x.as_i64()).unwrap_or(0),
+    })
+}
+
+/// Claude Code never writes quota data into its session transcripts, but it
+/// does hand the live figures to the status line on stdin
+/// (`rate_limits.five_hour` / `.seven_day`). Any status line that caches that
+/// payload therefore leaves the real numbers on disk, which is the only way to
+/// read them without touching the user's credentials or config.
+fn claude_rate_limits(home: &Path) -> Option<RateLimits> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    // OMC HUD and similar caching status lines.
+    if let Ok(entries) = fs::read_dir(home.join(".claude/hud/cache")) {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("stdin.") && name.ends_with(".json") {
+                candidates.push(e.path());
+            }
+        }
+    }
+    // Documented drop point for users who wire up their own capture.
+    candidates.push(home.join(".claude/statusline-input.json"));
+
+    let mut best: Option<(u64, RateLimits)> = None;
+    for path in candidates {
+        let Ok(meta) = fs::metadata(&path) else { continue };
+        let mtime = mtime_secs(&meta);
+        if best.as_ref().map(|(t, _)| mtime <= *t).unwrap_or(false) {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let Some(rl) = v.get("rate_limits").and_then(|r| r.as_object()) else {
+            continue;
+        };
+        let primary = claude_window(rl.get("five_hour"), 300);
+        let secondary = claude_window(rl.get("seven_day"), 10_080);
+        if primary.is_none() && secondary.is_none() {
+            continue;
+        }
+        best = Some((
+            mtime,
+            RateLimits {
+                // The payload carries no timestamp of its own, so the file's
+                // mtime is when these percentages were true.
+                captured_at: epoch_to_iso(mtime),
+                plan_type: None,
+                primary,
+                secondary,
+            },
+        ));
+    }
+    best.map(|(_, rl)| rl)
+}
+
 fn cache_path(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_data_dir().ok()?;
     let _ = fs::create_dir_all(&dir);
@@ -560,6 +652,7 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
                 }
             }
             if let Some(rl) = &agg.rate_limits {
+                #[allow(clippy::redundant_clone)]
                 let newer = rate_limits
                     .as_ref()
                     .map(|prev| rl.captured_at > prev.captured_at)
@@ -569,6 +662,12 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
                 }
             }
             next.insert(key, agg);
+        }
+
+        if spec.kind == Kind::ClaudeCode && rate_limits.is_none() {
+            if let Some(h) = &home {
+                rate_limits = claude_rate_limits(h);
+            }
         }
 
         reports.push(AgentReport {
