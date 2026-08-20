@@ -6,12 +6,17 @@ import { useUsage } from "@/hooks/useUsage"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
 import {
+  activeBlock,
+  burnRate,
   formatTokens,
   formatUsd,
   modelsInWindow,
   recentHours,
   windowsOf,
   type AgentReport,
+  type Block,
+  type RateLimits,
+  type RateWindow,
 } from "@/lib/agent-usage"
 import { formatCost, formatTokens as formatAppTokens } from "@/lib/usage"
 import { cn } from "@/lib/utils"
@@ -149,6 +154,12 @@ function AgentCard({
   lastActive: string | null
 }) {
   const w = useMemo(() => windowsOf(agent.hours, nowMs), [agent.hours, nowMs])
+  // Subscription usage is metered in 5-hour billing blocks, so the headline is
+  // the block you're actually inside — not a rolling 5-hour sum.
+  const block = useMemo(
+    () => activeBlock(agent.hours, nowMs),
+    [agent.hours, nowMs],
+  )
   // Same 30-day window as the widest total above, so the chips can never sum
   // to more than the number they sit under.
   const models = useMemo(
@@ -179,13 +190,18 @@ function AgentCard({
 
       {agent.detected && hasAny ? (
         <>
-          <div className="grid grid-cols-4 gap-1.5">
-            <Stat
-              label={t("usage.window.session")}
-              value={formatTokens(w.session.total)}
-              sub={agent.has_cost ? formatUsd(w.session.cost_usd) : undefined}
-              accent
+          {agent.rate_limits ? (
+            <RateLimitRows limits={agent.rate_limits} t={t} nowMs={nowMs} />
+          ) : (
+            <BlockRow
+              block={block}
+              nowMs={nowMs}
+              hasCost={agent.has_cost}
+              t={t}
             />
+          )}
+
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
             <Stat
               label={t("usage.window.today")}
               value={formatTokens(w.today.total)}
@@ -245,6 +261,141 @@ function AgentCard({
         </p>
       )}
     </section>
+  )
+}
+
+/** Remaining time rendered as "2시간 12분" / "12분". */
+function formatRemaining(ms: number, t: (k: string) => string): string {
+  if (ms <= 0) return t("usage.block.expired")
+  const totalMin = Math.floor(ms / 60_000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return h > 0 ? `${h}${t("usage.unit.hour")} ${m}${t("usage.unit.min")}` : `${m}${t("usage.unit.min")}`
+}
+
+/** The 5-hour billing block the user is currently inside, derived from
+ *  timestamps because these agents log no quota headers. */
+function BlockRow({
+  block,
+  nowMs,
+  hasCost,
+  t,
+}: {
+  block: Block | null
+  nowMs: number
+  hasCost: boolean
+  t: (k: string) => string
+}) {
+  if (!block) {
+    return (
+      <div className="rounded-md bg-muted/40 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">
+          {t("usage.block.label")}
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {t("usage.block.idle")}
+        </div>
+      </div>
+    )
+  }
+  const elapsed = nowMs - block.startMs
+  const span = block.endMs - block.startMs
+  const pct = Math.min(100, Math.max(0, (elapsed / span) * 100))
+  const rate = burnRate(block, nowMs)
+  return (
+    <div className="rounded-md bg-muted/40 px-2 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[10px] text-muted-foreground">
+          {t("usage.block.label")}
+        </span>
+        <span className="text-[10px] tabular-nums text-muted-foreground">
+          {t("usage.block.remaining")} {formatRemaining(block.endMs - nowMs, t)}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className="text-sm font-semibold tabular-nums text-primary">
+          {formatTokens(block.bucket.total)}
+        </span>
+        {hasCost && (
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {formatUsd(block.bucket.cost_usd)}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+          {formatTokens(Math.round(rate))}/{t("usage.unit.min")}
+        </span>
+      </div>
+      {/* Elapsed share of the 5-hour window, not a quota bar — these agents
+          don't publish a quota to measure against. */}
+      <div className="mt-1 h-1 overflow-hidden rounded-full bg-border">
+        <div className="h-full bg-primary/50" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/** Name a quota window from its length rather than its position in the
+ *  payload — 300 minutes is the 5-hour window, 10080 the weekly one. */
+function windowLabel(minutes: number, t: (k: string) => string): string {
+  if (minutes === 300) return t("usage.limit.short")
+  if (minutes === 10080) return t("usage.limit.long")
+  if (minutes % 1440 === 0) return `${minutes / 1440}${t("usage.unit.day")}`
+  if (minutes % 60 === 0) return `${minutes / 60}${t("usage.unit.hour")}`
+  return `${minutes}${t("usage.unit.min")}`
+}
+
+/** Provider-reported quota windows. Codex writes real percentages into its
+ *  logs, so we show those verbatim rather than guessing from token counts. */
+function RateLimitRows({
+  limits,
+  t,
+  nowMs,
+}: {
+  limits: RateLimits
+  t: (k: string) => string
+  nowMs: number
+}) {
+  // Label by the window the provider reports, never by field position:
+  // Codex puts the weekly window in `primary` when no 5-hour window applies,
+  // so keying off "primary = 5 hours" mislabels the row outright.
+  const rows: { label: string; w: RateWindow }[] = []
+  for (const w of [limits.primary, limits.secondary]) {
+    if (w) rows.push({ label: windowLabel(w.window_minutes, t), w })
+  }
+
+  // A snapshot is only valid until its reset time; past that the window has
+  // rolled over and the percentage means nothing.
+  const stale = rows.every((r) => r.w.resets_at * 1000 < nowMs)
+
+  return (
+    <div className="rounded-md bg-muted/40 px-2 py-1.5">
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <span className="text-[10px] text-muted-foreground">
+          {t("usage.limit.label")}
+          {limits.plan_type ? ` · ${limits.plan_type}` : ""}
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          {limits.captured_at.slice(0, 10)}
+          {stale ? ` · ${t("usage.limit.stale")}` : ""}
+        </span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.label} className="mb-1 last:mb-0">
+          <div className="flex items-baseline justify-between gap-2 text-[10px]">
+            <span className="text-muted-foreground">{r.label}</span>
+            <span className="tabular-nums">
+              {r.w.used_percent.toFixed(1)}%
+            </span>
+          </div>
+          <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-border">
+            <div
+              className={cn("h-full", stale ? "bg-muted-foreground/40" : "bg-primary")}
+              style={{ width: `${Math.min(100, r.w.used_percent)}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 

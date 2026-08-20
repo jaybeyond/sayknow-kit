@@ -13,6 +13,20 @@ export type Bucket = {
   cost_usd: number
 }
 
+export type RateWindow = {
+  used_percent: number
+  window_minutes: number
+  /** Unix seconds. */
+  resets_at: number
+}
+
+export type RateLimits = {
+  captured_at: string
+  plan_type: string | null
+  primary: RateWindow | null
+  secondary: RateWindow | null
+}
+
 export type AgentReport = {
   id: string
   label: string
@@ -25,6 +39,8 @@ export type AgentReport = {
   model_days: Record<string, Record<string, number>>
   last_ts: string | null
   files: number
+  /** Provider-reported quota windows, when the agent logs them. */
+  rate_limits: RateLimits | null
 }
 
 export const EMPTY_BUCKET: Bucket = {
@@ -35,6 +51,10 @@ export const EMPTY_BUCKET: Bucket = {
   cache_write: 0,
   total: 0,
   cost_usd: 0,
+}
+
+export function addBuckets(a: Bucket, b: Bucket): Bucket {
+  return add(a, b)
 }
 
 function add(a: Bucket, b: Bucket): Bucket {
@@ -70,10 +90,80 @@ export function sumToday(hours: Record<string, Bucket>, nowMs: number): Bucket {
   return sumSince(hours, start.getTime())
 }
 
+export const BLOCK_HOURS = 5
+
+export type Block = {
+  /** Block start, epoch ms — the hour the first message landed in, UTC. */
+  startMs: number
+  /** startMs + 5h. */
+  endMs: number
+  /** Last hour with activity inside the block. */
+  lastActivityMs: number
+  bucket: Bucket
+  isActive: boolean
+}
+
+/**
+ * Subscription usage is metered in 5-hour billing blocks, not in a rolling
+ * "last 5 hours" sum: a block opens on the first message, is floored to the
+ * UTC hour, and runs exactly 5 hours. Activity after that opens a new block.
+ * This mirrors how ccusage reports Claude Code sessions, so the numbers line
+ * up with what the CLI itself would tell you.
+ */
+export function computeBlocks(
+  hours: Record<string, Bucket>,
+  nowMs: number,
+): Block[] {
+  const active = Object.entries(hours)
+    .filter(([, b]) => b.total > 0)
+    .map(([key, b]) => ({ ms: hourKeyToMs(key), b }))
+    .filter((h) => !Number.isNaN(h.ms))
+    .sort((a, b) => a.ms - b.ms)
+
+  const blocks: Block[] = []
+  const span = BLOCK_HOURS * 3600_000
+  for (const h of active) {
+    const cur = blocks[blocks.length - 1]
+    // A new block opens when the running one has run its full 5 hours, or when
+    // the gap since the last message is itself longer than a block.
+    if (cur && h.ms < cur.endMs && h.ms - cur.lastActivityMs < span) {
+      cur.bucket = addBuckets(cur.bucket, h.b)
+      cur.lastActivityMs = h.ms
+    } else {
+      blocks.push({
+        startMs: h.ms,
+        endMs: h.ms + span,
+        lastActivityMs: h.ms,
+        bucket: h.b,
+        isActive: false,
+      })
+    }
+  }
+  for (const b of blocks) {
+    b.isActive = nowMs < b.endMs
+  }
+  return blocks
+}
+
+/** The block covering `nowMs`, if one is still open. */
+export function activeBlock(
+  hours: Record<string, Bucket>,
+  nowMs: number,
+): Block | null {
+  const blocks = computeBlocks(hours, nowMs)
+  const last = blocks[blocks.length - 1]
+  return last && last.isActive ? last : null
+}
+
+/** Tokens per minute burned so far in a block. */
+export function burnRate(block: Block, nowMs: number): number {
+  const elapsedMin = Math.max(1, (nowMs - block.startMs) / 60_000)
+  return block.bucket.total / elapsedMin
+}
+
 export type Windows = {
-  /** Rolling 5 hours — the shape of Claude's subscription window. */
-  session: Bucket
   today: Bucket
+  /** 7 days — the long subscription window both Claude and Codex meter on. */
   week: Bucket
   month: Bucket
 }
@@ -83,7 +173,6 @@ export type Windows = {
 export function windowsOf(hours: Record<string, Bucket>, nowMs: number): Windows {
   const now = nowMs
   return {
-    session: sumSince(hours, now - 5 * 3600_000),
     today: sumToday(hours, now),
     week: sumSince(hours, now - 7 * 86_400_000),
     month: sumSince(hours, now - 30 * 86_400_000),

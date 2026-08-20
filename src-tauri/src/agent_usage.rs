@@ -26,8 +26,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-// v2: model totals became day-bucketed, so v1 aggregates are unusable.
-const CACHE_FILE: &str = "agent-usage-v2.json";
+const CACHE_FILE: &str = "agent-usage.json";
+/// Bump on every parser or aggregate-shape change. Entries are keyed by
+/// (mtime, size), so without this a parser fix silently keeps serving the
+/// aggregates computed by the old parser for files that never changed —
+/// which is exactly how the Codex quota snapshots came back empty.
+const CACHE_VERSION: u32 = 3;
 /// Session files older than this are ignored outright — the panel only ever
 /// shows 30-day windows, and the extra margin keeps month boundaries honest.
 const MAX_SCAN_DAYS: u64 = 45;
@@ -60,6 +64,31 @@ impl Bucket {
     }
 }
 
+/// One quota window as the provider reports it. Codex writes these into every
+/// `token_count` event, which makes them the only authoritative limit numbers
+/// available offline — Claude Code and SayKnow CLI log no equivalent, so their
+/// windows have to be derived from timestamps instead.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RateWindow {
+    pub used_percent: f64,
+    pub window_minutes: u64,
+    /// Unix seconds.
+    pub resets_at: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RateLimits {
+    /// Timestamp of the event this snapshot came from. A snapshot is only
+    /// meaningful next to its capture time: percentages from a month ago say
+    /// nothing about the window you're in now.
+    pub captured_at: String,
+    pub plan_type: Option<String>,
+    /// Short window — 300 minutes (5h) in Codex's case.
+    pub primary: Option<RateWindow>,
+    /// Long window — 10080 minutes (7 days).
+    pub secondary: Option<RateWindow>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct FileAgg {
     mtime: u64,
@@ -70,10 +99,14 @@ struct FileAgg {
     /// a flat lifetime total made retired models look current.
     model_days: HashMap<String, HashMap<String, u64>>,
     last_ts: Option<String>,
+    #[serde(default)]
+    rate_limits: Option<RateLimits>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct Cache {
+    #[serde(default)]
+    version: u32,
     #[serde(default)]
     files: HashMap<String, FileAgg>,
 }
@@ -95,9 +128,11 @@ pub struct AgentReport {
     pub model_days: HashMap<String, HashMap<String, u64>>,
     pub last_ts: Option<String>,
     pub files: usize,
+    /// Provider-reported quota windows, when the agent logs them.
+    pub rate_limits: Option<RateLimits>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Skc,
     ClaudeCode,
@@ -313,6 +348,38 @@ fn parse_claude(v: &Value) -> Option<Turn> {
     })
 }
 
+fn window_from(v: Option<&Value>) -> Option<RateWindow> {
+    let o = v?.as_object()?;
+    Some(RateWindow {
+        used_percent: o.get("used_percent")?.as_f64()?,
+        window_minutes: o.get("window_minutes").and_then(|x| x.as_u64()).unwrap_or(0),
+        resets_at: o.get("resets_at").and_then(|x| x.as_i64()).unwrap_or(0),
+    })
+}
+
+/// Codex attaches the live quota snapshot to every `token_count` event.
+fn parse_codex_limits(v: &Value) -> Option<RateLimits> {
+    let payload = v.get("payload")?.as_object()?;
+    if payload.get("type").and_then(|t| t.as_str()) != Some("token_count") {
+        return None;
+    }
+    let rl = payload.get("rate_limits")?.as_object()?;
+    let primary = window_from(rl.get("primary"));
+    let secondary = window_from(rl.get("secondary"));
+    if primary.is_none() && secondary.is_none() {
+        return None;
+    }
+    Some(RateLimits {
+        captured_at: v.get("timestamp")?.as_str()?.to_string(),
+        plan_type: rl
+            .get("plan_type")
+            .and_then(|p| p.as_str())
+            .map(str::to_string),
+        primary,
+        secondary,
+    })
+}
+
 fn parse_codex(v: &Value) -> Option<Turn> {
     // { "timestamp": "...", "type": "event_msg",
     //   "payload": { "type": "token_count", "info": { "last_token_usage": {...} } } }
@@ -363,6 +430,7 @@ fn parse_codex(v: &Value) -> Option<Turn> {
 fn line_is_candidate(kind: Kind, line: &str) -> bool {
     match kind {
         Kind::Skc | Kind::ClaudeCode => line.contains("\"usage\""),
+        // token_count carries both the usage delta and the quota snapshot.
         Kind::Codex => line.contains("token_count"),
     }
 }
@@ -374,6 +442,7 @@ fn parse_file(kind: Kind, path: &Path, mtime: u64, size: u64) -> FileAgg {
         hours: HashMap::new(),
         model_days: HashMap::new(),
         last_ts: None,
+        rate_limits: None,
     };
     let Ok(file) = fs::File::open(path) else {
         return agg;
@@ -385,6 +454,20 @@ fn parse_file(kind: Kind, path: &Path, mtime: u64, size: u64) -> FileAgg {
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if kind == Kind::Codex {
+            // A zero-token event still carries a fresh quota snapshot, so this
+            // has to happen before the turn is filtered out.
+            if let Some(rl) = parse_codex_limits(&v) {
+                let newer = agg
+                    .rate_limits
+                    .as_ref()
+                    .map(|prev| rl.captured_at > prev.captured_at)
+                    .unwrap_or(true);
+                if newer {
+                    agg.rate_limits = Some(rl);
+                }
+            }
+        }
         let turn = match kind {
             Kind::Skc => parse_skc(&v),
             Kind::ClaudeCode => parse_claude(&v),
@@ -413,10 +496,14 @@ fn cache_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn load_cache(app: &AppHandle) -> Cache {
-    cache_path(app)
+    let cache: Cache = cache_path(app)
         .and_then(|p| fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if cache.version != CACHE_VERSION {
+        return Cache::default();
+    }
+    cache
 }
 
 fn save_cache(app: &AppHandle, cache: &Cache) {
@@ -448,6 +535,7 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
         let mut hours: HashMap<String, Bucket> = HashMap::new();
         let mut model_days: HashMap<String, HashMap<String, u64>> = HashMap::new();
         let mut last_ts: Option<String> = None;
+        let mut rate_limits: Option<RateLimits> = None;
 
         for (path, mtime, size) in &files {
             let key = path.to_string_lossy().to_string();
@@ -471,6 +559,15 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
                     last_ts = Some(ts.clone());
                 }
             }
+            if let Some(rl) = &agg.rate_limits {
+                let newer = rate_limits
+                    .as_ref()
+                    .map(|prev| rl.captured_at > prev.captured_at)
+                    .unwrap_or(true);
+                if newer {
+                    rate_limits = Some(rl.clone());
+                }
+            }
             next.insert(key, agg);
         }
 
@@ -483,12 +580,19 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             model_days,
             last_ts,
             files: files.len(),
+            rate_limits,
         });
     }
 
     // Dropping whatever stayed in `cache.files` evicts entries for files that
     // aged past the cutoff or were deleted, so the cache can't grow forever.
-    save_cache(app, &Cache { files: next });
+    save_cache(
+        app,
+        &Cache {
+            version: CACHE_VERSION,
+            files: next,
+        },
+    );
     reports
 }
 
