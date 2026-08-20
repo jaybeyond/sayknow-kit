@@ -703,3 +703,129 @@ pub async fn agent_usage(app: AppHandle) -> Result<Vec<AgentReport>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Byte-for-byte copy of a real Claude Code status-line payload, taken
+    /// from ~/.claude/hud/cache/stdin.*.json.
+    const CLAUDE_STATUSLINE: &str = r#"{"session_id":"49bfb868","version":"2.1.126","rate_limits":{"five_hour":{"used_percentage":17,"resets_at":1783927200},"seven_day":{"used_percentage":21,"resets_at":1784210400}}}"#;
+
+    /// Byte-for-byte copy of a real Codex token_count event.
+    const CODEX_EVENT: &str = r#"{"timestamp":"2026-05-24T07:49:08.867Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"cache_write_input_tokens":5,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":5174},"last_token_usage":{"input_tokens":40,"cached_input_tokens":4,"cache_write_input_tokens":2,"output_tokens":8,"reasoning_output_tokens":0,"total_tokens":54}},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":12.5,"window_minutes":300,"resets_at":1779626935},"secondary":{"used_percent":40.0,"window_minutes":10080,"resets_at":1780213735},"credits":null,"plan_type":"prolite"}}}"#;
+
+    /// Byte-for-byte copy of a real SayKnow CLI assistant message.
+    const SKC_MESSAGE: &str = r#"{"type":"message","id":"0f12a332","timestamp":"2026-08-17T10:06:01.830Z","message":{"role":"assistant","model":"gpt-5.6-sol","usage":{"input":2287,"output":44,"cacheRead":9984,"cacheWrite":0,"totalTokens":12315,"cost":{"input":0.011435,"output":0.00132,"cacheRead":0.004992,"cacheWrite":0,"total":0.017747}},"timestamp":1755425161830}}"#;
+
+    #[test]
+    fn claude_statusline_percentages_survive_parsing() {
+        let v: Value = serde_json::from_str(CLAUDE_STATUSLINE).unwrap();
+        let rl = v.get("rate_limits").unwrap().as_object().unwrap();
+        let five = claude_window(rl.get("five_hour"), 300).unwrap();
+        let seven = claude_window(rl.get("seven_day"), 10_080).unwrap();
+        assert_eq!(five.used_percent, 17.0);
+        assert_eq!(five.window_minutes, 300);
+        assert_eq!(five.resets_at, 1_783_927_200);
+        assert_eq!(seven.used_percent, 21.0);
+        assert_eq!(seven.window_minutes, 10_080);
+    }
+
+    #[test]
+    fn codex_limits_are_read_from_the_event() {
+        let v: Value = serde_json::from_str(CODEX_EVENT).unwrap();
+        let rl = parse_codex_limits(&v).unwrap();
+        assert_eq!(rl.plan_type.as_deref(), Some("prolite"));
+        let p = rl.primary.unwrap();
+        assert_eq!(p.used_percent, 12.5);
+        assert_eq!(p.window_minutes, 300);
+        let s = rl.secondary.unwrap();
+        assert_eq!(s.used_percent, 40.0);
+        assert_eq!(s.window_minutes, 10_080);
+    }
+
+    #[test]
+    fn codex_sums_the_delta_not_the_running_total() {
+        let v: Value = serde_json::from_str(CODEX_EVENT).unwrap();
+        let turn = parse_codex(&v).unwrap();
+        // total_token_usage says 5174; last_token_usage says 54. Summing the
+        // former across a session multiplies the real figure by the turn count.
+        assert_eq!(turn.b.total, 54);
+        assert_eq!(turn.b.input, 40);
+        assert_eq!(turn.b.cache_read, 4);
+    }
+
+    #[test]
+    fn skc_reads_tokens_and_cost_from_the_message() {
+        let v: Value = serde_json::from_str(SKC_MESSAGE).unwrap();
+        let turn = parse_skc(&v).unwrap();
+        assert_eq!(turn.b.total, 12_315);
+        assert_eq!(turn.b.cache_read, 9_984);
+        assert!((turn.b.cost_usd - 0.017747).abs() < 1e-9);
+        assert_eq!(turn.model.as_deref(), Some("gpt-5.6-sol"));
+        // message.timestamp is a number in real logs, so the record-level
+        // RFC3339 string is what has to win.
+        assert_eq!(turn.ts, "2026-08-17T10:06:01.830Z");
+    }
+
+    #[test]
+    fn claude_skips_synthetic_bookkeeping_turns() {
+        let real = r#"{"timestamp":"2026-07-13T10:00:00.000Z","message":{"model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40}}}"#;
+        let synthetic = r#"{"timestamp":"2026-07-13T10:00:00.000Z","message":{"model":"<synthetic>","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let turn = parse_claude(&serde_json::from_str(real).unwrap()).unwrap();
+        assert_eq!(turn.b.total, 100);
+        assert!(parse_claude(&serde_json::from_str(synthetic).unwrap()).is_none());
+    }
+
+    #[test]
+    fn hour_keys_reject_non_zulu_timestamps() {
+        assert_eq!(hour_key("2026-08-19T16:05:01.938Z").unwrap(), "2026-08-19T16");
+        assert!(hour_key("2026-08-19T16:05:01+09:00").is_none());
+        assert!(hour_key("nonsense").is_none());
+    }
+
+    /// Exercises the exact function the command calls, against a real
+    /// directory layout on disk — this is the whole path from "a status line
+    /// cached its stdin" to "the panel has a percentage to draw".
+    #[test]
+    fn claude_limits_are_read_off_the_disk() {
+        let base = std::env::temp_dir().join(format!(
+            "sayknow-usage-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache = base.join(".claude/hud/cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("stdin.old.json"), CLAUDE_STATUSLINE).unwrap();
+
+        let read = claude_rate_limits(&base).expect("payload should be found");
+        assert_eq!(read.primary.as_ref().unwrap().used_percent, 17.0);
+        assert_eq!(read.secondary.as_ref().unwrap().used_percent, 21.0);
+
+        // A newer payload must win over an older one.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(
+            base.join(".claude/statusline-input.json"),
+            r#"{"rate_limits":{"five_hour":{"used_percentage":63.5,"resets_at":9999999999},"seven_day":{"used_percentage":88.25,"resets_at":9999999999}}}"#,
+        )
+        .unwrap();
+        let read = claude_rate_limits(&base).expect("payload should be found");
+        assert_eq!(read.primary.as_ref().unwrap().used_percent, 63.5);
+        assert_eq!(read.secondary.as_ref().unwrap().used_percent, 88.25);
+
+        // Payloads without the field are ignored rather than zeroing the card.
+        fs::write(cache.join("stdin.nolimits.json"), r#"{"session_id":"x"}"#).unwrap();
+        assert!(claude_rate_limits(&base).is_some());
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn epoch_formats_back_to_the_same_instant() {
+        // 1783927200 is the five_hour reset in the captured payload.
+        assert_eq!(epoch_to_iso(1_783_927_200), "2026-07-13T07:20:00Z");
+        assert_eq!(epoch_to_iso(0), "1970-01-01T00:00:00Z");
+    }
+}
