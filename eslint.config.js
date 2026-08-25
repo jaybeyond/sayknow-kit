@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Build output, not source. src-tauri/target holds tauri codegen assets
+  // that otherwise get linted as if we wrote them.
+  globalIgnores(['dist', 'src-tauri/target', 'src-tauri/gen']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -18,5 +20,13 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+  },
+  {
+    // Vendored shadcn/ui primitives: each file pairs a component with its cva
+    // variants by design, which the fast-refresh rule counts as a mixed
+    // export. Upstream ships them this way; splitting them would fork the
+    // vendor code for a dev-server nicety.
+    files: ['src/components/ui/**/*.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 ])

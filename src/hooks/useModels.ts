@@ -23,30 +23,42 @@ function isOcpLike(baseURL: string): boolean {
 
 export function useModels(apiKey: string, baseURL: string) {
   const ocpLike = isOcpLike(baseURL)
-  const [models, setModels] = useState<OpenRouterModel[]>(() => {
+  const [fetched, setFetched] = useState<OpenRouterModel[]>(() => {
     const cached = storage.get<Cache>(cacheKey(baseURL))
-    return cached?.data ?? (ocpLike ? CLAUDE_CLI_MODELS : [])
+    return cached?.data ?? []
   })
+  // Switching endpoints adopts that endpoint's cache during render instead of
+  // in an effect, so the dropdown never shows the previous provider's models
+  // for a frame.
+  const [loadedFor, setLoadedFor] = useState(baseURL)
+  if (loadedFor !== baseURL) {
+    setLoadedFor(baseURL)
+    setFetched(storage.get<Cache>(cacheKey(baseURL))?.data ?? [])
+  }
+  // OCP-style endpoints get a known Claude list until the probe returns, so
+  // the dropdown is never empty. Derived, so no effect has to seed state.
+  const models = fetched.length > 0 ? fetched : ocpLike ? CLAUDE_CLI_MODELS : []
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!baseURL) return
-    // For OCP-style endpoints, prime the dropdown with known Claude models
-    // so it's never empty while the network probe is in flight.
-    if (ocpLike) {
-      setModels((prev) => (prev.length === 0 ? CLAUDE_CLI_MODELS : prev))
-    }
     if (!apiKey && !ocpLike) return
     const key = cacheKey(baseURL)
     const cached = storage.get<Cache>(key)
     const fresh = cached && Date.now() - cached.fetchedAt < TTL_MS
     if (fresh && cached.data.length > 0) {
-      setModels(cached.data)
+      // Already have it; the render-time key check below adopts the cache.
       return
     }
-    setLoading(true)
-    setError(null)
+    let cancelled = false
+    // Flags are flipped from the async callbacks, not synchronously here, so
+    // mounting doesn't cascade an extra render before the request even starts.
+    void Promise.resolve().then(() => {
+      if (cancelled) return
+      setLoading(true)
+      setError(null)
+    })
     fetchModels(apiKey, baseURL)
       .then((list) => {
         // Empty list from OCP / Ollama is common before they're configured —
@@ -55,17 +67,20 @@ export function useModels(apiKey: string, baseURL: string) {
         const sorted = [...list].sort((a, b) =>
           (a.name ?? a.id).localeCompare(b.name ?? b.id),
         )
-        setModels(sorted)
+        setFetched(sorted)
         storage.set(key, { fetchedAt: Date.now(), data: sorted })
       })
       .catch((e) => {
-        if (ocpLike) {
-          setModels((prev) => (prev.length === 0 ? CLAUDE_CLI_MODELS : prev))
-          return
-        }
+        // The derived fallback already covers OCP, so a failed probe there is
+        // not an error the user needs to see.
+        if (ocpLike) return
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => setLoading(false))
+
+    return () => {
+      cancelled = true
+    }
   }, [apiKey, baseURL, ocpLike])
 
   return { models, loading, error }

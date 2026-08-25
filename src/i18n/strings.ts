@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // UI string dictionary. Keys are stable identifiers; ko is the canonical source.
 // Missing translations fall back to en, then to the key.
 

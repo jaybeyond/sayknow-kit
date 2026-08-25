@@ -49,8 +49,14 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Type-check + frontend build
         run: pnpm build
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Tauri build (no bundle)
         run: pnpm tauri build --no-bundle ${{ matrix.args }}

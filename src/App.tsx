@@ -26,8 +26,13 @@ function MainRoot() {
   const { t } = useT(settings.uiLocale)
   const contentRef = useRef<HTMLDivElement>(null)
   // Read pin state via ref so the listeners don't need to re-bind every toggle.
+  // Written in an effect, not during render: a ref mutation in the render body
+  // is a side effect, and under concurrent rendering it can run for a pass
+  // that never commits.
   const pinnedRef = useRef(settings.pinned)
-  pinnedRef.current = settings.pinned
+  useEffect(() => {
+    pinnedRef.current = settings.pinned
+  }, [settings.pinned])
 
   // Push the resolved "Quit SayKnow Kit" label and the tray tooltip to the native
   // tray whenever the UI locale settles. The Rust side only bakes in a

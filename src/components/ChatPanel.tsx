@@ -71,12 +71,17 @@ export function ChatPanel({ settings, update }: Props) {
     el.scrollTop = el.scrollHeight
   }, [messages, sending])
 
-  // Reset edit state when switching conversation.
-  useEffect(() => {
+  // Reset edit state when switching conversation. Adjusted during render
+  // rather than in an effect: React re-runs this component immediately with
+  // the corrected state instead of committing the stale draft first and then
+  // cascading a second render.
+  const [lastConversationId, setLastConversationId] = useState(current?.id)
+  if (current?.id !== lastConversationId) {
+    setLastConversationId(current?.id)
     setEditingId(null)
     setDraft("")
     setError(null)
-  }, [current?.id, setError])
+  }
 
   function submit() {
     const text = draft.trim()

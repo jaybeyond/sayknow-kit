@@ -56,7 +56,9 @@ export function useOcpDaemon(active: boolean, baseURL?: string) {
   const [logs, setLogs] = useState<string[]>([])
   const [startedAt, setStartedAt] = useState<number | null>(null)
   const startedAtRef = useRef<number | null>(null)
-  startedAtRef.current = startedAt
+  useEffect(() => {
+    startedAtRef.current = startedAt
+  }, [startedAt])
 
   const refresh = useCallback(async () => {
     if (!isTauri()) return
@@ -70,9 +72,13 @@ export function useOcpDaemon(active: boolean, baseURL?: string) {
     }
   }, [baseURL])
 
-  // Initial + periodic poll while the OCP card is active.
+  // Initial + periodic poll while the OCP card is active. This is an effect
+  // synchronising with an external system (a daemon we don't control), which
+  // is what effects are for — the lint rule can't tell that apart from
+  // derived state being written back.
   useEffect(() => {
     if (!active || !isTauri()) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh()
     const id = window.setInterval(refresh, 2500)
     return () => window.clearInterval(id)
@@ -169,6 +175,9 @@ export function useOcpDaemon(active: boolean, baseURL?: string) {
     const alreadyInstalled = !!env.ocpPath && !!env.claudePath && !!env.nodePath
     if (!alreadyInstalled) return
     autoStartedRef.current = true
+    // Same rationale as the poll above: this starts an external process once
+    // the environment reports it is already installed.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void start()
   }, [active, env.running, env.ocpPath, env.claudePath, env.nodePath, action, start])
 

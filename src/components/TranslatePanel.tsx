@@ -117,7 +117,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       try {
         const text = (await readClipboardText())?.trim() ?? ""
         if (text && text !== input.trim()) {
-          setInput(text)
+          changeInput(text)
         }
       } catch {
         /* clipboard empty or denied */
@@ -135,7 +135,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     if (!injectedInput) return
     const text = injectedInput.text.trim()
     if (!text) return
-    setInput(text)
+    changeInput(text)
     setOutput("")
     setError(null)
   }, [injectedInput?.nonce])
@@ -205,11 +205,9 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   useEffect(() => {
     if (!settings.autoTranslate) return
     const text = debounced.trim()
-    if (text.length < 2) {
-      setOutput("")
-      setError(null)
-      return
-    }
+    // Clearing on short input is handled by changeInput(), where the change
+    // actually originates — an effect would cascade an extra render.
+    if (text.length < 2) return
     // Skip if this exact input already has a result (e.g. just restored from
     // history or finished a previous translate).
     if (text === lastTranslatedRef.current) return
@@ -225,14 +223,18 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     settings.to,
   ])
 
-  useEffect(() => {
-    if (input.trim().length < 2) {
+  /// Single entry point for input changes: too-short input drops any stale
+  /// result and cancels an in-flight call, in the handler rather than an
+  /// effect watching the value.
+  function changeInput(next: string) {
+    setInput(next)
+    if (next.trim().length < 2) {
       setOutput("")
       setError(null)
       lastTranslatedRef.current = ""
       abortRef.current?.abort()
     }
-  }, [input])
+  }
 
   function forceTranslate() {
     runTranslate(input)
@@ -312,7 +314,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
 
   function restoreHistory(e: HistoryEntry) {
     abortRef.current?.abort()
-    setInput(e.source)
+    changeInput(e.source)
     setOutput(e.target)
     // Mark this input as already-translated so the debounced auto-translate
     // doesn't fire a redundant call when input settles.
@@ -446,7 +448,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
           <div className="flex min-w-0 flex-1 flex-col px-3 py-2">
             <Textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => changeInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
@@ -478,7 +480,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
           <div className="px-3 pt-3">
             <Textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => changeInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
