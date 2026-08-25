@@ -38,6 +38,21 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - ♻️ **Regenerate / ✏️ edit / 📋 copy / ⏹ stop** — per-message actions
 - 🧠 **Shared model** — reuses the model you picked for translation
 
+### Clipboard
+- 📋 **Clipboard history** — everything you copy, captured in the background and searchable across text and notes
+- 📝 **Notes** — annotate an entry so you remember why you kept it
+- 📌 **Pin** — pinned entries survive both the size cap and a clear
+- ➡️ **Send to translate** — push any entry straight into the translate tab
+- 🧹 **Two-tier clear** — drop the unpinned, or wipe everything
+- 🔒 **Skips secrets** — blanks, OTP-shaped strings and PEM key blobs are never stored
+
+### Usage
+- 📊 **Agent usage** — Claude Code, Codex and SayKnow CLI, read from the session logs they already write locally
+- ⏱ **5-hour blocks** — the billing window subscriptions actually meter on, with time left and burn rate
+- 🚦 **Real quota** — provider-reported 5-hour and weekly percentages with reset times, where the CLI records them
+- 🔍 **Honest staleness** — a window that has already reset is struck through, never drawn as your current level
+- 🔌 **No network** — nothing is uploaded and no extra sign-in is required
+
 ### Providers
 - 🌐 **OpenRouter BYOK** — searchable combobox over 360+ models, automatic fallback model retry
 - 🤖 **OCP (Open Claude Proxy)** — expose the local Claude CLI as an OpenAI-compatible API. **One-tap install** (clones the repo, `npm install`, `node setup.mjs`) with live log streaming

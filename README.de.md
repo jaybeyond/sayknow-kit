@@ -24,6 +24,8 @@ SayKnow Kit lebt in der **macOS-Menüleiste**. Ein Tastenkürzel öffnet ein kle
 
 ## Funktionen
 
+- 📊 **Verbrauchs-Tab** — Claude Code, Codex und SayKnow CLI, gelesen aus den Sitzungsprotokollen, die sie ohnehin lokal schreiben. Zeigt den 5-Stunden-Abrechnungsblock (Restzeit, Verbrauchsrate) sowie die von der CLI aufgezeichneten echten 5-Stunden- und Wochenwerte samt Reset-Zeit. Ein bereits zurückgesetztes Fenster wird durchgestrichen und nie als aktueller Stand gezeigt. Ohne Netzwerk und ohne zusätzliche Anmeldung
+- 📋 **Zwischenablage-Tab** — im Hintergrund erfasster Verlauf, durchsuchbar über Text und Notizen, mit Anheften, Senden an die Übersetzung und zweistufigem Löschen. Leeres, OTP-artige Strings und PEM-Schlüsselblöcke werden nie gespeichert
 - 💬 **Chat-Tab** — leichtes Q&A im selben Fenster, Multi-Konversation in der Seitenleiste, pro Nachricht: regenerieren / bearbeiten / kopieren / stoppen
 - 🤖 **Mehrere Anbieter** — OpenRouter / OCP / beliebiger OpenAI-kompatibler Endpoint
 - 📦 **OCP-Einrichtung per Klick** — die App führt `git clone → npm install → setup.mjs` selbst aus, mit Live-Log

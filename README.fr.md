@@ -24,6 +24,8 @@ SayKnow Kit vit dans la **barre de menu macOS**. Un raccourci ouvre une petite f
 
 ## Fonctionnalités
 
+- 📊 **Onglet usage** — Claude Code, Codex et SayKnow CLI lus dans les journaux de session qu'ils écrivent déjà en local. Affiche le bloc de facturation de 5 h (temps restant, rythme de consommation) et les pourcentages réels 5 h et hebdomadaires enregistrés par la CLI, avec leur heure de réinitialisation. Une fenêtre déjà réinitialisée est barrée, jamais présentée comme votre niveau actuel. Sans réseau ni connexion supplémentaire
+- 📋 **Onglet presse-papiers** — historique capturé en arrière-plan, cherchable sur le texte et les notes, avec épinglage, envoi vers la traduction et effacement à deux niveaux. Vides, chaînes de type OTP et blocs de clé PEM ne sont jamais stockés
 - 💬 **Onglet Chat** — Q&R léger dans la même fenêtre, barre latérale multi-conversation, actions par message : régénérer / éditer / copier / arrêter
 - 🤖 **Multi-fournisseur** — OpenRouter / OCP / tout endpoint compatible OpenAI
 - 📦 **Installation OCP en un clic** — l'app lance `git clone → npm install → setup.mjs` pour vous, logs en direct
