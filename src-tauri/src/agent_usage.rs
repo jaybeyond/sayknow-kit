@@ -31,7 +31,7 @@ const CACHE_FILE: &str = "agent-usage.json";
 /// (mtime, size), so without this a parser fix silently keeps serving the
 /// aggregates computed by the old parser for files that never changed —
 /// which is exactly how the Codex quota snapshots came back empty.
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 /// Session files older than this are ignored outright — the panel only ever
 /// shows 30-day windows, and the extra margin keeps month boundaries honest.
 const MAX_SCAN_DAYS: u64 = 45;
@@ -238,9 +238,17 @@ struct Turn {
 }
 
 fn parse_skc(v: &Value) -> Option<Turn> {
-    // { "model": "...", "usage": { input, output, cacheRead, cacheWrite,
-    //   totalTokens, cost: { total } }, "ts": "..." }
-    let holder = find_usage_holder(v, 0)?;
+    // { "type": "message", "timestamp": "...", "message": { "model": "...",
+    //   "usage": { input, output, cacheRead, cacheWrite, totalTokens,
+    //   cost: { total } } } }
+    //
+    // Only `message.usage` counts. Tool results embed the *tool provider's*
+    // own accounting further down (generate_image and web_search put an
+    // {inputTokens, outputTokens, totalTokens} object under
+    // message.details[.response]), which is a different meter entirely —
+    // SayKnow CLI doesn't even price it. A recursive search for "the first
+    // object with a usage map" swept those in as if they were turn usage.
+    let holder = v.get("message")?.as_object()?;
     let u = holder.get("usage")?.as_object()?;
     let ts = holder
         .get("ts")
@@ -285,31 +293,6 @@ fn parse_skc(v: &Value) -> Option<Turn> {
             cost_usd: cost,
         },
     })
-}
-
-/// SKC nests the accounted message at varying depths depending on record type,
-/// so walk until we hit the object that owns a `usage` map.
-fn find_usage_holder(v: &Value, depth: usize) -> Option<&serde_json::Map<String, Value>> {
-    if depth > 6 {
-        return None;
-    }
-    match v {
-        Value::Object(map) => {
-            if map.get("usage").map(|u| u.is_object()).unwrap_or(false) {
-                return Some(map);
-            }
-            for val in map.values() {
-                if let Some(found) = find_usage_holder(val, depth + 1) {
-                    return Some(found);
-                }
-            }
-            None
-        }
-        Value::Array(items) => items
-            .iter()
-            .find_map(|item| find_usage_holder(item, depth + 1)),
-        _ => None,
-    }
 }
 
 fn parse_claude(v: &Value) -> Option<Turn> {
@@ -766,6 +749,19 @@ mod tests {
         // message.timestamp is a number in real logs, so the record-level
         // RFC3339 string is what has to win.
         assert_eq!(turn.ts, "2026-08-17T10:06:01.830Z");
+    }
+
+    /// A real tool result: the image/search provider reports its own tokens
+    /// under message.details, in a different schema and with no price. That is
+    /// not the agent's turn usage and must not be counted as such.
+    #[test]
+    fn skc_ignores_tool_provider_accounting() {
+        let tool_result = r#"{"type":"message","id":"746e893c","timestamp":"2026-08-17T14:10:07.036Z","message":{"role":"toolResult","toolName":"web_search","content":[{"type":"text","text":"..."}],"details":{"response":{"usage":{"inputTokens":36736,"outputTokens":2585,"totalTokens":41881}}}}}"#;
+        assert!(parse_skc(&serde_json::from_str(tool_result).unwrap()).is_none());
+
+        // The assistant turn right next to it still parses.
+        let turn = parse_skc(&serde_json::from_str(SKC_MESSAGE).unwrap()).unwrap();
+        assert_eq!(turn.b.total, 12_315);
     }
 
     #[test]
