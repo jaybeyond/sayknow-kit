@@ -62,6 +62,94 @@ fn safe_move_to_tray(app: &AppHandle) {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = win.move_window(Position::TrayCenter);
     }));
+    ensure_on_screen(&win);
+}
+
+/// A rectangle in physical pixels: (x, y, width, height).
+type Rect = (i32, i32, u32, u32);
+
+/// Area of the window that falls inside `monitor`.
+fn overlap_area(win: Rect, monitor: Rect) -> i64 {
+    let (wx, wy, ww, wh) = win;
+    let (mx, my, mw, mh) = monitor;
+    let x = (wx + ww as i32).min(mx + mw as i32) - wx.max(mx);
+    let y = (wy + wh as i32).min(my + mh as i32) - wy.max(my);
+    if x <= 0 || y <= 0 {
+        0
+    } else {
+        x as i64 * y as i64
+    }
+}
+
+/// True when no single monitor shows enough of the window to be usable.
+///
+/// The positioner anchors to a tray rect captured at click time. Unplug a
+/// display, change the arrangement, or move the menu bar to another screen and
+/// that rect can point into space that no longer exists — the window then
+/// "opens" somewhere nobody can see it, which reads as the app being broken.
+fn is_offscreen(win: Rect, monitors: &[Rect]) -> bool {
+    let area = win.2 as i64 * win.3 as i64;
+    if area == 0 || monitors.is_empty() {
+        return false;
+    }
+    let best = monitors
+        .iter()
+        .map(|m| overlap_area(win, *m))
+        .max()
+        .unwrap_or(0);
+    // Two thirds keeps a deliberately half-hidden window alone while still
+    // catching one that landed on a detached display.
+    best * 3 < area * 2
+}
+
+/// Top-right of `monitor`, just below the menu bar — where a tray popover
+/// belongs when we have to place it ourselves.
+fn tray_fallback_origin(win: Rect, monitor: Rect, scale: f64) -> (i32, i32) {
+    let margin = (8.0 * scale).round() as i32;
+    let menubar = (26.0 * scale).round() as i32;
+    let x = monitor.0 + monitor.2 as i32 - win.2 as i32 - margin;
+    let y = monitor.1 + menubar;
+    (x.max(monitor.0), y)
+}
+
+fn ensure_on_screen(win: &tauri::WebviewWindow) {
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return;
+    };
+    let Ok(monitors) = win.available_monitors() else {
+        return;
+    };
+    let rects: Vec<Rect> = monitors
+        .iter()
+        .map(|m| {
+            (
+                m.position().x,
+                m.position().y,
+                m.size().width,
+                m.size().height,
+            )
+        })
+        .collect();
+    let win_rect: Rect = (pos.x, pos.y, size.width, size.height);
+    if !is_offscreen(win_rect, &rects) {
+        return;
+    }
+    // Prefer the primary monitor: on macOS that is the one carrying the menu
+    // bar, and therefore the tray icon the user just clicked.
+    let target = win
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| monitors.first().cloned());
+    let Some(monitor) = target else { return };
+    let rect: Rect = (
+        monitor.position().x,
+        monitor.position().y,
+        monitor.size().width,
+        monitor.size().height,
+    );
+    let (x, y) = tray_fallback_origin(win_rect, rect, monitor.scale_factor());
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 fn now_ms() -> i64 {
@@ -1335,4 +1423,67 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod window_placement_tests {
+    use super::{is_offscreen, overlap_area, tray_fallback_origin, Rect};
+
+    const BUILT_IN: Rect = (0, 0, 3420, 2224);
+    /// External display arranged to the right of the built-in one.
+    const EXTERNAL: Rect = (3420, 0, 2560, 1440);
+    const POPOVER: (u32, u32) = (960, 1160);
+
+    fn win_at(x: i32, y: i32) -> Rect {
+        (x, y, POPOVER.0, POPOVER.1)
+    }
+
+    #[test]
+    fn a_window_on_a_live_monitor_is_left_alone() {
+        let win = win_at(2000, 40);
+        assert!(!is_offscreen(win, &[BUILT_IN, EXTERNAL]));
+        assert!(!is_offscreen(win_at(3600, 40), &[BUILT_IN, EXTERNAL]));
+    }
+
+    #[test]
+    fn a_window_on_a_detached_display_is_flagged() {
+        // Positioned for a monitor that is no longer connected.
+        let win = win_at(4200, 40);
+        assert!(is_offscreen(win, &[BUILT_IN]));
+    }
+
+    #[test]
+    fn a_mostly_visible_window_is_not_dragged_around() {
+        // Hanging off the right edge by a quarter — still usable, leave it.
+        let win = win_at(BUILT_IN.2 as i32 - 720, 40);
+        assert!(!is_offscreen(win, &[BUILT_IN]));
+    }
+
+    #[test]
+    fn overlap_is_zero_when_rects_do_not_touch() {
+        assert_eq!(overlap_area(win_at(4200, 40), BUILT_IN), 0);
+        assert!(overlap_area(win_at(100, 40), BUILT_IN) > 0);
+    }
+
+    #[test]
+    fn fallback_lands_top_right_under_the_menu_bar() {
+        let (x, y) = tray_fallback_origin(win_at(0, 0), BUILT_IN, 2.0);
+        assert_eq!(x, 3420 - 960 - 16);
+        assert_eq!(y, 52);
+        // And it is, by construction, on screen.
+        assert!(!is_offscreen((x, y, POPOVER.0, POPOVER.1), &[BUILT_IN]));
+    }
+
+    #[test]
+    fn fallback_never_pushes_past_the_left_edge() {
+        // Window wider than the monitor: clamp instead of going negative.
+        let narrow: Rect = (0, 0, 600, 800);
+        let (x, _) = tray_fallback_origin((0, 0, 960, 1160), narrow, 1.0);
+        assert_eq!(x, 0);
+    }
+
+    #[test]
+    fn no_monitors_means_no_opinion() {
+        assert!(!is_offscreen(win_at(4200, 40), &[]));
+    }
 }
