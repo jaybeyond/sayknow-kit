@@ -5,15 +5,8 @@ import {
   Copy,
   CornerDownLeft,
   Loader2,
-  Maximize2,
-  Minimize2,
-  Pin,
-  PinOff,
-  Settings as SettingsIcon,
   Sparkles,
   X,
-  Zap,
-  ZapOff,
 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
@@ -27,9 +20,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { LangPicker } from "./LangPicker"
-import { HistoryMenu } from "./HistoryMenu"
 import { useDebounce } from "@/hooks/useDebounce"
 import { useModels } from "@/hooks/useModels"
 import { useHistory } from "@/hooks/useHistory"
@@ -37,12 +28,12 @@ import { useUsage } from "@/hooks/useUsage"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { isTauri } from "@/lib/runtime"
-import type { HistoryEntry } from "@/lib/history"
 import {
   buildRefinePrompt,
   buildTranslatePrompt,
   chat,
   LANGS,
+  type LangCode,
 } from "@/lib/openrouter"
 import { useT } from "@/i18n"
 
@@ -53,6 +44,17 @@ const REFINE_PRESETS = [
   { id: "business", labelKey: "refine.business", instruction: "Use a professional business email tone." },
   { id: "literal", labelKey: "refine.literal", instruction: "Make it more literal." },
 ] as const
+
+/** What the tab strip can push into the translate tab: clipboard text, or a
+ *  history entry complete with its result and language pair. */
+export type TranslateInjection = {
+  text: string
+  output?: string
+  from?: LangCode
+  to?: LangCode
+  /** Changes on every dispatch so identical payloads still trigger. */
+  nonce: number
+}
 
 type Props = {
   settings: Settings
@@ -66,7 +68,7 @@ type Props = {
    * clipboard history entry. We use a nonce so re-injecting the same text
    * still triggers the effect.
    */
-  injectedInput?: { text: string; nonce: number }
+  injectedInput?: TranslateInjection
 }
 
 export function TranslatePanel({ settings, update, injectedInput }: Props) {
@@ -80,13 +82,9 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const [refineText, setRefineText] = useState("")
   const abortRef = useRef<AbortController | null>(null)
   const { models } = useModels(settings.apiKey, settings.baseURL)
-  const {
-    entries: historyEntries,
-    add: addHistory,
-    remove: removeHistory,
-    togglePin: toggleHistoryPin,
-    clear: clearHistory,
-  } = useHistory()
+  // History is listed and restored from the tab strip; this panel only files
+  // new entries into it.
+  const { add: addHistory } = useHistory()
   const { record: recordUsage } = useUsage()
 
   const debounced = useDebounce(input, 1500)
@@ -135,9 +133,18 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     if (!injectedInput) return
     const text = injectedInput.text.trim()
     if (!text) return
+    abortRef.current?.abort()
     changeInput(text)
-    setOutput("")
+    // A history entry arrives with its result attached; marking the input as
+    // already-translated stops the debounce from paying for it twice.
+    setOutput(injectedInput.output ?? "")
+    lastTranslatedRef.current = injectedInput.output ? text : ""
     setError(null)
+    setTranslating(false)
+    setRefining(false)
+    if (injectedInput.from && injectedInput.to) {
+      update({ from: injectedInput.from, to: injectedInput.to })
+    }
   }, [injectedInput?.nonce])
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
@@ -312,18 +319,6 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     setRefineText("")
   }
 
-  function restoreHistory(e: HistoryEntry) {
-    abortRef.current?.abort()
-    changeInput(e.source)
-    setOutput(e.target)
-    // Mark this input as already-translated so the debounced auto-translate
-    // doesn't fire a redundant call when input settles.
-    lastTranslatedRef.current = e.source.trim()
-    setError(null)
-    setTranslating(false)
-    setRefining(false)
-    update({ from: e.from, to: e.to })
-  }
 
   const targetLang =
     LANGS.find((l) => l.code === settings.to)?.label ?? settings.to
@@ -389,58 +384,6 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
           onChange={(v) => update({ to: v })}
           uiLocale={settings.uiLocale}
         />
-        <div className="ml-auto flex items-center">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() =>
-              update({
-                windowMode:
-                  settings.windowMode === "compact" ? "normal" : "compact",
-              })
-            }
-            aria-label={
-              settings.windowMode === "compact"
-                ? t("header.expand")
-                : t("header.compact")
-            }
-            title={
-              settings.windowMode === "compact"
-                ? t("header.expand")
-                : t("header.compact")
-            }
-          >
-            {settings.windowMode === "compact" ? (
-              <Maximize2 className="h-3.5 w-3.5" />
-            ) : (
-              <Minimize2 className="h-3.5 w-3.5" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => update({ pinned: !settings.pinned })}
-            aria-label={settings.pinned ? t("header.unpin") : t("header.pin")}
-            title={settings.pinned ? t("header.pinned") : t("header.pin")}
-          >
-            {settings.pinned ? (
-              <Pin className="h-3.5 w-3.5 fill-current" />
-            ) : (
-              <PinOff className="h-3.5 w-3.5" />
-            )}
-          </Button>
-          <HistoryMenu
-            entries={historyEntries}
-            onRestore={restoreHistory}
-            onRemove={removeHistory}
-            onTogglePin={toggleHistoryPin}
-            onClear={clearHistory}
-            uiLocale={settings.uiLocale}
-          />
-          <QuickMenu settings={settings} update={update} />
-        </div>
       </div>
 
       {isCompact ? (
@@ -620,94 +563,5 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
         </div>
       )}
     </div>
-  )
-}
-
-function QuickMenu({
-  settings,
-  update,
-}: {
-  settings: Settings
-  update: (patch: Partial<Settings>) => void
-}) {
-  const { t } = useT(settings.uiLocale)
-  const [open, setOpen] = useState(false)
-
-  async function openSettings() {
-    setOpen(false)
-    if (isTauri()) {
-      try {
-        await invoke("open_settings")
-      } catch (e) {
-        console.error("open_settings failed:", e)
-      }
-    }
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          aria-label={t("header.settings")}
-        >
-          <SettingsIcon className="h-3.5 w-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={6} className="w-[260px] p-3">
-        <div className="space-y-3">
-          <div>
-            <Label className="text-[11px]">{t("settings.mode")}</Label>
-            <div className="mt-1.5 grid grid-cols-2 gap-1">
-              <Button
-                size="sm"
-                variant={settings.autoTranslate ? "secondary" : "ghost"}
-                className="h-8 text-[11px]"
-                onClick={() => update({ autoTranslate: true })}
-              >
-                <Zap className="h-3 w-3" />
-                {t("settings.mode.auto")}
-              </Button>
-              <Button
-                size="sm"
-                variant={!settings.autoTranslate ? "secondary" : "ghost"}
-                className="h-8 text-[11px]"
-                onClick={() => update({ autoTranslate: false })}
-              >
-                <ZapOff className="h-3 w-3" />
-                {t("settings.mode.manual")}
-              </Button>
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="qm-clipboard" className="text-[11px]">
-              {t("settings.clipboard.title")}
-            </Label>
-            <Switch
-              id="qm-clipboard"
-              checked={settings.clipboardOnHotkey}
-              onCheckedChange={(v) => update({ clipboardOnHotkey: v })}
-            />
-          </div>
-
-          <Separator />
-
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full text-xs"
-            onClick={openSettings}
-          >
-            <SettingsIcon className="h-3 w-3" />
-            {t("settings.openButton")}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
   )
 }

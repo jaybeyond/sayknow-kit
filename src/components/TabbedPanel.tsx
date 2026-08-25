@@ -3,9 +3,18 @@ import {
   Clipboard as ClipboardIcon,
   Gauge,
   Languages as TranslateIcon,
+  Maximize2,
   MessageSquare,
+  Minimize2,
+  Pin,
+  PinOff,
 } from "lucide-react"
-import { TranslatePanel } from "./TranslatePanel"
+import { Button } from "@/components/ui/button"
+import { HistoryMenu } from "./HistoryMenu"
+import { QuickMenu } from "./QuickMenu"
+import { useHistory } from "@/hooks/useHistory"
+import type { HistoryEntry } from "@/lib/history"
+import { TranslatePanel, type TranslateInjection } from "./TranslatePanel"
 import { ChatPanel } from "./ChatPanel"
 import { ClipboardPanel } from "./ClipboardPanel"
 import { UsagePanel } from "./UsagePanel"
@@ -31,12 +40,16 @@ export function TabbedPanel(props: Props) {
   const [tab, setTab] = useState<Tab>(
     () => (storage.get<Tab>(TAB_KEY) ?? "translate") as Tab,
   )
-  // Text the clipboard tab wants the translate tab to pick up. nonce changes
-  // every dispatch so identical text can be re-sent.
-  const [pendingTranslateInput, setPendingTranslateInput] = useState<{
-    text: string
-    nonce: number
-  } | null>(null)
+  // What the clipboard tab or the history menu wants the translate tab to pick
+  // up. nonce changes every dispatch so an identical payload still lands.
+  const [pendingTranslateInput, setPendingTranslateInput] =
+    useState<TranslateInjection | null>(null)
+  const {
+    entries: historyEntries,
+    remove: removeHistory,
+    togglePin: toggleHistoryPin,
+    clear: clearHistory,
+  } = useHistory()
 
   function selectTab(next: Tab) {
     setTab(next)
@@ -45,6 +58,19 @@ export function TabbedPanel(props: Props) {
 
   function sendToTranslate(text: string) {
     setPendingTranslateInput({ text, nonce: Date.now() })
+    selectTab("translate")
+  }
+
+  // Restoring carries the result and language pair too, so the translate tab
+  // shows the entry exactly as it was rather than re-running it.
+  function restoreHistory(e: HistoryEntry) {
+    setPendingTranslateInput({
+      text: e.source,
+      output: e.target,
+      from: e.from,
+      to: e.to,
+      nonce: Date.now(),
+    })
     selectTab("translate")
   }
 
@@ -79,6 +105,68 @@ export function TabbedPanel(props: Props) {
           label={t("tab.usage")}
           onClick={() => selectTab("usage")}
         />
+
+        {/* Window and app-level controls. They used to sit in the translate
+            tab's own header, which meant pin, resize and settings vanished the
+            moment you switched tabs. */}
+        <div className="ml-auto flex items-center">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() =>
+              props.update({
+                windowMode:
+                  props.settings.windowMode === "compact"
+                    ? "normal"
+                    : "compact",
+              })
+            }
+            aria-label={
+              props.settings.windowMode === "compact"
+                ? t("header.expand")
+                : t("header.compact")
+            }
+            title={
+              props.settings.windowMode === "compact"
+                ? t("header.expand")
+                : t("header.compact")
+            }
+          >
+            {props.settings.windowMode === "compact" ? (
+              <Maximize2 className="h-3.5 w-3.5" />
+            ) : (
+              <Minimize2 className="h-3.5 w-3.5" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={() => props.update({ pinned: !props.settings.pinned })}
+            aria-label={
+              props.settings.pinned ? t("header.unpin") : t("header.pin")
+            }
+            title={
+              props.settings.pinned ? t("header.pinned") : t("header.pin")
+            }
+          >
+            {props.settings.pinned ? (
+              <Pin className="h-3.5 w-3.5 fill-current" />
+            ) : (
+              <PinOff className="h-3.5 w-3.5" />
+            )}
+          </Button>
+          <HistoryMenu
+            entries={historyEntries}
+            onRestore={restoreHistory}
+            onRemove={removeHistory}
+            onTogglePin={toggleHistoryPin}
+            onClear={clearHistory}
+            uiLocale={props.settings.uiLocale}
+          />
+          <QuickMenu settings={props.settings} update={props.update} />
+        </div>
       </div>
 
       {/* Active panel */}
