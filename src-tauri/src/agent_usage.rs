@@ -89,6 +89,18 @@ pub struct RateLimits {
     pub secondary: Option<RateWindow>,
 }
 
+/// Sign-in state, when it can be established without touching a secret.
+/// Codex keeps its OAuth tokens in a plaintext `auth.json`, so the `exp`
+/// claim is readable by decoding the JWT body — no signature check, no
+/// credential use, and the token itself never leaves the parser. Claude Code
+/// stores the equivalent in the macOS Keychain, and a menubar utility has no
+/// business prompting for that, so its state stays unreported.
+#[derive(Clone, Serialize)]
+pub struct AuthState {
+    pub expires_at: String,
+    pub expired: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct FileAgg {
     mtime: u64,
@@ -130,6 +142,11 @@ pub struct AgentReport {
     pub files: usize,
     /// Provider-reported quota windows, when the agent logs them.
     pub rate_limits: Option<RateLimits>,
+    /// Sign-in state where it is knowable from plaintext on disk.
+    pub auth: Option<AuthState>,
+    /// True when session data exists outside the scan window, so "no records"
+    /// can be told apart from "older than we look".
+    pub has_older_data: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -564,6 +581,78 @@ fn claude_rate_limits(home: &Path) -> Option<RateLimits> {
     best.map(|(_, rl)| rl)
 }
 
+/// Decode a JWT's `exp` claim. Body only — this never validates or uses the
+/// token, it just reads the expiry that is already sitting in plaintext.
+fn jwt_exp(token: &str) -> Option<i64> {
+    let body = token.split('.').nth(1)?;
+    let mut b = body.replace('-', "+").replace('_', "/");
+    while b.len() % 4 != 0 {
+        b.push('=');
+    }
+    let bytes = base64_decode(&b)?;
+    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("exp")?.as_i64()
+}
+
+/// Minimal standard-alphabet base64 decoder — avoids pulling a crate in for
+/// one field.
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut buf: u32 = 0;
+    let mut bits = 0u32;
+    for ch in s.bytes() {
+        if ch == b'=' {
+            break;
+        }
+        let idx = TBL.iter().position(|&c| c == ch)? as u32;
+        buf = (buf << 6) | idx;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+fn codex_auth(home: &Path) -> Option<AuthState> {
+    let text = fs::read_to_string(home.join(".codex/auth.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let token = v.get("tokens")?.get("access_token")?.as_str()?;
+    let exp = jwt_exp(token)?;
+    Some(AuthState {
+        expires_at: epoch_to_iso(exp.max(0) as u64),
+        expired: exp < now_secs() as i64,
+    })
+}
+
+/// Newest `*.jsonl` mtime under `root`, ignoring the scan cutoff. Used only to
+/// tell "never used" apart from "last used before the window".
+fn newest_file_mtime(dir: &Path, depth: usize) -> Option<u64> {
+    if depth > 8 {
+        return None;
+    }
+    let mut newest = None;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else { continue };
+        let found = if meta.is_dir() {
+            newest_file_mtime(&path, depth + 1)
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            Some(mtime_secs(&meta))
+        } else {
+            None
+        };
+        if let Some(t) = found {
+            if newest.map(|n| t > n).unwrap_or(true) {
+                newest = Some(t);
+            }
+        }
+    }
+    newest
+}
+
 fn cache_path(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_data_dir().ok()?;
     let _ = fs::create_dir_all(&dir);
@@ -647,6 +736,22 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             next.insert(key, agg);
         }
 
+        // Activity older than the scan window still answers "when did I last
+        // use this?", which is the one thing a zeroed card must not get wrong.
+        let mut has_older_data = false;
+        if detected && last_ts.is_none() {
+            if let Some(mt) = newest_file_mtime(&root, 0) {
+                has_older_data = true;
+                last_ts = Some(epoch_to_iso(mt));
+            }
+        }
+
+        let auth = if spec.kind == Kind::Codex {
+            home.as_ref().and_then(|h| codex_auth(h))
+        } else {
+            None
+        };
+
         if spec.kind == Kind::ClaudeCode && rate_limits.is_none() {
             if let Some(h) = &home {
                 rate_limits = claude_rate_limits(h);
@@ -663,6 +768,8 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             last_ts,
             files: files.len(),
             rate_limits,
+            auth,
+            has_older_data,
         });
     }
 
@@ -771,6 +878,42 @@ mod tests {
         let turn = parse_claude(&serde_json::from_str(real).unwrap()).unwrap();
         assert_eq!(turn.b.total, 100);
         assert!(parse_claude(&serde_json::from_str(synthetic).unwrap()).is_none());
+    }
+
+    #[test]
+    fn jwt_exp_is_read_without_touching_the_signature() {
+        // {"exp":1785933904,"iss":"https://auth.openai.com"} — same shape as
+        // the Codex access token, with a garbage signature to prove we never
+        // look at it.
+        let token = "eyJhbGciOiJSUzI1NiJ9.eyJleHAiOjE3ODU5MzM5MDQsImlzcyI6Imh0dHBzOi8vYXV0aC5vcGVuYWkuY29tIn0.not-a-real-signature";
+        assert_eq!(jwt_exp(token), Some(1_785_933_904));
+        assert_eq!(jwt_exp("garbage"), None);
+        assert_eq!(jwt_exp("a.b"), None);
+    }
+
+    #[test]
+    fn codex_auth_expiry_comes_from_the_plaintext_file() {
+        let base = std::env::temp_dir().join(format!(
+            "sayknow-auth-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(base.join(".codex")).unwrap();
+        // exp 1785933904 = 2026-08-05, i.e. already past.
+        let auth = r#"{"auth_mode":"chatgpt","tokens":{"access_token":"eyJhbGciOiJSUzI1NiJ9.eyJleHAiOjE3ODU5MzM5MDQsImlzcyI6Imh0dHBzOi8vYXV0aC5vcGVuYWkuY29tIn0.sig"}}"#;
+        fs::write(base.join(".codex/auth.json"), auth).unwrap();
+
+        let state = codex_auth(&base).expect("auth.json should be readable");
+        assert_eq!(state.expires_at, "2026-08-05T12:45:04Z");
+        assert!(state.expired);
+
+        // No auth.json at all must not be reported as "expired".
+        fs::remove_file(base.join(".codex/auth.json")).unwrap();
+        assert!(codex_auth(&base).is_none());
+
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

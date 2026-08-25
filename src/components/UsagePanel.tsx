@@ -190,8 +190,18 @@ function AgentCard({
 
       {agent.detected && hasAny ? (
         <>
+          {agent.auth?.expired && (
+            <p className="mb-2 rounded-md bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
+              {t("usage.auth.expired")} · {agent.auth.expires_at.slice(0, 10)}
+            </p>
+          )}
           {agent.rate_limits ? (
-            <RateLimitRows limits={agent.rate_limits} t={t} nowMs={nowMs} />
+            <RateLimitRows
+              limits={agent.rate_limits}
+              t={t}
+              nowMs={nowMs}
+              authExpired={agent.auth?.expired ?? false}
+            />
           ) : (
             <BlockRow
               block={block}
@@ -350,10 +360,13 @@ function RateLimitRows({
   limits,
   t,
   nowMs,
+  authExpired,
 }: {
   limits: RateLimits
   t: (k: string) => string
   nowMs: number
+  /** When the CLI is signed out, "just run it again" is not the fix. */
+  authExpired: boolean
 }) {
   // Label by the window the provider reports, never by field position:
   // Codex puts the weekly window in `primary` when no 5-hour window applies,
@@ -418,7 +431,9 @@ function RateLimitRows({
       })}
       {allExpired && (
         <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
-          {t("usage.limit.refreshHint")}
+          {authExpired
+            ? t("usage.limit.signInHint")
+            : t("usage.limit.refreshHint")}
         </p>
       )}
     </div>

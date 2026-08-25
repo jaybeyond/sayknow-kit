@@ -41,6 +41,10 @@ export type AgentReport = {
   files: number
   /** Provider-reported quota windows, when the agent logs them. */
   rate_limits: RateLimits | null
+  /** Sign-in state, only where it is readable without touching a secret. */
+  auth: { expires_at: string; expired: boolean } | null
+  /** Session data exists, but all of it predates the scan window. */
+  has_older_data: boolean
 }
 
 export const EMPTY_BUCKET: Bucket = {
