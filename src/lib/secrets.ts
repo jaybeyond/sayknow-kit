@@ -16,6 +16,20 @@ function bumpRev() {
 export const DEEPL_ACCOUNT = "deepl_api_key"
 export const DEEPL_REV_KEY = "deepl:rev"
 
+// Writes are chained per account. The key field saves on every keystroke, and
+// two overlapping invokes can land out of order — which would leave a
+// truncated key in the Keychain while the field shows the whole thing, i.e. a
+// key that looks right and doesn't work.
+const writeQueue = new Map<string, Promise<void>>()
+
+function enqueue(account: string, op: () => Promise<void>): Promise<void> {
+  const next = (writeQueue.get(account) ?? Promise.resolve())
+    .catch(() => {})
+    .then(op)
+  writeQueue.set(account, next)
+  return next
+}
+
 export const namedSecret = {
   async get(account: string): Promise<string> {
     if (isTauri()) {
@@ -24,15 +38,19 @@ export const namedSecret = {
     }
     return storage.get<string>(`secret:${account}`) ?? ""
   },
-  async set(account: string, key: string): Promise<void> {
-    if (isTauri()) await invoke("set_secret", { account, key })
-    else storage.set(`secret:${account}`, key)
-    storage.set(DEEPL_REV_KEY, Date.now())
+  set(account: string, key: string): Promise<void> {
+    return enqueue(account, async () => {
+      if (isTauri()) await invoke("set_secret", { account, key })
+      else storage.set(`secret:${account}`, key)
+      storage.set(DEEPL_REV_KEY, Date.now())
+    })
   },
-  async clear(account: string): Promise<void> {
-    if (isTauri()) await invoke("delete_secret", { account })
-    else storage.remove(`secret:${account}`)
-    storage.set(DEEPL_REV_KEY, Date.now())
+  clear(account: string): Promise<void> {
+    return enqueue(account, async () => {
+      if (isTauri()) await invoke("delete_secret", { account })
+      else storage.remove(`secret:${account}`)
+      storage.set(DEEPL_REV_KEY, Date.now())
+    })
   },
 }
 
