@@ -58,6 +58,21 @@ fn monitor_containing(point: (i32, i32), monitors: &[Rect]) -> Option<usize> {
     })
 }
 
+/// The window's physical width once it is sitting on a display with
+/// `target_scale`.
+///
+/// `outer_size()` is physical *for the display the window is on right now*. A
+/// 480pt popover measures 960px on a Retina screen and 480px on a 1x one, so
+/// centring a move to the other display with the width it has here puts it
+/// half a window off. Convert back through logical size to get the width it
+/// will actually have when it lands.
+fn window_width_on(current_phys_w: u32, current_scale: f64, target_scale: f64) -> u32 {
+    if current_scale <= 0.0 {
+        return current_phys_w;
+    }
+    ((current_phys_w as f64 / current_scale) * target_scale).round() as u32
+}
+
 /// Where the popover belongs: centred under the tray icon, kept inside the
 /// display the icon is on. All inputs are physical pixels.
 fn tray_anchored_origin(
@@ -93,13 +108,23 @@ fn tray_anchored_origin(
 /// sides in physical pixels.
 fn position_under_tray(app: &AppHandle) -> bool {
     let Some(win) = app.get_webview_window("main") else {
+        log::info!("place: no main window");
         return false;
     };
     let Some(tray) = app.tray_by_id("sayknow-tray") else {
+        log::info!("place: no tray by id");
         return false;
     };
-    let Ok(Some(rect)) = tray.rect() else {
-        return false;
+    let rect = match tray.rect() {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            log::info!("place: tray.rect() = None");
+            return false;
+        }
+        Err(e) => {
+            log::info!("place: tray.rect() failed: {e}");
+            return false;
+        }
     };
     let Ok(win_size) = win.outer_size() else {
         return false;
@@ -131,15 +156,21 @@ fn position_under_tray(app: &AppHandle) -> bool {
             )
         })
         .collect();
-    let index = monitors
-        .iter()
-        .enumerate()
-        .find(|(i, m)| {
-            let p = rect.position.to_physical::<i32>(m.scale_factor());
-            monitor_containing((p.x, p.y), &rects) == Some(*i)
-        })
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+    let found = monitors.iter().enumerate().find(|(i, m)| {
+        let p = rect.position.to_physical::<i32>(m.scale_factor());
+        monitor_containing((p.x, p.y), &rects) == Some(*i)
+    });
+    // A tray rect that sits on no display at all is not a layout we can reason
+    // about — it shows up briefly around startup as (0, screen_height), and
+    // forcing it onto a display anyway put the window below the bottom edge.
+    // Hand those to the fallback, which ends in a visibility check.
+    let Some((index, _)) = found else {
+        log::info!(
+            "place: tray rect {:?} is on no display; falling back",
+            rect.position
+        );
+        return false;
+    };
     let monitor = &monitors[index];
 
     let scale = monitor.scale_factor();
@@ -148,13 +179,37 @@ fn position_under_tray(app: &AppHandle) -> bool {
     let mp = monitor.position();
     let ms = monitor.size();
 
+    let target_w = window_width_on(
+        win_size.width,
+        win.scale_factor().unwrap_or(scale),
+        scale,
+    );
     let (x, y) = tray_anchored_origin(
         (tp.x, tp.y, ts.width as u32, ts.height as u32),
-        win_size.width,
+        target_w,
         (mp.x, mp.y, ms.width, ms.height),
         (8.0 * scale).round() as i32,
     );
-    win.set_position(tauri::PhysicalPosition::new(x, y)).is_ok()
+    // Multi-monitor placement can only be diagnosed from the numbers the app
+    // actually saw; a screenshot of the result doesn't say which display or
+    // scale factor it worked from.
+    log::info!(
+        "place: tray_raw={:?} scale={} tray_phys=({},{},{},{}) monitor#{}=({},{},{},{}) win={}x{} -> ({},{})",
+        rect.position, scale, tp.x, tp.y, ts.width, ts.height,
+        index, mp.x, mp.y, ms.width, ms.height,
+        target_w, win_size.height, x, y
+    );
+    if win
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .is_err()
+    {
+        return false;
+    }
+    // Cheap last look: the arithmetic above is clamped to the target display,
+    // but a display that disappears between reading the monitor list and
+    // moving the window would still strand it.
+    ensure_on_screen(&win);
+    true
 }
 
 fn safe_move_to_tray(app: &AppHandle) {
@@ -1463,13 +1518,25 @@ pub fn run() {
             app.set_activation_policy(ActivationPolicy::Accessory);
             eprintln!("[sayknow] activation policy set (Accessory)");
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Logging in release too. A shipped build had no log of any kind,
+            // so a misplaced window or a failed request could only be guessed
+            // at from a screenshot — twice that cost a diagnosis. Info level
+            // into the standard log directory is cheap and is the difference
+            // between "it's in the wrong place" and knowing which display and
+            // scale factor it worked from.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .targets([
+                        tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::LogDir { file_name: None },
+                        ),
+                        tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::Stdout,
+                        ),
+                    ])
+                    .build(),
+            )?;
 
             // Clipboard history capture. Polls the system pasteboard every
             // 800ms and emits `clipboard:new` for fresh entries. Runs whether
@@ -1582,7 +1649,7 @@ pub fn run() {
 mod window_placement_tests {
     use super::{
         is_offscreen, monitor_containing, overlap_area, tray_anchored_origin,
-        tray_fallback_origin, Rect,
+        tray_fallback_origin, window_width_on, Rect,
     };
 
     const BUILT_IN: Rect = (0, 0, 3420, 2224);
@@ -1653,6 +1720,39 @@ mod window_placement_tests {
         assert_eq!(y, 24);
         assert!(!is_offscreen((x, y, 480, 580), &[EXTERNAL_LEFT]));
         assert!(is_offscreen((x, y, 480, 580), &[BUILTIN]));
+    }
+
+    /// Moving between displays of different density: the popover is 480pt
+    /// wide, which is 960px on the Retina screen and 480px on the 1x one.
+    /// Centring with the width it has *here* rather than the width it will
+    /// have *there* pushed it half a window off — the reported symptom.
+    #[test]
+    fn the_window_is_measured_on_the_display_it_is_moving_to() {
+        // Retina -> 1x: 960px here becomes 480px there.
+        assert_eq!(window_width_on(960, 2.0, 1.0), 480);
+        // 1x -> Retina: 480px here becomes 960px there.
+        assert_eq!(window_width_on(480, 1.0, 2.0), 960);
+        // Same density: unchanged.
+        assert_eq!(window_width_on(960, 2.0, 2.0), 960);
+        // A nonsensical scale is passed through rather than dividing by zero.
+        assert_eq!(window_width_on(960, 0.0, 2.0), 960);
+    }
+
+    #[test]
+    fn centring_uses_the_target_display_width() {
+        // Real numbers from this machine: tray icon at physical x 2012, 68
+        // wide, on the Retina built-in; the popover measures 960 there.
+        let (x, _) = tray_anchored_origin((2012, 0, 68, 78), 960, BUILTIN, 16);
+        assert_eq!(x, 1566);
+        assert_eq!(x + 960 / 2, 2012 + 34);
+
+        // Same icon geometry on the 1x external: the window is 480 there, and
+        // using 960 would land it 240px to the right of the icon.
+        let tray_ext: Rect = (-700, 0, 34, 39);
+        let correct = tray_anchored_origin(tray_ext, 480, EXTERNAL_LEFT, 8);
+        let wrong = tray_anchored_origin(tray_ext, 960, EXTERNAL_LEFT, 8);
+        assert_eq!(correct.0 + 480 / 2, -700 + 17);
+        assert_eq!(correct.0 - wrong.0, 240);
     }
 
     #[test]
