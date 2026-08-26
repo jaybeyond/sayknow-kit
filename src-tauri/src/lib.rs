@@ -106,7 +106,12 @@ fn tray_anchored_origin(
 /// last — which is what "the position keeps being wrong" looks like. Reading
 /// the rect and converting it with the display's real scale factor keeps both
 /// sides in physical pixels.
-fn position_under_tray(app: &AppHandle) -> bool {
+/// `intended_logical_width` is for callers that just asked for a resize:
+/// `set_size` doesn't land before the next run-loop turn, so `outer_size()`
+/// still reports the old width and the window ends up centred for a size it no
+/// longer has. Passing the width we asked for avoids reading a value that
+/// hasn't been applied yet.
+fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> bool {
     let Some(win) = app.get_webview_window("main") else {
         log::info!("place: no main window");
         return false;
@@ -179,11 +184,14 @@ fn position_under_tray(app: &AppHandle) -> bool {
     let mp = monitor.position();
     let ms = monitor.size();
 
-    let target_w = window_width_on(
-        win_size.width,
-        win.scale_factor().unwrap_or(scale),
-        scale,
-    );
+    let target_w = match intended_logical_width {
+        Some(w) => (w * scale).round() as u32,
+        None => window_width_on(
+            win_size.width,
+            win.scale_factor().unwrap_or(scale),
+            scale,
+        ),
+    };
     let (x, y) = tray_anchored_origin(
         (tp.x, tp.y, ts.width as u32, ts.height as u32),
         target_w,
@@ -213,9 +221,13 @@ fn position_under_tray(app: &AppHandle) -> bool {
 }
 
 fn safe_move_to_tray(app: &AppHandle) {
+    safe_move_to_tray_sized(app, None)
+}
+
+fn safe_move_to_tray_sized(app: &AppHandle, intended_logical_width: Option<f64>) {
     // Our own placement is already clamped to the menu bar's display, so it
     // needs no rescue pass.
-    if position_under_tray(app) {
+    if position_under_tray(app, intended_logical_width) {
         return;
     }
     let state = app.state::<AppState>();
@@ -414,8 +426,9 @@ fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), Str
             .map_err(|e| e.to_string())?;
     }
     // Re-anchor under the tray after resize so a smaller window doesn't end
-    // up half-offscreen — but only if positioner has cached the tray rect.
-    safe_move_to_tray(&app);
+    // up half-offscreen. The width we just asked for is passed through, since
+    // the window itself won't report it until the next run-loop turn.
+    safe_move_to_tray_sized(&app, Some(width));
     Ok(())
 }
 
@@ -1753,6 +1766,25 @@ mod window_placement_tests {
         let wrong = tray_anchored_origin(tray_ext, 960, EXTERNAL_LEFT, 8);
         assert_eq!(correct.0 + 480 / 2, -700 + 17);
         assert_eq!(correct.0 - wrong.0, 240);
+    }
+
+    /// Toggling compact/normal resizes then re-anchors. set_size doesn't land
+    /// before the next run-loop turn, so reading the window's own width there
+    /// centres it for the size it no longer has — the window visibly jumps on
+    /// the next open.
+    #[test]
+    fn a_resize_is_anchored_with_the_width_it_asked_for() {
+        let tray: Rect = (2180, 0, 68, 78);
+        // Normal: 480pt -> 960px on this display.
+        let normal = tray_anchored_origin(tray, 960, BUILTIN, 16);
+        assert_eq!(normal.0, 1734);
+        // Compact: 720pt -> 1440px. Wider window, so it starts further left.
+        let compact = tray_anchored_origin(tray, 1440, BUILTIN, 16);
+        assert_eq!(compact.0, 1494);
+        // Both keep the icon centred; the difference is only the extra width.
+        assert_eq!(normal.0 + 960 / 2, compact.0 + 1440 / 2);
+        // Anchoring the compact window with the old width is the 240px jump.
+        assert_eq!(normal.0 - compact.0, 240);
     }
 
     #[test]
