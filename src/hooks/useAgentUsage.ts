@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useSyncExternalStore } from "react"
 import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
@@ -6,7 +6,7 @@ import {
   subscribe,
 } from "@/lib/agent-usage-store"
 
-export function useAgentUsage(active: boolean) {
+export function useAgentUsage(active: boolean, deeplKey = "") {
   // Whether we're in the desktop shell is constant for the window's lifetime.
   const supported = isTauri()
   const state = useSyncExternalStore(subscribe, getSnapshot)
@@ -15,11 +15,16 @@ export function useAgentUsage(active: boolean) {
   // re-renders through useSyncExternalStore rather than a setState in here.
   useEffect(() => {
     if (!active || !supported) return
-    void scanAgentUsage()
-    const onFocus = () => void scanAgentUsage()
+    void scanAgentUsage(false, deeplKey)
+    const onFocus = () => void scanAgentUsage(false, deeplKey)
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
-  }, [active, supported])
+  }, [active, supported, deeplKey])
 
-  return { ...state, supported, refresh: scanAgentUsage }
+  const refresh = useCallback(
+    (force = true) => scanAgentUsage(force, deeplKey),
+    [deeplKey],
+  )
+
+  return { ...state, supported, refresh }
 }

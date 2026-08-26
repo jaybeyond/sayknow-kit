@@ -19,6 +19,7 @@ import {
   type RateWindow,
 } from "@/lib/agent-usage"
 import { formatCost, formatTokens as formatAppTokens } from "@/lib/usage"
+import { formatCharacters, type DeeplUsage } from "@/lib/deepl"
 import { cn } from "@/lib/utils"
 
 type Props = {
@@ -29,8 +30,16 @@ type Props = {
 
 export function UsagePanel({ settings, active }: Props) {
   const { t, locale } = useT(settings.uiLocale)
-  const { agents, loading, error, scannedAt, supported, refresh } =
-    useAgentUsage(active)
+  const {
+    agents,
+    loading,
+    error,
+    scannedAt,
+    supported,
+    refresh,
+    deepl,
+    deeplError,
+  } = useAgentUsage(active, settings.deeplKey)
   const appUsage = useUsage()
 
   // Recomputed per scan rather than per render: reading the clock during
@@ -111,6 +120,10 @@ export function UsagePanel({ settings, active }: Props) {
           </div>
         </section>
 
+        {(deepl || deeplError) && (
+          <DeeplCard usage={deepl} error={deeplError} t={t} />
+        )}
+
         {agents.map((a) => (
           <AgentCard
             key={a.id}
@@ -138,6 +151,79 @@ export function UsagePanel({ settings, active }: Props) {
         </p>
       </div>
     </div>
+  )
+}
+
+/** DeepL's character quota. The one number on this panel that is actually
+ *  live — the CLI figures are whatever their last session left behind. */
+function DeeplCard({
+  usage,
+  error,
+  t,
+}: {
+  usage: DeeplUsage | null
+  error: string | null
+  t: (k: string) => string
+}) {
+  if (!usage) {
+    return (
+      <section className="rounded-lg border p-2.5">
+        <div className="mb-1 text-xs font-medium">DeepL</div>
+        <p className="text-[11px] text-destructive">{error}</p>
+      </section>
+    )
+  }
+  // "No limit" comes back as 1e12; a bar against that is meaningless.
+  const capped = usage.characterLimit > 0 && usage.characterLimit < 1e12
+  const pct = capped
+    ? Math.min(100, (usage.characterCount / usage.characterLimit) * 100)
+    : null
+  const left = capped ? usage.characterLimit - usage.characterCount : null
+
+  return (
+    <section className="rounded-lg border p-2.5">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium">DeepL</span>
+        <span className="text-[10px] text-muted-foreground">
+          {usage.plan} · {t("usage.deepl.live")}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5">
+        <Stat
+          label={t("usage.deepl.used")}
+          value={formatCharacters(usage.characterCount)}
+          accent
+        />
+        <Stat
+          label={t("usage.deepl.limit")}
+          value={formatCharacters(usage.characterLimit)}
+        />
+        <Stat
+          label={t("usage.deepl.left")}
+          value={left === null ? "∞" : formatCharacters(left)}
+          sub={pct === null ? undefined : `${pct.toFixed(1)}%`}
+        />
+      </div>
+
+      {pct !== null && (
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
+          <div
+            className={cn(
+              "h-full",
+              pct >= 90 ? "bg-destructive" : "bg-primary",
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+
+      <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+        {pct !== null && pct >= 90
+          ? t("usage.deepl.nearLimit")
+          : t("usage.deepl.body")}
+      </p>
+    </section>
   )
 }
 
