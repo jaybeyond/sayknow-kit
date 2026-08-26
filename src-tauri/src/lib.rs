@@ -50,8 +50,16 @@ struct AppState {
 /// Move the main window under the tray, but only if the positioner plugin
 /// already has the tray's geometry cached. Without this guard,
 /// `move_window(TrayCenter)` unwraps on `None` and aborts the process.
+/// Index of the monitor containing `point`, in physical pixels.
+fn monitor_containing(point: (i32, i32), monitors: &[Rect]) -> Option<usize> {
+    let (px, py) = point;
+    monitors.iter().position(|&(mx, my, mw, mh)| {
+        px >= mx && px < mx + mw as i32 && py >= my && py < my + mh as i32
+    })
+}
+
 /// Where the popover belongs: centred under the tray icon, kept inside the
-/// display that owns the menu bar. All inputs are physical pixels.
+/// display the icon is on. All inputs are physical pixels.
 fn tray_anchored_origin(
     tray: Rect,
     win_w: u32,
@@ -93,14 +101,46 @@ fn position_under_tray(app: &AppHandle) -> bool {
     let Ok(Some(rect)) = tray.rect() else {
         return false;
     };
-    // On macOS the menu bar — and therefore the tray — is on the primary
-    // display, whatever the arrangement is.
-    let Ok(Some(monitor)) = win.primary_monitor() else {
-        return false;
-    };
     let Ok(win_size) = win.outer_size() else {
         return false;
     };
+    let Ok(monitors) = win.available_monitors() else {
+        return false;
+    };
+    if monitors.is_empty() {
+        return false;
+    }
+
+    // Which display the tray icon is on is not fixed: with "Displays have
+    // separate Spaces" — the macOS default — the menu bar follows the active
+    // display, so clicking the icon over there must open the popover over
+    // there. Assuming the primary display pulled the window back to the
+    // built-in screen every time.
+    //
+    // The rect may arrive logical or physical and we can't tell which, so try
+    // each display's own scale factor: the correct pairing is the one whose
+    // converted point lands inside that same display.
+    let rects: Vec<Rect> = monitors
+        .iter()
+        .map(|m| {
+            (
+                m.position().x,
+                m.position().y,
+                m.size().width,
+                m.size().height,
+            )
+        })
+        .collect();
+    let index = monitors
+        .iter()
+        .enumerate()
+        .find(|(i, m)| {
+            let p = rect.position.to_physical::<i32>(m.scale_factor());
+            monitor_containing((p.x, p.y), &rects) == Some(*i)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let monitor = &monitors[index];
 
     let scale = monitor.scale_factor();
     let tp = rect.position.to_physical::<i32>(scale);
@@ -1541,7 +1581,8 @@ pub fn run() {
 #[cfg(test)]
 mod window_placement_tests {
     use super::{
-        is_offscreen, overlap_area, tray_anchored_origin, tray_fallback_origin, Rect,
+        is_offscreen, monitor_containing, overlap_area, tray_anchored_origin,
+        tray_fallback_origin, Rect,
     };
 
     const BUILT_IN: Rect = (0, 0, 3420, 2224);
@@ -1578,25 +1619,54 @@ mod window_placement_tests {
         assert!(!is_offscreen((x, 0, POPOVER_W, 1160), &[BUILTIN]));
     }
 
-    /// The regression that started this: the window is placed from the tray
-    /// rect and the menu bar's display, so where it was last shown — including
-    /// a display at negative x — cannot move it.
+    /// External 1080p arranged to the left of the built-in, so it occupies
+    /// negative x — the layout on this machine.
+    const EXTERNAL_LEFT: Rect = (-1920, 0, 1920, 1080);
+
+    /// The regression that started this: placement follows the tray rect, so
+    /// where the window was last shown cannot move it.
     #[test]
     fn placement_ignores_the_display_the_window_came_from() {
-        let external: Rect = (-3840, 0, 3840, 2160);
         let tray: Rect = (2036, 0, 80, 48);
         let from_builtin = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
         let from_external = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
         assert_eq!(from_builtin, from_external);
-        // And the result is on the menu bar's display, not the other one.
         assert!(!is_offscreen(
             (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
             &[BUILTIN]
         ));
         assert!(is_offscreen(
             (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
-            &[external]
+            &[EXTERNAL_LEFT]
         ));
+    }
+
+    /// Clicking the tray on the second display must open the popover there.
+    /// The menu bar follows the active display on macOS, so anchoring to the
+    /// primary display dragged the window back to the built-in screen.
+    #[test]
+    fn the_popover_opens_on_the_display_holding_the_tray() {
+        // Icon on the external display, which sits at negative x.
+        let tray: Rect = (-800, 0, 40, 24);
+        let (x, y) = tray_anchored_origin(tray, 480, EXTERNAL_LEFT, 8);
+        assert_eq!(x + 480 / 2, -800 + 20);
+        assert_eq!(y, 24);
+        assert!(!is_offscreen((x, y, 480, 580), &[EXTERNAL_LEFT]));
+        assert!(is_offscreen((x, y, 480, 580), &[BUILTIN]));
+    }
+
+    #[test]
+    fn the_tray_display_is_picked_by_which_one_contains_the_icon() {
+        let monitors = [BUILTIN, EXTERNAL_LEFT];
+        // A point on the built-in resolves to index 0.
+        assert_eq!(monitor_containing((2036, 10), &monitors), Some(0));
+        // A point on the external — negative x — resolves to index 1.
+        assert_eq!(monitor_containing((-800, 10), &monitors), Some(1));
+        // A point on neither resolves to nothing rather than guessing.
+        assert_eq!(monitor_containing((9000, 10), &monitors), None);
+        // Boundaries belong to exactly one display, never both.
+        assert_eq!(monitor_containing((0, 0), &monitors), Some(0));
+        assert_eq!(monitor_containing((-1, 0), &monitors), Some(1));
     }
 
     #[test]
