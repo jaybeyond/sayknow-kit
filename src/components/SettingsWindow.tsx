@@ -43,7 +43,6 @@ import { formatCost, formatTokens } from "@/lib/usage"
 import {
   DEFAULT_REFINE_PROMPT,
   DEFAULT_TRANSLATE_PROMPT,
-  PROVIDER_PRESETS,
 } from "@/lib/openrouter"
 import {
   UI_LOCALES,
@@ -367,7 +366,9 @@ function ConnectionSection({
           />
           <p className="mt-1 text-[11px] text-muted-foreground">
             {models.length > 0
-              ? `${models.length} ${t("settings.model.count")} · ${PROVIDER_PRESETS[settings.provider].label}`
+              ? `${models.length} ${t("settings.model.count")} · ${t(
+                  `provider.preset.${settings.provider}`,
+                )}`
               : t("settings.model.loading")}
           </p>
         </div>

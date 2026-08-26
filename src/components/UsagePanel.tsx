@@ -185,7 +185,12 @@ function DeeplCard({
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium">DeepL</span>
         <span className="text-[10px] text-muted-foreground">
-          {usage.plan} · {t("usage.deepl.live")}
+          {t(
+            usage.plan === "free"
+              ? "usage.deepl.planFree"
+              : "usage.deepl.planPro",
+          )}{" "}
+          · {t("usage.deepl.live")}
         </span>
       </div>
 
