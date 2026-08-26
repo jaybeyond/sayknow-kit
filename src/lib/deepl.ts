@@ -76,10 +76,12 @@ async function deeplFetch(
   key: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const headers = {
+  // Content-Type only belongs on a request that carries a body. Declaring one
+  // on a bodyless GET is meaningless, and the HTTP client refuses to send it.
+  const headers: Record<string, string> = {
     Authorization: `DeepL-Auth-Key ${key.trim()}`,
-    "Content-Type": "application/json",
-    ...(init?.headers ?? {}),
+    ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    ...((init?.headers as Record<string, string>) ?? {}),
   }
   // Same reason the LLM client routes through the Tauri HTTP plugin: the
   // webview's CORS policy would otherwise block a cross-origin API call.

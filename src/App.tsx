@@ -110,7 +110,7 @@ function MainRoot() {
 }
 
 function SettingsRoot() {
-  const { settings, update, clearKey, loaded } = useSettings()
+  const { settings, update, clearKey, loaded, credentialError } = useSettings()
   const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
   // Settings window has no logged-out UI of its own; the only visible signal
@@ -143,6 +143,7 @@ function SettingsRoot() {
       onLogout={handleLogout}
       themeMode={themeMode}
       setThemeMode={setThemeMode}
+      credentialError={credentialError}
     />
   )
 }

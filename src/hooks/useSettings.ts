@@ -87,14 +87,26 @@ export function useSettings() {
   })
   const [apiKey, setApiKey] = useState<string>("")
   const [deeplKey, setDeeplKey] = useState<string>("")
+  // A denied or failed Keychain read used to look exactly like "no key saved":
+  // an empty field, no message, translation quietly on the LLM. Unsigned
+  // rebuilds change the app's identity, so macOS re-asks on every update and
+  // a refused prompt lands here.
+  const [credentialError, setCredentialError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     secrets
       .get()
-      .then((v) => setApiKey(v))
+      .then((v) => {
+        setApiKey(v)
+        setCredentialError(null)
+      })
+      .catch((e) => setCredentialError(String(e)))
       .finally(() => setLoaded(true))
-    void namedSecret.get(DEEPL_ACCOUNT).then(setDeeplKey)
+    void namedSecret
+      .get(DEEPL_ACCOUNT)
+      .then(setDeeplKey)
+      .catch((e) => setCredentialError(String(e)))
   }, [])
 
   useEffect(() => {
@@ -171,5 +183,6 @@ export function useSettings() {
     clearKey,
     isLoggedIn,
     loaded,
+    credentialError,
   }
 }

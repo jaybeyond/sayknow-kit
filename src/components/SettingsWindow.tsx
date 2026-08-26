@@ -67,6 +67,8 @@ type Props = {
   onLogout: () => void
   themeMode: ThemeMode
   setThemeMode: (m: ThemeMode) => void
+  /** Set when a stored credential could not be read out of the Keychain. */
+  credentialError?: string | null
 }
 
 type Section =
@@ -83,6 +85,7 @@ export function SettingsWindow({
   onLogout,
   themeMode,
   setThemeMode,
+  credentialError,
 }: Props) {
   const { t } = useT(settings.uiLocale)
   const [section, setSection] = useState<Section>("general")
@@ -156,6 +159,7 @@ export function SettingsWindow({
                 onLogout={onLogout}
                 models={models}
                 modelsLoading={modelsLoading}
+                credentialError={credentialError}
               />
             )}
             {section === "glossary" && (
@@ -307,17 +311,30 @@ function ConnectionSection({
   onLogout,
   models,
   modelsLoading,
+  credentialError,
 }: {
   settings: Settings
   update: (p: Partial<Settings>) => void
   onLogout: () => void
   models: import("@/lib/openrouter").OpenRouterModel[]
   modelsLoading: boolean
+  credentialError?: string | null
 }) {
   const { t } = useT(settings.uiLocale)
   return (
     <div className="space-y-6">
       <SectionHeader icon={Plug} title={t("settings.section.connection")} />
+
+      {credentialError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+          <p className="text-[11px] font-medium text-destructive">
+            {t("settings.credentialError")}
+          </p>
+          <p className="mt-0.5 text-[11px] text-destructive/80">
+            {credentialError}
+          </p>
+        </div>
+      )}
 
       <ProviderPicker
         provider={settings.provider}
