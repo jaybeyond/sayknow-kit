@@ -40,6 +40,13 @@ impl Drop for OcpChild {
 /// Global state shared between Rust handlers and JS via Tauri commands/events.
 struct AppState {
     pinned: AtomicBool,
+    /// The window's logical width, in points, as last requested.
+    ///
+    /// `outer_size()` is not usable for this: right after a show, a hide, or a
+    /// resize it can report a mix of logical and physical numbers, and every
+    /// one of those moments is exactly when the popover is being placed.
+    /// Tracking what we asked for removes the guesswork.
+    logical_width: Mutex<f64>,
     ocp: Mutex<OcpChild>,
     /// True once the positioner plugin has cached the tray icon's geometry
     /// (set when the user first hovers / clicks the tray, or we feed it a
@@ -56,21 +63,6 @@ fn monitor_containing(point: (i32, i32), monitors: &[Rect]) -> Option<usize> {
     monitors.iter().position(|&(mx, my, mw, mh)| {
         px >= mx && px < mx + mw as i32 && py >= my && py < my + mh as i32
     })
-}
-
-/// The window's physical width once it is sitting on a display with
-/// `target_scale`.
-///
-/// `outer_size()` is physical *for the display the window is on right now*. A
-/// 480pt popover measures 960px on a Retina screen and 480px on a 1x one, so
-/// centring a move to the other display with the width it has here puts it
-/// half a window off. Convert back through logical size to get the width it
-/// will actually have when it lands.
-fn window_width_on(current_phys_w: u32, current_scale: f64, target_scale: f64) -> u32 {
-    if current_scale <= 0.0 {
-        return current_phys_w;
-    }
-    ((current_phys_w as f64 / current_scale) * target_scale).round() as u32
 }
 
 /// Where the popover belongs: centred under the tray icon, kept inside the
@@ -131,9 +123,6 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
             return false;
         }
     };
-    let Ok(win_size) = win.outer_size() else {
-        return false;
-    };
     let Ok(monitors) = win.available_monitors() else {
         return false;
     };
@@ -184,14 +173,14 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
     let mp = monitor.position();
     let ms = monitor.size();
 
-    let target_w = match intended_logical_width {
-        Some(w) => (w * scale).round() as u32,
-        None => window_width_on(
-            win_size.width,
-            win.scale_factor().unwrap_or(scale),
-            scale,
-        ),
-    };
+    let logical_w = intended_logical_width.unwrap_or_else(|| {
+        app.state::<AppState>()
+            .logical_width
+            .lock()
+            .map(|w| *w)
+            .unwrap_or(480.0)
+    });
+    let target_w = (logical_w * scale).round() as u32;
     let (x, y) = tray_anchored_origin(
         (tp.x, tp.y, ts.width as u32, ts.height as u32),
         target_w,
@@ -205,7 +194,7 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
         "place: tray_raw={:?} scale={} tray_phys=({},{},{},{}) monitor#{}=({},{},{},{}) win={}x{} -> ({},{})",
         rect.position, scale, tp.x, tp.y, ts.width, ts.height,
         index, mp.x, mp.y, ms.width, ms.height,
-        target_w, win_size.height, x, y
+        target_w, logical_w, x, y
     );
     if win
         .set_position(tauri::PhysicalPosition::new(x, y))
@@ -421,6 +410,9 @@ fn set_pinned(state: tauri::State<AppState>, pinned: bool) {
 
 #[tauri::command]
 fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    if let Ok(mut w) = app.state::<AppState>().logical_width.lock() {
+        *w = width;
+    }
     if let Some(win) = app.get_webview_window("main") {
         win.set_size(tauri::LogicalSize::new(width, height))
             .map_err(|e| e.to_string())?;
@@ -1488,6 +1480,7 @@ pub fn run() {
             pinned: AtomicBool::new(false),
             ocp: Mutex::new(OcpChild(None)),
             tray_positioned: AtomicBool::new(false),
+            logical_width: Mutex::new(480.0),
         })
         .invoke_handler(tauri::generate_handler![
             get_api_key,
@@ -1662,7 +1655,7 @@ pub fn run() {
 mod window_placement_tests {
     use super::{
         is_offscreen, monitor_containing, overlap_area, tray_anchored_origin,
-        tray_fallback_origin, window_width_on, Rect,
+        tray_fallback_origin, Rect,
     };
 
     const BUILT_IN: Rect = (0, 0, 3420, 2224);
@@ -1733,22 +1726,6 @@ mod window_placement_tests {
         assert_eq!(y, 24);
         assert!(!is_offscreen((x, y, 480, 580), &[EXTERNAL_LEFT]));
         assert!(is_offscreen((x, y, 480, 580), &[BUILTIN]));
-    }
-
-    /// Moving between displays of different density: the popover is 480pt
-    /// wide, which is 960px on the Retina screen and 480px on the 1x one.
-    /// Centring with the width it has *here* rather than the width it will
-    /// have *there* pushed it half a window off — the reported symptom.
-    #[test]
-    fn the_window_is_measured_on_the_display_it_is_moving_to() {
-        // Retina -> 1x: 960px here becomes 480px there.
-        assert_eq!(window_width_on(960, 2.0, 1.0), 480);
-        // 1x -> Retina: 480px here becomes 960px there.
-        assert_eq!(window_width_on(480, 1.0, 2.0), 960);
-        // Same density: unchanged.
-        assert_eq!(window_width_on(960, 2.0, 2.0), 960);
-        // A nonsensical scale is passed through rather than dividing by zero.
-        assert_eq!(window_width_on(960, 0.0, 2.0), 960);
     }
 
     #[test]
