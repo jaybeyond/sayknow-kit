@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react"
 import { storage } from "@/lib/storage"
-import { secrets, SECRETS_REV_KEY } from "@/lib/secrets"
+import {
+  DEEPL_ACCOUNT,
+  DEEPL_REV_KEY,
+  namedSecret,
+  secrets,
+  SECRETS_REV_KEY,
+} from "@/lib/secrets"
 import { OPENROUTER_BASE, type LangCode, type ProviderId } from "@/lib/openrouter"
 import type { UILocaleSetting } from "@/i18n"
 
@@ -28,6 +34,15 @@ export type Prefs = {
   customRefinePrompt: string
   /** Compact mode shrinks the popover; useful when pinned alongside other apps. */
   windowMode: "compact" | "normal"
+  /**
+   * Which engine answers the translate tab. "deepl" is a dedicated MT
+   * endpoint — far faster per call, but billed per source character against a
+   * monthly cap, so it falls back to the LLM when the quota is gone. Refine
+   * always uses the LLM: free-form instructions are not something MT does.
+   */
+  translateEngine: "llm" | "deepl"
+  /** DeepL renders tone natively instead of being asked for it in prose. */
+  deeplFormality: "default" | "more" | "less"
 }
 
 const DEFAULTS: Prefs = {
@@ -45,11 +60,13 @@ const DEFAULTS: Prefs = {
   customTranslatePrompt: "",
   customRefinePrompt: "",
   windowMode: "normal",
+  translateEngine: "llm",
+  deeplFormality: "default",
 }
 
 const PREFS_KEY = "prefs"
 
-export type Settings = Prefs & { apiKey: string }
+export type Settings = Prefs & { apiKey: string; deeplKey: string }
 
 export function useSettings() {
   const [prefs, setPrefs] = useState<Prefs>(() => {
@@ -69,6 +86,7 @@ export function useSettings() {
     return merged
   })
   const [apiKey, setApiKey] = useState<string>("")
+  const [deeplKey, setDeeplKey] = useState<string>("")
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
@@ -76,6 +94,7 @@ export function useSettings() {
       .get()
       .then((v) => setApiKey(v))
       .finally(() => setLoaded(true))
+    void namedSecret.get(DEEPL_ACCOUNT).then(setDeeplKey)
   }, [])
 
   useEffect(() => {
@@ -92,6 +111,8 @@ export function useSettings() {
         if (saved) setPrefs({ ...DEFAULTS, ...saved })
       } else if (e.key === "sayknow:" + SECRETS_REV_KEY) {
         void secrets.get().then(setApiKey)
+      } else if (e.key === "sayknow:" + DEEPL_REV_KEY) {
+        void namedSecret.get(DEEPL_ACCOUNT).then(setDeeplKey)
       }
     }
     window.addEventListener("storage", onStorage)
@@ -104,7 +125,15 @@ export function useSettings() {
       setApiKey(next)
       void secrets.set(next)
     }
-    const { apiKey: _omit, ...rest } = patch
+    if (patch.deeplKey !== undefined) {
+      const next = patch.deeplKey
+      setDeeplKey(next)
+      void (next
+        ? namedSecret.set(DEEPL_ACCOUNT, next)
+        : namedSecret.clear(DEEPL_ACCOUNT))
+    }
+    const { apiKey: _omit, deeplKey: _omitDeepl, ...rest } = patch
+    void _omitDeepl
     void _omit
     if (Object.keys(rest).length > 0) {
       setPrefs((prev) => ({ ...prev, ...(rest as Partial<Prefs>) }))
@@ -126,7 +155,7 @@ export function useSettings() {
     await secrets.clear()
   }, [])
 
-  const settings: Settings = { ...prefs, apiKey }
+  const settings: Settings = { ...prefs, apiKey, deeplKey }
 
   // OpenRouter always needs a key. OCP / Custom can run in open mode where
   // /models works unauthenticated — for those we treat a configured baseURL

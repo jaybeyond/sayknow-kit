@@ -1,7 +1,12 @@
 import { useState } from "react"
 import {
   BookText,
+  Check,
   ExternalLink,
+  Gauge,
+  Loader2,
+  Play,
+  Zap,
   Eye,
   EyeOff,
   Info,
@@ -48,6 +53,13 @@ import {
 } from "@/i18n"
 import { cn } from "@/lib/utils"
 import { openExternal } from "@/lib/runtime"
+import {
+  deeplUsage,
+  deeplTranslate,
+  formatCharacters,
+  type DeeplUsage,
+} from "@/lib/deepl"
+import { translationMemory } from "@/lib/translation-memory"
 
 type Props = {
   settings: Settings
@@ -324,6 +336,10 @@ function ConnectionSection({
 
       <Separator />
 
+      <DeeplRow settings={settings} update={update} />
+
+      <Separator />
+
       <Row label={t("settings.model")}>
         <div className="w-full max-w-[400px]">
           <ModelPicker
@@ -378,6 +394,187 @@ function ConnectionSection({
         <LogOut className="h-3.5 w-3.5" />
         {t("settings.logout")}
       </Button>
+    </div>
+  )
+}
+
+/**
+ * DeepL lives next to the model settings because it is the other half of the
+ * same decision: which engine answers a translation. It is configured *and*
+ * exercised here — paste the key, hit run, and the live quota comes back in
+ * place, rather than having to go and try a translation to find out whether it
+ * works.
+ */
+function DeeplRow({
+  settings,
+  update,
+}: {
+  settings: Settings
+  update: (p: Partial<Settings>) => void
+}) {
+  const { t } = useT(settings.uiLocale)
+  const [show, setShow] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [usage, setUsage] = useState<DeeplUsage | null>(null)
+  const [sample, setSample] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const enabled = settings.translateEngine === "deepl"
+
+  async function run() {
+    const key = settings.deeplKey.trim()
+    if (!key || busy) return
+    setBusy(true)
+    setError(null)
+    setSample(null)
+    try {
+      // Two calls on purpose: the quota proves the key, the translation proves
+      // the whole path end to end, which is what "does it work" actually means.
+      const [quota, probe] = await Promise.all([
+        deeplUsage(key),
+        deeplTranslate({
+          key,
+          text: "안녕하세요",
+          from: "ko",
+          to: settings.to === "ko" ? "en" : settings.to,
+        }),
+      ])
+      setUsage(quota)
+      setSample(probe.text)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setUsage(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pct =
+    usage && usage.characterLimit > 0 && usage.characterLimit < 1e12
+      ? Math.min(100, (usage.characterCount / usage.characterLimit) * 100)
+      : null
+
+  return (
+    <div className="space-y-3">
+      <Row
+        label={t("settings.engine")}
+        description={t("settings.engine.body")}
+      >
+        <div className="grid w-full max-w-[280px] grid-cols-2 gap-1">
+          <Button
+            size="sm"
+            variant={!enabled ? "secondary" : "ghost"}
+            className="h-8 text-xs"
+            onClick={() => update({ translateEngine: "llm" })}
+          >
+            {t("settings.engine.llm")}
+          </Button>
+          <Button
+            size="sm"
+            variant={enabled ? "secondary" : "ghost"}
+            className="h-8 text-xs"
+            onClick={() => update({ translateEngine: "deepl" })}
+          >
+            <Zap className="h-3 w-3" />
+            DeepL
+          </Button>
+        </div>
+      </Row>
+
+      <Row label={t("settings.deepl.key")} description={t("settings.deepl.key.body")}>
+        <div className="w-full max-w-[400px] space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Input
+                type={show ? "text" : "password"}
+                value={settings.deeplKey}
+                onChange={(e) => update({ deeplKey: e.target.value })}
+                placeholder="xxxxxxxx-xxxx-...:fx"
+                className="h-8 pr-8 font-mono text-xs"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setShow((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={t(show ? "login.hide" : "login.show")}
+              >
+                {show ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+            <Button
+              size="sm"
+              className="h-8 shrink-0 text-xs"
+              disabled={!settings.deeplKey.trim() || busy}
+              onClick={run}
+            >
+              {busy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {t("settings.deepl.run")}
+            </Button>
+          </div>
+
+          {error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+              {error}
+            </p>
+          )}
+
+          {sample && (
+            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Check className="h-3 w-3 text-primary" />
+              안녕하세요 → <span className="font-medium text-foreground">{sample}</span>
+            </p>
+          )}
+
+          {usage && (
+            <div className="rounded-md border p-2">
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Gauge className="h-3 w-3" />
+                  {t("settings.deepl.quota")} · {usage.plan}
+                </span>
+                <span className="tabular-nums">
+                  {formatCharacters(usage.characterCount)} /{" "}
+                  {formatCharacters(usage.characterLimit)}
+                </span>
+              </div>
+              {pct !== null && (
+                <div className="mt-1 h-1 overflow-hidden rounded-full bg-border">
+                  <div
+                    className="h-full bg-primary"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => openExternal("https://www.deepl.com/your-account/keys")}
+              className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {t("settings.deepl.getKey")}
+            </button>
+            <button
+              type="button"
+              onClick={() => translationMemory.clear()}
+              className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {t("settings.deepl.clearCache")}
+            </button>
+          </div>
+        </div>
+      </Row>
     </div>
   )
 }

@@ -36,6 +36,8 @@ import {
   type LangCode,
 } from "@/lib/openrouter"
 import { useT } from "@/i18n"
+import { deeplSupports, deeplTranslate, DeeplError } from "@/lib/deepl"
+import { translationMemory } from "@/lib/translation-memory"
 
 const REFINE_PRESETS = [
   { id: "polite", labelKey: "refine.polite", instruction: "Make it more polite and formal." },
@@ -148,6 +150,12 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   }, [injectedInput?.nonce])
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
+  /** DeepL is only in play when it is selected, keyed, and covers the pair. */
+  const deeplReady =
+    settings.translateEngine === "deepl" &&
+    !!settings.deeplKey &&
+    deeplSupports(settings.from, settings.to)
+
   function runTranslate(text: string) {
     const trimmed = text.trim()
     if (trimmed.length < 2) return
@@ -155,8 +163,84 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
+    // Auto-translate re-sends the whole field on every typing pause, so the
+    // same sentence gets asked for several times on the way to being finished.
+    // Serving repeats from memory is what keeps a per-character quota from
+    // being burned three to five times over.
+    const engine = deeplReady ? "deepl" : "llm"
+    const remembered = translationMemory.get(
+      engine,
+      settings.from,
+      settings.to,
+      trimmed,
+    )
+    if (remembered) {
+      setOutput(remembered)
+      lastTranslatedRef.current = trimmed
+      setError(null)
+      return
+    }
+
+    if (deeplReady) {
+      setTranslating(true)
+      setError(null)
+      deeplTranslate({
+        key: settings.deeplKey,
+        text: trimmed,
+        from: settings.from,
+        to: settings.to,
+        formality: settings.deeplFormality,
+        signal: ctrl.signal,
+      })
+        .then((result) => {
+          if (ctrl.signal.aborted) return
+          setOutput(result.text)
+          lastTranslatedRef.current = trimmed
+          translationMemory.put(
+            "deepl",
+            settings.from,
+            settings.to,
+            trimmed,
+            result.text,
+          )
+          addHistory({
+            source: trimmed,
+            target: result.text,
+            from: settings.from,
+            to: settings.to,
+            model: "DeepL",
+          })
+        })
+        .catch((e) => {
+          if (ctrl.signal.aborted) return
+          // Out of quota is not a failure the user should be stuck on — the
+          // LLM is still there, so fall through to it instead of erroring.
+          if (e instanceof DeeplError && e.quotaExceeded) {
+            runWithLlm(trimmed, ctrl)
+            return
+          }
+          setError(e instanceof Error ? e.message : String(e))
+          setTranslating(false)
+        })
+        .finally(() => {
+          if (!ctrl.signal.aborted && !translatingViaLlmRef.current) {
+            setTranslating(false)
+          }
+        })
+      return
+    }
+
     setTranslating(true)
     setError(null)
+    runWithLlm(trimmed, ctrl)
+  }
+
+  // Set while a DeepL call has handed off to the LLM, so the DeepL promise's
+  // finally() doesn't switch the spinner off mid-fallback.
+  const translatingViaLlmRef = useRef(false)
+
+  function runWithLlm(trimmed: string, ctrl: AbortController) {
+    translatingViaLlmRef.current = true
     chat({
       apiKey: settings.apiKey,
       baseURL: settings.baseURL,
@@ -178,6 +262,13 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
         if (ctrl.signal.aborted) return
         setOutput(result.content)
         lastTranslatedRef.current = trimmed
+        translationMemory.put(
+          "llm",
+          settings.from,
+          settings.to,
+          trimmed,
+          result.content,
+        )
         addHistory({
           source: trimmed,
           target: result.content,
@@ -199,6 +290,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
+        translatingViaLlmRef.current = false
         if (!ctrl.signal.aborted) setTranslating(false)
       })
   }

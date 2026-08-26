@@ -11,6 +11,31 @@ function bumpRev() {
   storage.set(SECRETS_REV_KEY, Date.now())
 }
 
+/** Secondary credentials, kept under their own Keychain account so signing
+ *  out of the LLM provider doesn't take them with it. */
+export const DEEPL_ACCOUNT = "deepl_api_key"
+export const DEEPL_REV_KEY = "deepl:rev"
+
+export const namedSecret = {
+  async get(account: string): Promise<string> {
+    if (isTauri()) {
+      const v = await invoke<string | null>("get_secret", { account })
+      return v ?? ""
+    }
+    return storage.get<string>(`secret:${account}`) ?? ""
+  },
+  async set(account: string, key: string): Promise<void> {
+    if (isTauri()) await invoke("set_secret", { account, key })
+    else storage.set(`secret:${account}`, key)
+    storage.set(DEEPL_REV_KEY, Date.now())
+  },
+  async clear(account: string): Promise<void> {
+    if (isTauri()) await invoke("delete_secret", { account })
+    else storage.remove(`secret:${account}`)
+    storage.set(DEEPL_REV_KEY, Date.now())
+  },
+}
+
 export const secrets = {
   async get(): Promise<string> {
     if (isTauri()) {

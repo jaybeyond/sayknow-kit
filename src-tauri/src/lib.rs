@@ -166,6 +166,44 @@ fn entry() -> Result<Entry, String> {
     Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
 }
 
+/// Secondary credentials (currently the DeepL key) live under their own
+/// Keychain account in the same service. Named accounts rather than one blob
+/// so signing out of one provider can't take the other's key with it.
+fn named_entry(account: &str) -> Result<Entry, String> {
+    // Whitelist: the account name reaches the Keychain, so it is never taken
+    // straight from the frontend.
+    let allowed = matches!(account, "deepl_api_key");
+    if !allowed {
+        return Err(format!("unknown credential: {account}"));
+    }
+    Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_secret(account: String) -> Result<Option<String>, String> {
+    match named_entry(&account)?.get_password() {
+        Ok(v) => Ok(Some(v)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn set_secret(account: String, key: String) -> Result<(), String> {
+    named_entry(&account)?
+        .set_password(&key)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_secret(account: String) -> Result<(), String> {
+    match named_entry(&account)?.delete_credential() {
+        Ok(_) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
 fn get_api_key() -> Result<Option<String>, String> {
     match entry()?.get_password() {
@@ -1275,6 +1313,9 @@ pub fn run() {
             get_api_key,
             set_api_key,
             delete_api_key,
+            get_secret,
+            set_secret,
+            delete_secret,
             hide_window,
             set_pinned,
             resize_main_window,
