@@ -50,7 +50,79 @@ struct AppState {
 /// Move the main window under the tray, but only if the positioner plugin
 /// already has the tray's geometry cached. Without this guard,
 /// `move_window(TrayCenter)` unwraps on `None` and aborts the process.
+/// Where the popover belongs: centred under the tray icon, kept inside the
+/// display that owns the menu bar. All inputs are physical pixels.
+fn tray_anchored_origin(
+    tray: Rect,
+    win_w: u32,
+    monitor: Rect,
+    margin: i32,
+) -> (i32, i32) {
+    let (tx, ty, tw, th) = tray;
+    let (mx, _my, mw, _mh) = monitor;
+    let x = tx + tw as i32 / 2 - win_w as i32 / 2;
+    let min_x = mx + margin;
+    let max_x = mx + mw as i32 - win_w as i32 - margin;
+    // A window wider than the display has nowhere to be clamped to; pinning it
+    // to the left edge at least keeps the title and controls reachable.
+    let x = if max_x >= min_x {
+        x.clamp(min_x, max_x)
+    } else {
+        min_x
+    };
+    (x, ty + th as i32)
+}
+
+/// Position the popover from the tray rect Tauri reports, rather than the one
+/// tauri-plugin-positioner caches.
+///
+/// The plugin converts the cached rect with a hardcoded scale factor of 1.0 and
+/// then subtracts the window's *physical* width. On a mixed-DPI setup those are
+/// different coordinate spaces, so the same tray icon lands the window in a
+/// different place depending on which display the window happened to be on
+/// last — which is what "the position keeps being wrong" looks like. Reading
+/// the rect and converting it with the display's real scale factor keeps both
+/// sides in physical pixels.
+fn position_under_tray(app: &AppHandle) -> bool {
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    let Some(tray) = app.tray_by_id("sayknow-tray") else {
+        return false;
+    };
+    let Ok(Some(rect)) = tray.rect() else {
+        return false;
+    };
+    // On macOS the menu bar — and therefore the tray — is on the primary
+    // display, whatever the arrangement is.
+    let Ok(Some(monitor)) = win.primary_monitor() else {
+        return false;
+    };
+    let Ok(win_size) = win.outer_size() else {
+        return false;
+    };
+
+    let scale = monitor.scale_factor();
+    let tp = rect.position.to_physical::<i32>(scale);
+    let ts = rect.size.to_physical::<i32>(scale);
+    let mp = monitor.position();
+    let ms = monitor.size();
+
+    let (x, y) = tray_anchored_origin(
+        (tp.x, tp.y, ts.width as u32, ts.height as u32),
+        win_size.width,
+        (mp.x, mp.y, ms.width, ms.height),
+        (8.0 * scale).round() as i32,
+    );
+    win.set_position(tauri::PhysicalPosition::new(x, y)).is_ok()
+}
+
 fn safe_move_to_tray(app: &AppHandle) {
+    // Our own placement is already clamped to the menu bar's display, so it
+    // needs no rescue pass.
+    if position_under_tray(app) {
+        return;
+    }
     let state = app.state::<AppState>();
     if !state.tray_positioned.load(Ordering::Relaxed) {
         return;
@@ -1468,7 +1540,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod window_placement_tests {
-    use super::{is_offscreen, overlap_area, tray_fallback_origin, Rect};
+    use super::{
+        is_offscreen, overlap_area, tray_anchored_origin, tray_fallback_origin, Rect,
+    };
 
     const BUILT_IN: Rect = (0, 0, 3420, 2224);
     /// External display arranged to the right of the built-in one.
@@ -1477,6 +1551,59 @@ mod window_placement_tests {
 
     fn win_at(x: i32, y: i32) -> Rect {
         (x, y, POPOVER.0, POPOVER.1)
+    }
+
+    /// This machine: built-in Retina (2x) carries the menu bar at x 0, with a
+    /// 1080p display arranged to its *left*, so that one occupies negative x.
+    const BUILTIN: Rect = (0, 0, 3420, 2224);
+    const POPOVER_W: u32 = 960;
+
+    #[test]
+    fn the_popover_is_centred_under_the_tray_icon() {
+        // Tray icon 40pt wide at x 1018pt on a 2x display.
+        let tray: Rect = (2036, 0, 80, 48);
+        let (x, y) = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
+        // Centre of the window lines up with the centre of the icon.
+        assert_eq!(x + POPOVER_W as i32 / 2, 2036 + 40);
+        // And it hangs directly below the menu bar, never over it.
+        assert_eq!(y, 48);
+    }
+
+    #[test]
+    fn a_tray_icon_near_the_corner_does_not_push_the_window_off() {
+        // Icon at the far right, where the clock sits.
+        let tray: Rect = (3380, 0, 80, 48);
+        let (x, _) = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
+        assert_eq!(x, 3420 - 960 - 16);
+        assert!(!is_offscreen((x, 0, POPOVER_W, 1160), &[BUILTIN]));
+    }
+
+    /// The regression that started this: the window is placed from the tray
+    /// rect and the menu bar's display, so where it was last shown — including
+    /// a display at negative x — cannot move it.
+    #[test]
+    fn placement_ignores_the_display_the_window_came_from() {
+        let external: Rect = (-3840, 0, 3840, 2160);
+        let tray: Rect = (2036, 0, 80, 48);
+        let from_builtin = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
+        let from_external = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
+        assert_eq!(from_builtin, from_external);
+        // And the result is on the menu bar's display, not the other one.
+        assert!(!is_offscreen(
+            (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
+            &[BUILTIN]
+        ));
+        assert!(is_offscreen(
+            (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
+            &[external]
+        ));
+    }
+
+    #[test]
+    fn a_window_wider_than_the_display_clamps_to_the_left_edge() {
+        let tiny: Rect = (0, 0, 600, 800);
+        let (x, _) = tray_anchored_origin((300, 0, 40, 24), 960, tiny, 8);
+        assert_eq!(x, 8);
     }
 
     #[test]
