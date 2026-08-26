@@ -130,6 +130,17 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
         return false;
     }
 
+    let logical_rect = |m: &tauri::Monitor| -> Rect {
+        let p = m.position().to_logical::<f64>(m.scale_factor());
+        let sz = m.size().to_logical::<f64>(m.scale_factor());
+        (
+            p.x.round() as i32,
+            p.y.round() as i32,
+            sz.width.round() as u32,
+            sz.height.round() as u32,
+        )
+    };
+
     // Which display the tray icon is on is not fixed: with "Displays have
     // separate Spaces" — the macOS default — the menu bar follows the active
     // display, so clicking the icon over there must open the popover over
@@ -139,20 +150,10 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
     // The rect may arrive logical or physical and we can't tell which, so try
     // each display's own scale factor: the correct pairing is the one whose
     // converted point lands inside that same display.
-    let rects: Vec<Rect> = monitors
-        .iter()
-        .map(|m| {
-            (
-                m.position().x,
-                m.position().y,
-                m.size().width,
-                m.size().height,
-            )
-        })
-        .collect();
+    let rects: Vec<Rect> = monitors.iter().map(logical_rect).collect();
     let found = monitors.iter().enumerate().find(|(i, m)| {
-        let p = rect.position.to_physical::<i32>(m.scale_factor());
-        monitor_containing((p.x, p.y), &rects) == Some(*i)
+        let p = rect.position.to_logical::<f64>(m.scale_factor());
+        monitor_containing((p.x.round() as i32, p.y.round() as i32), &rects) == Some(*i)
     });
     // A tray rect that sits on no display at all is not a layout we can reason
     // about — it shows up briefly around startup as (0, screen_height), and
@@ -168,10 +169,9 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
     let monitor = &monitors[index];
 
     let scale = monitor.scale_factor();
-    let tp = rect.position.to_physical::<i32>(scale);
-    let ts = rect.size.to_physical::<i32>(scale);
-    let mp = monitor.position();
-    let ms = monitor.size();
+    let tp = rect.position.to_logical::<f64>(scale);
+    let ts = rect.size.to_logical::<f64>(scale);
+    let mrect = rects[index];
 
     let logical_w = intended_logical_width.unwrap_or_else(|| {
         app.state::<AppState>()
@@ -180,24 +180,40 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
             .map(|w| *w)
             .unwrap_or(480.0)
     });
-    let target_w = (logical_w * scale).round() as u32;
     let (x, y) = tray_anchored_origin(
-        (tp.x, tp.y, ts.width as u32, ts.height as u32),
-        target_w,
-        (mp.x, mp.y, ms.width, ms.height),
-        (8.0 * scale).round() as i32,
+        (
+            tp.x.round() as i32,
+            tp.y.round() as i32,
+            ts.width.round() as u32,
+            ts.height.round() as u32,
+        ),
+        logical_w.round() as u32,
+        mrect,
+        8,
     );
     // Multi-monitor placement can only be diagnosed from the numbers the app
     // actually saw; a screenshot of the result doesn't say which display or
     // scale factor it worked from.
     log::info!(
-        "place: tray_raw={:?} scale={} tray_phys=({},{},{},{}) monitor#{}=({},{},{},{}) win={}x{} -> ({},{})",
-        rect.position, scale, tp.x, tp.y, ts.width, ts.height,
-        index, mp.x, mp.y, ms.width, ms.height,
-        target_w, logical_w, x, y
+        "place(pt): tray_raw={:?} scale={} tray=({:.0},{:.0},{:.0},{:.0}) \
+monitor#{}=({},{},{},{}) win_w={} -> ({},{})",
+        rect.position,
+        scale,
+        tp.x,
+        tp.y,
+        ts.width,
+        ts.height,
+        index,
+        mrect.0,
+        mrect.1,
+        mrect.2,
+        mrect.3,
+        logical_w,
+        x,
+        y
     );
     if win
-        .set_position(tauri::PhysicalPosition::new(x, y))
+        .set_position(tauri::LogicalPosition::new(x as f64, y as f64))
         .is_err()
     {
         return false;
@@ -233,7 +249,13 @@ fn safe_move_to_tray_sized(app: &AppHandle, intended_logical_width: Option<f64>)
     ensure_on_screen(&win);
 }
 
-/// A rectangle in physical pixels: (x, y, width, height).
+/// A rectangle in logical points: (x, y, width, height).
+///
+/// Points, not pixels, deliberately. macOS's global coordinate space is in
+/// points and `set_outer_position` divides whatever it is given by the scale
+/// factor of the display the window is on *right now* — so a physical
+/// coordinate computed for a different display arrives divided by the wrong
+/// number. With displays of differing density that is the whole bug.
 type Rect = (i32, i32, u32, u32);
 
 /// Area of the window that falls inside `monitor`.
@@ -281,43 +303,62 @@ fn tray_fallback_origin(win: Rect, monitor: Rect, scale: f64) -> (i32, i32) {
 }
 
 fn ensure_on_screen(win: &tauri::WebviewWindow) {
+    // Logical points throughout, for the same reason as the placement above:
+    // a pixel coordinate only means something on the display it came from.
+    let scale = win.scale_factor().unwrap_or(1.0);
     let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
         return;
     };
+    let pos = pos.to_logical::<f64>(scale);
+    let size = size.to_logical::<f64>(scale);
     let Ok(monitors) = win.available_monitors() else {
         return;
     };
     let rects: Vec<Rect> = monitors
         .iter()
         .map(|m| {
+            let p = m.position().to_logical::<f64>(m.scale_factor());
+            let sz = m.size().to_logical::<f64>(m.scale_factor());
             (
-                m.position().x,
-                m.position().y,
-                m.size().width,
-                m.size().height,
+                p.x.round() as i32,
+                p.y.round() as i32,
+                sz.width.round() as u32,
+                sz.height.round() as u32,
             )
         })
         .collect();
-    let win_rect: Rect = (pos.x, pos.y, size.width, size.height);
+    let win_rect: Rect = (
+        pos.x.round() as i32,
+        pos.y.round() as i32,
+        size.width.round() as u32,
+        size.height.round() as u32,
+    );
     if !is_offscreen(win_rect, &rects) {
         return;
     }
     // Prefer the primary monitor: on macOS that is the one carrying the menu
     // bar, and therefore the tray icon the user just clicked.
-    let target = win
+    let Some(rect) = rects.first().copied() else {
+        return;
+    };
+    // Prefer the display carrying the menu bar when we can identify it.
+    let rect = win
         .primary_monitor()
         .ok()
         .flatten()
-        .or_else(|| monitors.first().cloned());
-    let Some(monitor) = target else { return };
-    let rect: Rect = (
-        monitor.position().x,
-        monitor.position().y,
-        monitor.size().width,
-        monitor.size().height,
-    );
-    let (x, y) = tray_fallback_origin(win_rect, rect, monitor.scale_factor());
-    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+        .map(|m| {
+            let p = m.position().to_logical::<f64>(m.scale_factor());
+            let sz = m.size().to_logical::<f64>(m.scale_factor());
+            (
+                p.x.round() as i32,
+                p.y.round() as i32,
+                sz.width.round() as u32,
+                sz.height.round() as u32,
+            )
+        })
+        .unwrap_or(rect);
+    let (x, y) = tray_fallback_origin(win_rect, rect, 1.0);
+    let _ = win.set_position(tauri::LogicalPosition::new(x as f64, y as f64));
 }
 
 fn now_ms() -> i64 {
@@ -1658,179 +1699,142 @@ mod window_placement_tests {
         tray_fallback_origin, Rect,
     };
 
-    const BUILT_IN: Rect = (0, 0, 3420, 2224);
-    /// External display arranged to the right of the built-in one.
-    const EXTERNAL: Rect = (3420, 0, 2560, 1440);
-    const POPOVER: (u32, u32) = (960, 1160);
+    /// This machine, in logical points — the space macOS actually positions
+    /// windows in. The built-in is Retina and carries the menu bar; the 1080p
+    /// external sits to its left, so at negative x, and is offset downward.
+    const BUILTIN: Rect = (0, 0, 1710, 1112);
+    const EXTERNAL_LEFT: Rect = (-1920, 441, 1920, 1080);
+    /// 480pt normal, 720pt compact. Points on every display, whatever its
+    /// density — which is the entire reason placement works in points.
+    const NORMAL_W: u32 = 480;
+    const COMPACT_W: u32 = 720;
 
     fn win_at(x: i32, y: i32) -> Rect {
-        (x, y, POPOVER.0, POPOVER.1)
+        (x, y, NORMAL_W, 580)
     }
-
-    /// This machine: built-in Retina (2x) carries the menu bar at x 0, with a
-    /// 1080p display arranged to its *left*, so that one occupies negative x.
-    const BUILTIN: Rect = (0, 0, 3420, 2224);
-    const POPOVER_W: u32 = 960;
 
     #[test]
     fn the_popover_is_centred_under_the_tray_icon() {
-        // Tray icon 40pt wide at x 1018pt on a 2x display.
-        let tray: Rect = (2036, 0, 80, 48);
-        let (x, y) = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
-        // Centre of the window lines up with the centre of the icon.
-        assert_eq!(x + POPOVER_W as i32 / 2, 2036 + 40);
-        // And it hangs directly below the menu bar, never over it.
-        assert_eq!(y, 48);
+        // Icon as reported on the built-in: 34pt wide at x 1010.
+        let tray: Rect = (1010, 0, 34, 39);
+        let (x, y) = tray_anchored_origin(tray, NORMAL_W, BUILTIN, 8);
+        assert_eq!(x, 787);
+        assert_eq!(x + NORMAL_W as i32 / 2, 1010 + 17);
+        assert_eq!(y, 39);
+    }
+
+    /// The report that started this: the same icon geometry on a display of a
+    /// different density must land in the same place relative to the icon.
+    /// Mixing pixels and points is what put the window hundreds of points off.
+    #[test]
+    fn density_does_not_change_where_the_window_lands() {
+        let on_builtin: Rect = (1010, 0, 34, 39);
+        let a = tray_anchored_origin(on_builtin, NORMAL_W, BUILTIN, 8);
+        assert_eq!(a.0 + NORMAL_W as i32 / 2, 1027);
+
+        // Icon at the same offset into the 1x external display.
+        let on_external: Rect = (-1920 + 1010, 441, 34, 30);
+        let b = tray_anchored_origin(on_external, NORMAL_W, EXTERNAL_LEFT, 8);
+        assert_eq!(b.0 + NORMAL_W as i32 / 2, -1920 + 1027);
+        // Same distance from the icon on both, despite 2x versus 1x.
+        assert_eq!(a.0 - 1010, b.0 - (-1920 + 1010));
+    }
+
+    #[test]
+    fn the_popover_opens_on_the_display_holding_the_tray() {
+        let tray: Rect = (-700, 441, 34, 30);
+        let (x, y) = tray_anchored_origin(tray, NORMAL_W, EXTERNAL_LEFT, 8);
+        assert_eq!(x + NORMAL_W as i32 / 2, -700 + 17);
+        assert_eq!(y, 471);
+        assert!(!is_offscreen((x, y, NORMAL_W, 580), &[EXTERNAL_LEFT]));
+        assert!(is_offscreen((x, y, NORMAL_W, 580), &[BUILTIN]));
     }
 
     #[test]
     fn a_tray_icon_near_the_corner_does_not_push_the_window_off() {
-        // Icon at the far right, where the clock sits.
-        let tray: Rect = (3380, 0, 80, 48);
-        let (x, _) = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
-        assert_eq!(x, 3420 - 960 - 16);
-        assert!(!is_offscreen((x, 0, POPOVER_W, 1160), &[BUILTIN]));
+        let tray: Rect = (1690, 0, 34, 39);
+        let (x, _) = tray_anchored_origin(tray, NORMAL_W, BUILTIN, 8);
+        assert_eq!(x, 1710 - 480 - 8);
+        assert!(!is_offscreen((x, 0, NORMAL_W, 580), &[BUILTIN]));
     }
 
-    /// External 1080p arranged to the left of the built-in, so it occupies
-    /// negative x — the layout on this machine.
-    const EXTERNAL_LEFT: Rect = (-1920, 0, 1920, 1080);
-
-    /// The regression that started this: placement follows the tray rect, so
-    /// where the window was last shown cannot move it.
-    #[test]
-    fn placement_ignores_the_display_the_window_came_from() {
-        let tray: Rect = (2036, 0, 80, 48);
-        let from_builtin = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
-        let from_external = tray_anchored_origin(tray, POPOVER_W, BUILTIN, 16);
-        assert_eq!(from_builtin, from_external);
-        assert!(!is_offscreen(
-            (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
-            &[BUILTIN]
-        ));
-        assert!(is_offscreen(
-            (from_builtin.0, from_builtin.1, POPOVER_W, 1160),
-            &[EXTERNAL_LEFT]
-        ));
-    }
-
-    /// Clicking the tray on the second display must open the popover there.
-    /// The menu bar follows the active display on macOS, so anchoring to the
-    /// primary display dragged the window back to the built-in screen.
-    #[test]
-    fn the_popover_opens_on_the_display_holding_the_tray() {
-        // Icon on the external display, which sits at negative x.
-        let tray: Rect = (-800, 0, 40, 24);
-        let (x, y) = tray_anchored_origin(tray, 480, EXTERNAL_LEFT, 8);
-        assert_eq!(x + 480 / 2, -800 + 20);
-        assert_eq!(y, 24);
-        assert!(!is_offscreen((x, y, 480, 580), &[EXTERNAL_LEFT]));
-        assert!(is_offscreen((x, y, 480, 580), &[BUILTIN]));
-    }
-
-    #[test]
-    fn centring_uses_the_target_display_width() {
-        // Real numbers from this machine: tray icon at physical x 2012, 68
-        // wide, on the Retina built-in; the popover measures 960 there.
-        let (x, _) = tray_anchored_origin((2012, 0, 68, 78), 960, BUILTIN, 16);
-        assert_eq!(x, 1566);
-        assert_eq!(x + 960 / 2, 2012 + 34);
-
-        // Same icon geometry on the 1x external: the window is 480 there, and
-        // using 960 would land it 240px to the right of the icon.
-        let tray_ext: Rect = (-700, 0, 34, 39);
-        let correct = tray_anchored_origin(tray_ext, 480, EXTERNAL_LEFT, 8);
-        let wrong = tray_anchored_origin(tray_ext, 960, EXTERNAL_LEFT, 8);
-        assert_eq!(correct.0 + 480 / 2, -700 + 17);
-        assert_eq!(correct.0 - wrong.0, 240);
-    }
-
-    /// Toggling compact/normal resizes then re-anchors. set_size doesn't land
-    /// before the next run-loop turn, so reading the window's own width there
-    /// centres it for the size it no longer has — the window visibly jumps on
-    /// the next open.
+    /// Toggling compact/normal re-anchors immediately, before the window has
+    /// applied the new size; the width asked for is what must be used.
     #[test]
     fn a_resize_is_anchored_with_the_width_it_asked_for() {
-        let tray: Rect = (2180, 0, 68, 78);
-        // Normal: 480pt -> 960px on this display.
-        let normal = tray_anchored_origin(tray, 960, BUILTIN, 16);
-        assert_eq!(normal.0, 1734);
-        // Compact: 720pt -> 1440px. Wider window, so it starts further left.
-        let compact = tray_anchored_origin(tray, 1440, BUILTIN, 16);
-        assert_eq!(compact.0, 1494);
-        // Both keep the icon centred; the difference is only the extra width.
-        assert_eq!(normal.0 + 960 / 2, compact.0 + 1440 / 2);
-        // Anchoring the compact window with the old width is the 240px jump.
-        assert_eq!(normal.0 - compact.0, 240);
+        let tray: Rect = (1010, 0, 34, 39);
+        let normal = tray_anchored_origin(tray, NORMAL_W, BUILTIN, 8);
+        let compact = tray_anchored_origin(tray, COMPACT_W, BUILTIN, 8);
+        assert_eq!(normal.0, 787);
+        assert_eq!(compact.0, 667);
+        // Both keep the icon centred; only the extra width differs.
+        assert_eq!(
+            normal.0 + NORMAL_W as i32 / 2,
+            compact.0 + COMPACT_W as i32 / 2
+        );
+        assert_eq!(normal.0 - compact.0, 120);
     }
 
     #[test]
     fn the_tray_display_is_picked_by_which_one_contains_the_icon() {
         let monitors = [BUILTIN, EXTERNAL_LEFT];
-        // A point on the built-in resolves to index 0.
-        assert_eq!(monitor_containing((2036, 10), &monitors), Some(0));
-        // A point on the external — negative x — resolves to index 1.
-        assert_eq!(monitor_containing((-800, 10), &monitors), Some(1));
+        assert_eq!(monitor_containing((1010, 10), &monitors), Some(0));
+        assert_eq!(monitor_containing((-700, 500), &monitors), Some(1));
         // A point on neither resolves to nothing rather than guessing.
         assert_eq!(monitor_containing((9000, 10), &monitors), None);
-        // Boundaries belong to exactly one display, never both.
-        assert_eq!(monitor_containing((0, 0), &monitors), Some(0));
-        assert_eq!(monitor_containing((-1, 0), &monitors), Some(1));
-    }
-
-    #[test]
-    fn a_window_wider_than_the_display_clamps_to_the_left_edge() {
-        let tiny: Rect = (0, 0, 600, 800);
-        let (x, _) = tray_anchored_origin((300, 0, 40, 24), 960, tiny, 8);
-        assert_eq!(x, 8);
+        // The external is offset downward, so its own top-left is inside it
+        // while the same x above that offset is not.
+        assert_eq!(monitor_containing((-1920, 441), &monitors), Some(1));
+        assert_eq!(monitor_containing((-1920, 440), &monitors), None);
     }
 
     #[test]
     fn a_window_on_a_live_monitor_is_left_alone() {
-        let win = win_at(2000, 40);
-        assert!(!is_offscreen(win, &[BUILT_IN, EXTERNAL]));
-        assert!(!is_offscreen(win_at(3600, 40), &[BUILT_IN, EXTERNAL]));
+        assert!(!is_offscreen(win_at(1000, 40), &[BUILTIN, EXTERNAL_LEFT]));
+        assert!(!is_offscreen(win_at(-1000, 500), &[BUILTIN, EXTERNAL_LEFT]));
     }
 
     #[test]
     fn a_window_on_a_detached_display_is_flagged() {
-        // Positioned for a monitor that is no longer connected.
-        let win = win_at(4200, 40);
-        assert!(is_offscreen(win, &[BUILT_IN]));
+        assert!(is_offscreen(win_at(-1000, 500), &[BUILTIN]));
     }
 
     #[test]
     fn a_mostly_visible_window_is_not_dragged_around() {
-        // Hanging off the right edge by a quarter — still usable, leave it.
-        let win = win_at(BUILT_IN.2 as i32 - 720, 40);
-        assert!(!is_offscreen(win, &[BUILT_IN]));
+        let win = win_at(BUILTIN.2 as i32 - 360, 40);
+        assert!(!is_offscreen(win, &[BUILTIN]));
     }
 
     #[test]
     fn overlap_is_zero_when_rects_do_not_touch() {
-        assert_eq!(overlap_area(win_at(4200, 40), BUILT_IN), 0);
-        assert!(overlap_area(win_at(100, 40), BUILT_IN) > 0);
+        assert_eq!(overlap_area(win_at(-1000, 500), BUILTIN), 0);
+        assert!(overlap_area(win_at(100, 40), BUILTIN) > 0);
     }
 
     #[test]
     fn fallback_lands_top_right_under_the_menu_bar() {
-        let (x, y) = tray_fallback_origin(win_at(0, 0), BUILT_IN, 2.0);
-        assert_eq!(x, 3420 - 960 - 16);
-        assert_eq!(y, 52);
-        // And it is, by construction, on screen.
-        assert!(!is_offscreen((x, y, POPOVER.0, POPOVER.1), &[BUILT_IN]));
+        let (x, y) = tray_fallback_origin(win_at(0, 0), BUILTIN, 1.0);
+        assert_eq!(x, 1710 - 480 - 8);
+        assert_eq!(y, 26);
+        assert!(!is_offscreen((x, y, NORMAL_W, 580), &[BUILTIN]));
     }
 
     #[test]
     fn fallback_never_pushes_past_the_left_edge() {
-        // Window wider than the monitor: clamp instead of going negative.
-        let narrow: Rect = (0, 0, 600, 800);
-        let (x, _) = tray_fallback_origin((0, 0, 960, 1160), narrow, 1.0);
+        let narrow: Rect = (0, 0, 300, 400);
+        let (x, _) = tray_fallback_origin((0, 0, 480, 580), narrow, 1.0);
         assert_eq!(x, 0);
     }
 
     #[test]
+    fn a_window_wider_than_the_display_clamps_to_the_left_edge() {
+        let tiny: Rect = (0, 0, 300, 400);
+        let (x, _) = tray_anchored_origin((150, 0, 20, 24), 480, tiny, 8);
+        assert_eq!(x, 8);
+    }
+
+    #[test]
     fn no_monitors_means_no_opinion() {
-        assert!(!is_offscreen(win_at(4200, 40), &[]));
+        assert!(!is_offscreen(win_at(-1000, 500), &[]));
     }
 }
