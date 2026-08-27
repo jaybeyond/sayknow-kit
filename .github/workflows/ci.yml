@@ -59,10 +59,13 @@ jobs:
         run: |
           node -e '
           const fs = require("fs");
-          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
-          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
-          const toml = fs.readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version = "(.+)"$/m)[1];
-          const lock = fs.readFileSync("src-tauri/Cargo.lock", "utf8")
+          // Windows runners check out CRLF; parse on normalized text or the
+          // line-anchored patterns and the [[package]] split both miss.
+          const read = (p) => fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+          const pkg = JSON.parse(read("package.json")).version;
+          const conf = JSON.parse(read("src-tauri/tauri.conf.json")).version;
+          const toml = read("src-tauri/Cargo.toml").match(/^version = "(.+)"$/m)[1];
+          const lock = read("src-tauri/Cargo.lock")
             .split("\n[[package]]\n")
             .find((b) => b.startsWith("name = \"sayknow\""))
             .match(/^version = "(.+)"$/m)[1];
@@ -71,7 +74,6 @@ jobs:
           if (bad.length) { console.error("version mismatch:", vs); process.exit(1); }
           console.log("versions aligned:", pkg);
           '
-
       - name: Rust tests (--locked)
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
