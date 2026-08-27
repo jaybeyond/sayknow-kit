@@ -802,7 +802,8 @@ function AboutSection({ settings }: { settings: Settings }) {
   const { t } = useT(settings.uiLocale)
   // The displayed version is read from the running app, not a literal. A
   // literal here is a second copy of the version that nothing updates — the
-  // About panel said 0.1.0 through four releases while the manifests moved.
+  // About panel kept showing the launch version long after the manifests
+  // moved on.
   // The web-preview case is derived, so the effect only ever writes the
   // settled answer.
   const supported = isTauri()
