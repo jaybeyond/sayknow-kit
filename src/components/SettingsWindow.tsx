@@ -548,7 +548,10 @@ function DeeplRow({
           {sample && (
             <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Check className="h-3 w-3 text-primary" />
-              안녕하세요 → <span className="font-medium text-foreground">{sample}</span>
+              {t("settings.deepl.probeOk")}{" "}
+              <span className="font-mono text-[10px]">
+                안녕하세요 → {sample}
+              </span>
             </p>
           )}
 
