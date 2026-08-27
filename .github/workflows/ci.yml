@@ -55,8 +55,25 @@ jobs:
       - name: Type-check + frontend build
         run: pnpm build
 
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Version consistency
+        run: |
+          node -e '
+          const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
+          const toml = fs.readFileSync("src-tauri/Cargo.toml", "utf8").match(/^version = "(.+)"$/m)[1];
+          const lock = fs.readFileSync("src-tauri/Cargo.lock", "utf8")
+            .split("\n[[package]]\n")
+            .find((b) => b.startsWith("name = \"sayknow\""))
+            .match(/^version = "(.+)"$/m)[1];
+          const vs = { pkg, conf, toml, lock };
+          const bad = Object.entries(vs).filter(([, v]) => v !== pkg);
+          if (bad.length) { console.error("version mismatch:", vs); process.exit(1); }
+          console.log("versions aligned:", pkg);
+          '
+
+      - name: Rust tests (--locked)
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Tauri build (no bundle)
         run: pnpm tauri build --no-bundle ${{ matrix.args }}

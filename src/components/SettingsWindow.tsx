@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   BookText,
   Check,
@@ -51,7 +51,7 @@ import {
   type UILocaleSetting,
 } from "@/i18n"
 import { cn } from "@/lib/utils"
-import { openExternal } from "@/lib/runtime"
+import { isTauri, openExternal } from "@/lib/runtime"
 import {
   deeplUsage,
   deeplTranslate,
@@ -800,6 +800,28 @@ function UsageCard({
 /* ─────────── Section: About ─────────── */
 function AboutSection({ settings }: { settings: Settings }) {
   const { t } = useT(settings.uiLocale)
+  // The displayed version is read from the running app, not a literal. A
+  // literal here is a second copy of the version that nothing updates — the
+  // About panel said 0.1.0 through four releases while the manifests moved.
+  // The web-preview case is derived, so the effect only ever writes the
+  // settled answer.
+  const supported = isTauri()
+  const [appVersion, setAppVersion] = useState<string>("")
+  useEffect(() => {
+    if (!supported) return
+    let alive = true
+    void import("@tauri-apps/api/app")
+      .then((m) => m.getVersion())
+      .then((v) => {
+        if (alive) setAppVersion(v)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [supported])
+  const version = supported ? appVersion : "web"
+
   return (
     <div className="space-y-6">
       <SectionHeader icon={Info} title={t("settings.section.about")} />
@@ -812,7 +834,7 @@ function AboutSection({ settings }: { settings: Settings }) {
           <div>
             <div className="text-lg font-semibold">SayKnow Kit</div>
             <div className="text-xs text-muted-foreground">
-              {t("settings.about.version")} 0.1.0
+              {t("settings.about.version")} {version}
             </div>
           </div>
         </div>

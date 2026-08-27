@@ -59,6 +59,12 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      # Fail the release build if Cargo.lock would drift from the tag's
+      # manifests, so hosted runners can't silently regenerate a lockfile and
+      # ship artifacts that don't match the tagged source.
+      - name: Lockfile must match manifests (--locked)
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
       - name: Build & release
         uses: tauri-apps/tauri-action@v0
         env:
