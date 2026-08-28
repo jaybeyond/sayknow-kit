@@ -445,11 +445,12 @@ mod gamma_dim {
         super::iokit_backlight::system_backlight_level()
     }
 
-    /// Current total = system level x our gamma offset. None when the
-    /// registry read fails (then the UI falls back to the offset alone).
+    /// Current total = system level x our gamma offset. The system level is
+    /// the tap-tracked value (registry snapshot at boot + key-press deltas):
+    /// the registry itself is static and never moves on this architecture.
     pub fn total_percent() -> Option<u8> {
         let g = *LAST.lock().unwrap();
-        let s = super::iokit_backlight::system_backlight_level()?;
+        let s = super::brightness_tap::system_level();
         Some((s * g * 100.0).round().clamp(0.0, 100.0) as u8)
     }
 
@@ -474,9 +475,7 @@ mod gamma_dim {
     /// the ceiling only the system keys can raise.
     pub fn set_absolute(display: CgDirectDisplayId, percent: u8) -> bool {
         let target = percent as f64 / 100.0;
-        let system = super::iokit_backlight::system_backlight_level()
-            .unwrap_or(1.0)
-            .max(0.01);
+        let system = super::brightness_tap::system_level().max(0.01);
         set_gamma_offset(display, (target / system).clamp(0.0, 1.0))
     }
 
@@ -523,6 +522,220 @@ mod gamma_dim {
             }
         }
     }
+}
+
+// ─────────── brightness-key tap ───────────
+//
+// The registry's brightness dict is a static snapshot on this
+// new-backlight-architecture Mac — it never moves when the keys are pressed
+// (verified with a 10-minute poll), so it can't drive the sync. Instead we
+// listen for the brightness NX_SYSDEFINED events themselves: a listen-only
+// session event tap observes them fine (verified with a synthetic event),
+// and each press steps our tracked system level by one macOS division.
+
+#[cfg(target_os = "macos")]
+pub mod brightness_tap {
+    use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
+
+    type CfAllocatorRef = *const ();
+    type CfMachPortRef = *mut ();
+    type CfRunLoopRef = *mut ();
+    type CfRunLoopSourceRef = *mut ();
+    type CfStringRef = *const ();
+    type MachPort = u32;
+
+    type CGEventTapProxy = *const ();
+    type CGEventType = u32;
+    type CGEventRef = *mut ();
+    type CGEventMask = u64;
+    type CGEventTapLocation = u32;
+    type CGEventTapPlacement = u32;
+    type CGEventTapOptions = u32;
+
+    const NX_SYSDEFINED: u32 = 14;
+    const K_CG_SESSION_EVENT_TAP: CGEventTapLocation = 1;
+    const K_CG_HEAD_INSERT_EVENT_TAP: CGEventTapPlacement = 0;
+    // kCGEventTapOptionListenOnly == 1 (Default is 0). Passing 2 is an
+    // invalid option and CGEventTapCreate returns NULL — the whole
+    // "unavailable after retries" chase was this one constant.
+    const K_CG_EVENT_TAP_OPTION_LISTEN_ONLY: CGEventTapOptions = 1;
+
+    /// System level in sixteenths (1..=16), i.e. the macOS brightness
+    /// divisions. Seeded from the registry snapshot, then stepped by keys.
+    pub static SYSTEM_SIXTEENTHS: AtomicU8 = AtomicU8::new(0);
+
+    pub fn seed_sixteenths(fraction: f64) {
+        let v = (fraction * 16.0).round().clamp(1.0, 16.0) as u8;
+        SYSTEM_SIXTEENTHS.store(v, Ordering::Relaxed);
+    }
+
+    pub fn system_level() -> f64 {
+        let s = SYSTEM_SIXTEENTHS.load(Ordering::Relaxed);
+        if s == 0 {
+            return 1.0;
+        }
+        s as f64 / 16.0
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventTapCreate(
+            tap: CGEventTapLocation,
+            place: CGEventTapPlacement,
+            options: CGEventTapOptions,
+            events_of_interest: CGEventMask,
+            callback: extern "C" fn(
+                proxy: CGEventTapProxy,
+                ty: CGEventType,
+                event: CGEventRef,
+                user_info: *mut (),
+            ) -> *mut CGEventRef,
+            user_info: *mut (),
+        ) -> CfMachPortRef;
+        fn CGEventTapEnable(tap: CfMachPortRef, enable: bool);
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFMachPortCreateRunLoopSource(
+            allocator: CfAllocatorRef,
+            port: CfMachPortRef,
+            order: isize,
+        ) -> CfRunLoopSourceRef;
+        fn CFRunLoopGetCurrent() -> CfRunLoopRef;
+        fn CFRunLoopAddSource(
+            rl: CfRunLoopRef,
+            source: CfRunLoopSourceRef,
+            mode: CfStringRef,
+        );
+        fn CFRunLoopRun();
+        static kCFRunLoopDefaultMode: CfStringRef;
+    }
+
+    /// Read NX data1 through NSEvent — CGEvent does not expose it.
+    unsafe fn nx_data1(event: CGEventRef) -> Option<i64> {
+        use objc2::runtime::{AnyObject, Sel};
+        type MsgSendFn = unsafe extern "C" fn(*const AnyObject, Sel, ...) -> isize;
+        extern "C" {
+            fn objc_getClass(name: *const std::ffi::c_char) -> *mut AnyObject;
+            fn objc_msgSend() -> MsgSendFn;
+        }
+        let send = objc_msgSend();
+        let cls = objc_getClass(b"NSEvent\0".as_ptr() as *const std::ffi::c_char);
+        if cls.is_null() {
+            return None;
+        }
+        let ev: *const AnyObject = send(cls, Sel::register(c"eventWithCGEvent:"), event as isize)
+            as *const AnyObject;
+        if ev.is_null() {
+            return None;
+        }
+        Some(send(ev, Sel::register(c"data1")) as i64)
+    }
+
+    extern "C" fn tap_callback(
+        _proxy: CGEventTapProxy,
+        ty: CGEventType,
+        event: CGEventRef,
+        _user_info: *mut (),
+    ) -> *mut CGEventRef {
+        if ty == NX_SYSDEFINED {
+            let step = unsafe {
+                nx_data1(event).map(|d1| {
+                    let key = (d1 >> 16) & 0xffff;
+                    match key {
+                        3 => Some(1i32),  // brightness up
+                        4 => Some(-1i32), // brightness down
+                        _ => None,
+                    }
+                })
+            };
+            if let Some(Some(delta)) = step {
+                let cur = SYSTEM_SIXTEENTHS.load(Ordering::Relaxed);
+                let next = (cur as i32 + delta).clamp(1, 16) as u8;
+                SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
+                note_key(delta);
+            }
+        }
+        std::ptr::null_mut()
+    }
+
+    // ── key-press notification for the app layer ──
+    //
+    // The callback runs on the tap thread; the closure runs there too, so it
+    // must be Send. Cloning the AppHandle out of the box each time would need
+    // Sync, so instead the callback only flips an atomic and the app layer
+    // reads it from its own poll — no cross-thread closure call at all.
+    pub static KEY_STEPS: AtomicI32 = AtomicI32::new(0);
+
+    fn note_key(delta: i32) {
+        KEY_STEPS.fetch_add(delta, Ordering::Relaxed);
+    }
+
+    /// Create the tap ON the main runloop — the only place event taps are
+    /// reliably created. A bare secondary thread's creation fails outright,
+    /// and Tauri's setup() runs before the event loop services anything, so
+    /// attempts are paced: main thread creates, a helper thread only sleeps
+    /// and re-schedules the next attempt on main. Once created, the main
+    /// runloop services the tap for the app's lifetime.
+    pub fn start(app: &tauri::AppHandle) {
+        use std::sync::atomic::{AtomicU32, Ordering as O2};
+        static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+        attempt(app);
+        fn attempt(app: &tauri::AppHandle) {
+            let app = app.clone();
+            let app_for_retry = app.clone();
+            let spawned = app.run_on_main_thread(move || unsafe {
+                let tap = CGEventTapCreate(
+                    K_CG_SESSION_EVENT_TAP,
+                    K_CG_HEAD_INSERT_EVENT_TAP,
+                    K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
+                    1u64 << NX_SYSDEFINED,
+                    tap_callback,
+                    std::ptr::null_mut(),
+                );
+                if !tap.is_null() {
+                    let source =
+                        CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                    if !source.is_null() {
+                        CFRunLoopAddSource(
+                            CFRunLoopGetCurrent(),
+                            source,
+                            kCFRunLoopDefaultMode,
+                        );
+                        CGEventTapEnable(tap, true);
+                        log::info!("brightness key tap running on main runloop");
+                        return;
+                    }
+                    log::info!("brightness tap: source create failed");
+                    return;
+                }
+                let n = ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n < 20 {
+                    let app2 = app_for_retry.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                        attempt(&app2);
+                    });
+                } else {
+                    log::info!("brightness key tap unavailable after retries");
+                }
+            });
+            if let Err(e) = spawned {
+                log::info!("brightness tap: main dispatch failed: {e}");
+            }
+        }
+    }
+}
+
+/// Seed the tap-tracked system level from the registry snapshot and start
+/// listening for the brightness keys. Call from app setup.
+#[cfg(target_os = "macos")]
+pub fn start_brightness_sync(app: &tauri::AppHandle) {
+    if let Some(f) = iokit_backlight::system_backlight_level() {
+        brightness_tap::seed_sixteenths(f);
+    }
+    brightness_tap::start(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -915,6 +1128,9 @@ mod tests {
             r[n as usize / 2]
         };
         let sys = super::iokit_backlight::system_backlight_level();
+        if let Some(f) = sys {
+            super::brightness_tap::seed_sixteenths(f);
+        }
         eprintln!("system backlight S={sys:?}");
         let base = mid();
         // Targets scaled to the live ceiling so the test holds at any S:

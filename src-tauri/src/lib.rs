@@ -1666,6 +1666,11 @@ pub fn run() {
                 .build(app)?;
             eprintln!("[sayknow] tray icon built: id={:?}", tray.id());
 
+            // Brightness-key observer: keeps the built-in slider in step with
+            // F1/F2. Registry snapshot seeds the level; the tap tracks deltas.
+            #[cfg(target_os = "macos")]
+            display::start_brightness_sync(app.handle());
+
             // Hide window when it loses focus — popover behavior.
             // Skip blur events that fire within ~400ms of show() to avoid
             // the show-then-immediately-hide race during tray click.

@@ -3796,6 +3796,7 @@ dependencies = [
  "ddc-hi",
  "keyring",
  "log",
+ "objc2",
  "serde",
  "serde_json",
  "tauri",

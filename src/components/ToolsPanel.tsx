@@ -46,11 +46,12 @@ export function ToolsPanel({ settings, active }: Props) {
   }, [active])
 
   // Follow the keyboard keys: the built-in slider is an absolute brightness
-  // whose system half changes under us. A 1s registry-read poll keeps the
-  // thumb moving with F1/F2 without touching the external displays.
+  // whose system half changes under us. The sync command is pure math on the
+  // tap-tracked level (no DDC, no registry hit), so 250ms is cheap and makes
+  // the thumb feel attached to F1/F2.
   useEffect(() => {
     if (!active) return
-    const timer = setInterval(() => void syncBuiltin(), 1000)
+    const timer = setInterval(() => void syncBuiltin(), 250)
     return () => clearInterval(timer)
   }, [active])
 

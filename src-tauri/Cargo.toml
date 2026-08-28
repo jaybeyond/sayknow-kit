@@ -33,3 +33,6 @@ ddc-hi = "0.4"
 # [dependencies] entry breaks the Windows build (std::os::unix).
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
+# NX event parsing: the tap callback receives CGEvent, and the NX data1
+# field is only exposed through NSEvent. Already in the graph via wry.
+objc2 = "0.6"
