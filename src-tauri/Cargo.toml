@@ -28,4 +28,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-http = "2"
 keyring = { version = "3", features = ["apple-native"] }
 ddc-hi = "0.4"
+
+# macOS-only: used by the gamma/backlight registry reads. A plain
+# [dependencies] entry breaks the Windows build (std::os::unix).
+[target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
