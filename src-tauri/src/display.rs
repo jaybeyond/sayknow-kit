@@ -353,29 +353,34 @@ mod gamma_dim {
         (*LAST.lock().unwrap() * 100.0).round().clamp(0.0, 100.0) as u8
     }
 
+    /// Scale the CAPTURED ORIGINAL by the factor — never the live table.
+    ///
+    /// The first version multiplied the current table on every set, so each
+    /// drag compounded: 40% then 60% landed at orig×0.4×0.4×0.6… and the
+    /// slider could only ever make the screen darker, no matter which way it
+    /// moved. That is exactly the reported one-directional bug.
     pub fn set_percent(display: CgDirectDisplayId, percent: u8) -> bool {
-        let Some((mut r, mut g, mut b)) = read_table(display) else {
-            return false;
-        };
+        // First touch: whatever is running now (Night Shift, True Tone)
+        // becomes the base we scale and later restore.
         {
             let mut orig = ORIGINAL.lock().unwrap();
             if orig.is_none() {
-                // First touch: whatever is running now (Night Shift, True
-                // Tone) becomes the base we scale and later restore.
-                *orig = Some(Original {
-                    display,
-                    red: r.clone(),
-                    green: g.clone(),
-                    blue: b.clone(),
-                });
+                let Some((r, g, b)) = read_table(display) else {
+                    return false;
+                };
+                *orig = Some(Original { display, red: r, green: g, blue: b });
             }
         }
         let factor = percent as f32 / 100.0;
-        for ch in [&mut r, &mut g, &mut b] {
-            for v in ch.iter_mut() {
-                *v = (*v * factor).clamp(0.0, 1.0);
-            }
-        }
+        let (r, g, b) = {
+            let orig = ORIGINAL.lock().unwrap();
+            let o = orig.as_ref().unwrap();
+            (
+                scale_table(&o.red, factor),
+                scale_table(&o.green, factor),
+                scale_table(&o.blue, factor),
+            )
+        };
         let ok = write_table(display, &r, &g, &b);
         if ok {
             *LAST.lock().unwrap() = percent as f64 / 100.0;
@@ -385,6 +390,10 @@ mod gamma_dim {
 
     /// Put the captured original back. Called on app exit so the panel is
     /// never left dimmed with no obvious way back.
+    pub(super) fn scale_table(src: &[f32], factor: f32) -> Vec<f32> {
+        src.iter().map(|v| (v * factor).clamp(0.0, 1.0)).collect()
+    }
+
     pub fn restore() {
         let orig = ORIGINAL.lock().unwrap().take();
         if let Some(o) = orig {
@@ -663,7 +672,28 @@ pub fn list_displays() -> Vec<DisplayStatus> {
 }
 
 #[tauri::command]
-pub fn set_display_brightness(id: String, value: i64) -> Result<(), String> {
+pub fn set_display_brightness(
+    app: tauri::AppHandle,
+    id: String,
+    value: i64,
+) -> Result<(), String> {
+    if id == BUILTIN_ID {
+        // CGS gamma writes only take effect from the main thread's WindowServer
+        // connection. The identical call returns success from a worker thread
+        // and then silently does nothing — which is why the shipped build
+        // moved the slider (and reported the new percent) without the screen
+        // ever changing. Dispatch the whole built-in path to main.
+        let percent = clamp_percent(value);
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(set_brightness(BUILTIN_ID, percent));
+        })
+        .map_err(|e| e.to_string())?;
+        return rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string());
+    }
     set_brightness(&id, clamp_percent(value)).map_err(|e| e.to_string())
 }
 
@@ -691,6 +721,63 @@ mod tests {
         assert_eq!(float_to_percent(0.0), 0);
         assert_eq!(float_to_percent(1.0), 100);
         assert_eq!(float_to_percent(0.555), 56);
+    }
+
+    #[test]
+    fn gamma_scaling_is_reversible_from_the_original() {
+        // The one-directional bug: scaling the live table compounds.
+        let orig = [0.0f32, 0.25, 0.5, 0.75, 1.0];
+        let down = gamma_dim::scale_table(&orig, 0.4);
+        // Now drag UP to 80 — must be brighter than 40, derived from the
+        // ORIGINAL, not from the already-dimmed table.
+        let up = gamma_dim::scale_table(&orig, 0.8);
+        assert!((down[2] - 0.5 * 0.4).abs() < 1e-6);
+        assert!((up[2] - 0.5 * 0.8).abs() < 1e-6);
+        assert!(up[2] > down[2]);
+        // And the compounding behaviour this test guards against:
+        let compounded = gamma_dim::scale_table(&down, 0.8);
+        assert!(compounded[2] < down[2]);
+    }
+
+    /// Live hardware check, runs only when SAYKNOW_LIVE_GAMMA=1 so CI never
+    /// touches a real display. Exercises the real read/capture/scale/write
+    /// chain on the built-in panel and asserts both directions.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn live_gamma_is_bidirectional() {
+        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
+            return;
+        }
+        let Some(d) = cg_builtin_id() else {
+            eprintln!("no builtin; skip");
+            return;
+        };
+        let mid = || -> f32 {
+            let mut r = vec![0f32; 512];
+            let mut g = vec![0f32; 512];
+            let mut b = vec![0f32; 512];
+            let mut n = 0u32;
+            unsafe {
+                extern "C" {
+                    fn CGGetDisplayTransferByTable(
+                        d: u32, c: u32, r: *mut f32, g: *mut f32, b: *mut f32, n: *mut u32,
+                    ) -> i32;
+                }
+                CGGetDisplayTransferByTable(d, 512, r.as_mut_ptr(), g.as_mut_ptr(), b.as_mut_ptr(), &mut n);
+            }
+            r[n as usize / 2]
+        };
+        let base = mid();
+        assert!(set_brightness(BUILTIN_ID, 40).is_ok(), "set 40 failed");
+        let m40 = mid();
+        assert!(set_brightness(BUILTIN_ID, 80).is_ok(), "set 80 failed");
+        let m80 = mid();
+        set_brightness(BUILTIN_ID, 100).ok();
+        let m100 = mid();
+        eprintln!("base={base:.4} m40={m40:.4} m80={m80:.4} m100={m100:.4}");
+        assert!(m40 < base * 0.6, "40% did not dim: {m40} vs {base}");
+        assert!(m80 > m40 * 1.5, "80% not brighter than 40%: {m80} vs {m40}");
+        assert!((m100 - base).abs() < 0.02, "100% did not restore: {m100} vs {base}");
     }
 
     #[test]
