@@ -8,6 +8,7 @@ import {
   Minimize2,
   Pin,
   PinOff,
+  Wrench,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { HistoryMenu } from "./HistoryMenu"
@@ -18,13 +19,14 @@ import { TranslatePanel, type TranslateInjection } from "./TranslatePanel"
 import { ChatPanel } from "./ChatPanel"
 import { ClipboardPanel } from "./ClipboardPanel"
 import { UsagePanel } from "./UsagePanel"
+import { ToolsPanel } from "./ToolsPanel"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { useT } from "@/i18n"
 import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 
-type Tab = "translate" | "chat" | "clipboard" | "usage"
+type Tab = "translate" | "chat" | "clipboard" | "usage" | "tools"
 const TAB_KEY = "active-tab"
 
 type Props = {
@@ -106,6 +108,13 @@ export function TabbedPanel(props: Props) {
           onClick={() => selectTab("usage")}
         />
 
+        <TabButton
+          active={tab === "tools"}
+          icon={Wrench}
+          label={t("tab.tools")}
+          onClick={() => selectTab("tools")}
+        />
+
         {/* Window and app-level controls. They used to sit in the translate
             tab's own header, which meant pin, resize and settings vanished the
             moment you switched tabs. */}
@@ -183,8 +192,10 @@ export function TabbedPanel(props: Props) {
             settings={props.settings}
             onSendToTranslate={sendToTranslate}
           />
-        ) : (
+        ) : tab === "usage" ? (
           <UsagePanel settings={props.settings} active={tab === "usage"} />
+        ) : (
+          <ToolsPanel settings={props.settings} active={tab === "tools"} />
         )}
       </div>
     </div>

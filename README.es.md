@@ -24,6 +24,8 @@ SayKnow Kit vive en la **barra de menú de macOS**. Un atajo abre una ventana pe
 
 ## Funciones
 
+- 🌞 **Pestaña de herramientas** — controla el brillo de todas las pantallas conectadas a nivel de hardware (DDC/CI para externas, IOKit para la integrada donde esté permitido) y enciende/apaga monitores externos (en espera DDC)
+- 🌞 **Pestaña de herramientas** — controla el brillo de todas las pantallas conectadas a nivel de hardware (DDC/CI para externas, IOKit para la integrada donde esté permitido) y enciende/apaga monitores externos (en espera DDC)
 - 📊 **Pestaña de uso** — Claude Code, Codex y SayKnow CLI leídos de los registros de sesión que ya escriben en local. Muestra el bloque de facturación de 5 h (tiempo restante y ritmo de consumo) y los porcentajes reales de 5 h y semanales que registra la CLI, con su hora de reinicio. Una ventana ya reiniciada aparece tachada y nunca como tu nivel actual. Sin red y sin inicio de sesión adicional
 - 📋 **Pestaña de portapapeles** — historial capturado en segundo plano, buscable por texto y notas, con fijado, envío a traducir y borrado en dos niveles. Vacíos, cadenas tipo OTP y bloques de clave PEM nunca se guardan
 - 💬 **Pestaña de chat** — Q&R ligero en la misma ventana, barra lateral multi-conversación, acciones por mensaje: regenerar / editar / copiar / detener

@@ -53,6 +53,13 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 🔍 **Honest staleness** — a window that has already reset is struck through, never drawn as your current level
 - 🔌 **No network** — nothing is uploaded and no extra sign-in is required
 
+### Tools
+- 🌞 **Screen brightness** — hardware-level control for every connected display: DDC/CI for externals (HDMI/DisplayPort/USB-C), IOKit backlight for built-in panels on Macs that still allow it
+- 🔌 **Display power** — turn an external monitor off and back on (DDC standby); charging, audio and USB keep working
+- 🎚️ **One slider for all** — move every display at once, or adjust each on its own
+- 🔍 **Honest readouts** — a monitor that won't report brightness over DDC still adjusts; it just shows —
+- ⌨️ **Keyboard-friendly** — sliders commit on release, so one drag is one command
+
 ### Providers
 - 🌐 **OpenRouter BYOK** — searchable combobox over 360+ models, automatic fallback model retry
 - 🤖 **OCP (Open Claude Proxy)** — expose the local Claude CLI as an OpenAI-compatible API. **One-tap install** (clones the repo, `npm install`, `node setup.mjs`) with live log streaming

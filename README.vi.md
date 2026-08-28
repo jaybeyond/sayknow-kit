@@ -24,6 +24,8 @@ SayKnow Kit nằm trên **thanh menu macOS**. Một phím tắt mở popup chứ
 
 ## Tính năng
 
+- 🌞 **Tab công cụ** — điều khiển độ sáng mọi màn hình đã kết nối ở cấp phần cứng (DDC/CI cho màn ngoài, IOKit cho màn tích hợp nếu được phép) và bật/tắt màn ngoài (chờ DDC)
+- 🌞 **Tab công cụ** — điều khiển độ sáng mọi màn hình đã kết nối ở cấp phần cứng (DDC/CI cho màn ngoài, IOKit cho màn tích hợp nếu được phép) và bật/tắt màn ngoài (chờ DDC)
 - 📊 **Tab mức dùng** — đọc trực tiếp nhật ký phiên mà Claude Code, Codex và SayKnow CLI đã ghi cục bộ. Hiển thị khối tính phí 5 giờ (thời gian còn lại, tốc độ tiêu thụ) cùng phần trăm 5 giờ và hàng tuần thật do CLI ghi lại, kèm giờ reset. Cửa sổ đã reset bị gạch ngang và không bao giờ được vẽ như mức hiện tại. Không cần mạng, không cần đăng nhập thêm
 - 📋 **Tab lịch sử clipboard** — thu thập nền, tìm kiếm cả nội dung lẫn ghi chú, ghim, gửi sang dịch và xoá hai mức. Chuỗi rỗng, dạng OTP và khối khoá PEM không bao giờ được lưu
 - 💬 **Tab Chat** — hỏi-đáp gọn trong cùng cửa sổ, thanh bên đa cuộc trò chuyện, theo từng tin nhắn: tạo lại / chỉnh sửa / sao chép / dừng

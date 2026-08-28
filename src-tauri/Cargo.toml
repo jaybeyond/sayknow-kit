@@ -27,3 +27,4 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-http = "2"
 keyring = { version = "3", features = ["apple-native"] }
+ddc-hi = "0.4"

@@ -24,6 +24,8 @@ SayKnow Kit vit dans la **barre de menu macOS**. Un raccourci ouvre une petite f
 
 ## Fonctionnalités
 
+- 🌞 **Onglet outils** — luminosité de tous les écrans connectés au niveau matériel (DDC/CI pour les externes, IOKit pour l'intégré quand c'est permis) et marche/arrêt des écrans externes (veille DDC)
+- 🌞 **Onglet outils** — luminosité de tous les écrans connectés au niveau matériel (DDC/CI pour les externes, IOKit pour l'intégré quand c'est permis) et marche/arrêt des écrans externes (veille DDC)
 - 📊 **Onglet usage** — Claude Code, Codex et SayKnow CLI lus dans les journaux de session qu'ils écrivent déjà en local. Affiche le bloc de facturation de 5 h (temps restant, rythme de consommation) et les pourcentages réels 5 h et hebdomadaires enregistrés par la CLI, avec leur heure de réinitialisation. Une fenêtre déjà réinitialisée est barrée, jamais présentée comme votre niveau actuel. Sans réseau ni connexion supplémentaire
 - 📋 **Onglet presse-papiers** — historique capturé en arrière-plan, cherchable sur le texte et les notes, avec épinglage, envoi vers la traduction et effacement à deux niveaux. Vides, chaînes de type OTP et blocs de clé PEM ne sont jamais stockés
 - 💬 **Onglet Chat** — Q&R léger dans la même fenêtre, barre latérale multi-conversation, actions par message : régénérer / éditer / copier / arrêter

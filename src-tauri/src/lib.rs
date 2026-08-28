@@ -1,4 +1,5 @@
 mod agent_usage;
+mod display;
 mod clipboard;
 
 use std::fs::OpenOptions;
@@ -1556,6 +1557,9 @@ pub fn run() {
             clipboard::set_clipboard_capture,
             clipboard::get_clipboard_capture,
             clipboard::set_clipboard_max_entries,
+            display::list_displays,
+            display::set_display_brightness,
+            display::set_display_power,
             agent_usage::agent_usage
         ])
         .setup(|app| {
