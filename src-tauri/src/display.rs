@@ -138,17 +138,38 @@ mod iokit_backlight {
     /// Pre-new-architecture Macs expose it on IODisplayConnect; the new
     /// architecture exposes nothing user-settable.
     fn find_backlight_service() -> Option<BacklightService> {
-        unsafe {
-            let key = CFStringCreateWithCString(
-                std::ptr::null(),
-                BACKLIGHT_KEY.as_ptr() as *const c_char,
-                KCF_STRING_ENCODING_UTF8,
-            );
-            if key.is_null() {
-                return None;
+        let key = unsafe { make_key()? };
+        for_each_backlight_service(|service| unsafe {
+            let mut probe: f32 = 0.0;
+            if IODisplayGetFloatParameter(service, 0, key, &mut probe) == 0 {
+                // GetFloatParameter answering means Set will too.
+                Some(BacklightService { service, key })
+            } else {
+                None
             }
-            let mut found: Option<BacklightService> = None;
-            for class_name in [&b"IODisplayConnect\0"[..], &b"AppleARMBacklight\0"[..]] {
+        })
+    }
+
+    unsafe fn make_key() -> Option<CfStringRef> {
+        let key = CFStringCreateWithCString(
+            std::ptr::null(),
+            BACKLIGHT_KEY.as_ptr() as *const c_char,
+            KCF_STRING_ENCODING_UTF8,
+        );
+        (!key.is_null()).then_some(key)
+    }
+
+    /// Run `f` over the services of the display-related classes. Ownership of
+    /// a returned service handle transfers to the caller; everything else is
+    /// released here. The service is kept alive by its retain count from the
+    /// iterator, exactly as before.
+    fn for_each_backlight_service<T>(
+        mut f: impl FnMut(IoObject) -> Option<T>,
+    ) -> Option<T> {
+        unsafe {
+            for class_name in
+                [&b"IODisplayConnect\0"[..], &b"AppleARMBacklight\0"[..]]
+            {
                 let matching = IOServiceMatching(class_name.as_ptr() as *const c_char);
                 if matching.is_null() {
                     continue;
@@ -158,26 +179,88 @@ mod iokit_backlight {
                 if IOServiceGetMatchingServices(0, matching, &mut iterator) != 0 {
                     continue;
                 }
-                let mut probe: f32 = 0.0;
                 loop {
                     let service = IOIteratorNext(iterator);
                     if service == 0 {
                         break;
                     }
-                    if IODisplayGetFloatParameter(service, 0, key, &mut probe) == 0 {
-                        // GetFloatParameter answering means Set will too.
-                        found = Some(BacklightService { service, key });
-                        break;
+                    if let Some(found) = f(service) {
+                        IOObjectRelease(iterator);
+                        return Some(found);
                     }
                     IOObjectRelease(service);
                 }
                 IOObjectRelease(iterator);
-                if found.is_some() {
-                    return found;
-                }
             }
-            CFRelease(key as *const ());
             None
+        }
+    }
+
+    /// The system backlight level 0.0-1.0, read from the registry the same
+    /// way `ioreg` shows it: IODisplayParameters -> brightness -> value/max.
+    /// This is what the keyboard keys change, so reading it is what makes the
+    /// slider follow them.
+    pub(super) fn system_backlight_level() -> Option<f64> {
+        use core_foundation::base::TCFType;
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+
+        #[link(name = "IOKit", kind = "framework")]
+        extern "C" {
+            fn IORegistryEntryCreateCFProperty(
+                entry: IoObject,
+                key: CfStringRef,
+                allocator: *const (),
+                options: u32,
+            ) -> *const ();
+        }
+
+        unsafe {
+            let params_key = CFString::new("IODisplayParameters");
+            for_each_backlight_service(|service| {
+                let dict = IORegistryEntryCreateCFProperty(
+                    service,
+                    params_key.as_concrete_TypeRef() as *const (),
+                    std::ptr::null(),
+                    0,
+                );
+                if dict.is_null() {
+                    return None;
+                }
+                let params: CFDictionary =
+                    <CFDictionary as TCFType>::wrap_under_create_rule(dict as *mut _);
+                let bkey = CFString::new("brightness");
+                let bref = core_foundation::dictionary::CFDictionaryGetValue(
+                    params.as_concrete_TypeRef(),
+                    bkey.as_concrete_TypeRef() as *const _,
+                );
+                if bref.is_null() {
+                    return None;
+                }
+                // CFDictionaryGetValue is a GET-rule reference: wrapping it
+                // create-rule would over-release on drop and crash.
+                let bdict: CFDictionary =
+                    <CFDictionary as TCFType>::wrap_under_get_rule(bref as *mut _);
+                let num = |name: &str| -> Option<f64> {
+                    let k = CFString::new(name);
+                    let v = core_foundation::dictionary::CFDictionaryGetValue(
+                        bdict.as_concrete_TypeRef(),
+                        k.as_concrete_TypeRef() as *const _,
+                    );
+                    if v.is_null() {
+                        return None;
+                    }
+                    let n: CFNumber =
+                        core_foundation::number::CFNumber::wrap_under_get_rule(v as *mut _);
+                    n.to_f64()
+                };
+                let (value, max) = (num("value")?, num("max")?);
+                if max <= 0.0 {
+                    return None;
+                }
+                Some((value / max).clamp(0.0, 1.0))
+            })
         }
     }
 
@@ -262,6 +345,13 @@ mod core_graphics {
 // "software dimming" outright. The original table is captured before the
 // first change and restored on app exit so the screen is never left dimmed
 // with no obvious way back.
+//
+// The slider is an ABSOLUTE brightness that tracks the system: the real
+// backlight level S is read live from IORegistry, the applied gamma offset g
+// only changes when the user drags, and the screen's total is S x g. Pressing
+// the system keys changes S, so the slider follows; we never rewrite g in
+// response, which keeps auto-brightness and the keys behaving natively
+// instead of being fought by a compensation loop.
 
 #[cfg(target_os = "macos")]
 mod gamma_dim {
@@ -349,6 +439,20 @@ mod gamma_dim {
         read_table(display).is_some()
     }
 
+    /// The system backlight level 0.0-1.0, straight from the registry.
+    /// This is the value the keyboard keys change.
+    pub fn system_level() -> Option<f64> {
+        super::iokit_backlight::system_backlight_level()
+    }
+
+    /// Current total = system level x our gamma offset. None when the
+    /// registry read fails (then the UI falls back to the offset alone).
+    pub fn total_percent() -> Option<u8> {
+        let g = *LAST.lock().unwrap();
+        let s = super::iokit_backlight::system_backlight_level()?;
+        Some((s * g * 100.0).round().clamp(0.0, 100.0) as u8)
+    }
+
     pub fn get_percent() -> u8 {
         (*LAST.lock().unwrap() * 100.0).round().clamp(0.0, 100.0) as u8
     }
@@ -360,6 +464,23 @@ mod gamma_dim {
     /// slider could only ever make the screen darker, no matter which way it
     /// moved. That is exactly the reported one-directional bug.
     pub fn set_percent(display: CgDirectDisplayId, percent: u8) -> bool {
+        set_gamma_offset(display, percent as f64 / 100.0)
+    }
+
+    /// Absolute-brightness entry: the slider's V is a TOTAL. The gamma offset
+    /// becomes V / S where S is the live system backlight level, so the
+    /// slider reads the same scale as the keyboard keys. Above the current
+    /// backlight level the offset clamps to 1.0 — the backlight itself is
+    /// the ceiling only the system keys can raise.
+    pub fn set_absolute(display: CgDirectDisplayId, percent: u8) -> bool {
+        let target = percent as f64 / 100.0;
+        let system = super::iokit_backlight::system_backlight_level()
+            .unwrap_or(1.0)
+            .max(0.01);
+        set_gamma_offset(display, (target / system).clamp(0.0, 1.0))
+    }
+
+    fn set_gamma_offset(display: CgDirectDisplayId, factor: f64) -> bool {
         // First touch: whatever is running now (Night Shift, True Tone)
         // becomes the base we scale and later restore.
         {
@@ -371,7 +492,7 @@ mod gamma_dim {
                 *orig = Some(Original { display, red: r, green: g, blue: b });
             }
         }
-        let factor = percent as f32 / 100.0;
+        let factor = factor as f32;
         let (r, g, b) = {
             let orig = ORIGINAL.lock().unwrap();
             let o = orig.as_ref().unwrap();
@@ -383,7 +504,7 @@ mod gamma_dim {
         };
         let ok = write_table(display, &r, &g, &b);
         if ok {
-            *LAST.lock().unwrap() = percent as f64 / 100.0;
+            *LAST.lock().unwrap() = factor as f64;
         }
         ok
     }
@@ -429,13 +550,30 @@ fn builtin_gamma_supported() -> bool {
 #[cfg(target_os = "macos")]
 fn builtin_gamma_set(percent: u8) -> bool {
     cg_builtin_id()
-        .map(|display| gamma_dim::set_percent(display, percent))
+        .map(|display| gamma_dim::set_absolute(display, percent))
         .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "macos"))]
 fn builtin_gamma_set(_percent: u8) -> bool {
     false
+}
+
+/// Live total brightness of the built-in panel: system backlight level x our
+/// gamma offset. This is what the slider displays, and what changes when the
+/// user presses the keyboard keys — the sync the UI polls for.
+#[cfg(target_os = "macos")]
+fn builtin_total() -> Option<u8> {
+    if builtin::controllable() {
+        // Real backlight under our control: the native value is the total.
+        return builtin::get();
+    }
+    gamma_dim::total_percent()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn builtin_total() -> Option<u8> {
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -561,7 +699,7 @@ pub fn list() -> Vec<DisplayStatus> {
             brightness: if backlight_ok {
                 builtin::get()
             } else if gamma_ok {
-                Some(builtin_gamma_percent())
+                builtin_total().or_else(|| Some(builtin_gamma_percent()))
             } else {
                 None
             },
@@ -697,6 +835,14 @@ pub fn set_display_brightness(
     set_brightness(&id, clamp_percent(value)).map_err(|e| e.to_string())
 }
 
+/// Cheap builtin-only refresh for polling: no DDC traffic, just the
+/// registry read and our offset. The UI calls this about once a second while
+/// the tools tab is visible so the slider follows the keyboard keys.
+#[tauri::command]
+pub fn sync_builtin_brightness() -> Option<u8> {
+    builtin_total()
+}
+
 #[tauri::command]
 pub fn set_display_power(id: String, on: bool) -> Result<(), String> {
     set_power(&id, on).map_err(|e| e.to_string())
@@ -768,16 +914,36 @@ mod tests {
             }
             r[n as usize / 2]
         };
+        let sys = super::iokit_backlight::system_backlight_level();
+        eprintln!("system backlight S={sys:?}");
         let base = mid();
-        assert!(set_brightness(BUILTIN_ID, 40).is_ok(), "set 40 failed");
-        let m40 = mid();
-        assert!(set_brightness(BUILTIN_ID, 80).is_ok(), "set 80 failed");
-        let m80 = mid();
+        // Targets scaled to the live ceiling so the test holds at any S:
+        // below-ceiling drags must land at V/S exactly, above-ceiling must
+        // clamp at the backlight level (factor 1.0).
+        let (s, cap) = match sys {
+            Some(s) => (s.max(0.01), (s * 100.0) as u8),
+            None => (1.0, 100),
+        };
+        let low = (cap as f64 * 0.6) as u8;
+        let high = (cap as f64 * 0.9) as u8;
+        assert!(set_brightness(BUILTIN_ID, low).is_ok(), "set low failed");
+        let m_low = mid();
+        assert!(set_brightness(BUILTIN_ID, high).is_ok(), "set high failed");
+        let m_high = mid();
         set_brightness(BUILTIN_ID, 100).ok();
         let m100 = mid();
-        eprintln!("base={base:.4} m40={m40:.4} m80={m80:.4} m100={m100:.4}");
-        assert!(m40 < base * 0.6, "40% did not dim: {m40} vs {base}");
-        assert!(m80 > m40 * 1.5, "80% not brighter than 40%: {m80} vs {m40}");
+        eprintln!(
+            "base={base:.4} cap={cap} low={low} high={high} m_low={m_low:.4} m_high={m_high:.4} m100={m100:.4}"
+        );
+        // Absolute model: table = base * V/S below the ceiling.
+        let f_low = (low as f64 / 100.0 / s).clamp(0.0, 1.0);
+        let expected_low = (base as f64 * f_low) as f32;
+        assert!(
+            (m_low - expected_low).abs() < 0.03,
+            "low absolute mismatch: {m_low} vs {expected_low} (S={s})"
+        );
+        assert!(m_high > m_low, "high not brighter than low");
+        // 100 is always >= ceiling -> factor clamps to 1 -> exact restore.
         assert!((m100 - base).abs() < 0.02, "100% did not restore: {m100} vs {base}");
     }
 

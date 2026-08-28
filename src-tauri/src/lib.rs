@@ -1560,6 +1560,7 @@ pub fn run() {
             display::list_displays,
             display::set_display_brightness,
             display::set_display_power,
+            display::sync_builtin_brightness,
             agent_usage::agent_usage
         ])
         .setup(|app| {

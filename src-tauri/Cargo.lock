@@ -3792,6 +3792,7 @@ dependencies = [
 name = "sayknow"
 version = "0.2.3"
 dependencies = [
+ "core-foundation 0.9.4",
  "ddc-hi",
  "keyring",
  "log",

@@ -16,6 +16,7 @@ import {
   getSnapshot,
   scanDisplays,
   subscribe,
+  syncBuiltin,
   type DisplayRow,
 } from "@/lib/tools-store"
 import { cn } from "@/lib/utils"
@@ -42,6 +43,15 @@ export function ToolsPanel({ settings, active }: Props) {
   useEffect(() => {
     if (!active) return
     void scanDisplays()
+  }, [active])
+
+  // Follow the keyboard keys: the built-in slider is an absolute brightness
+  // whose system half changes under us. A 1s registry-read poll keeps the
+  // thumb moving with F1/F2 without touching the external displays.
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => void syncBuiltin(), 1000)
+    return () => clearInterval(timer)
   }, [active])
 
   // Slider commits fire one command each. The optimistic value lives in the
@@ -286,6 +296,11 @@ function DisplayControl({
       {display.method === "gamma" && (
         <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
           {t("tools.brightness.softwareDimHint")}
+        </p>
+      )}
+      {display.method === "gamma" && (
+        <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+          {t("tools.brightness.syncHint")}
         </p>
       )}
     </div>
