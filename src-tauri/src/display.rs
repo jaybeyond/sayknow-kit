@@ -430,6 +430,16 @@ fn builtin_gamma_set(_percent: u8) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn builtin_gamma_percent() -> u8 {
+    gamma_dim::get_percent()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn builtin_gamma_percent() -> u8 {
+    100
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn cg_builtin_id() -> Option<u32> {
     use core_graphics::*;
     unsafe {
@@ -542,7 +552,7 @@ pub fn list() -> Vec<DisplayStatus> {
             brightness: if backlight_ok {
                 builtin::get()
             } else if gamma_ok {
-                Some(gamma_dim::get_percent())
+                Some(builtin_gamma_percent())
             } else {
                 None
             },
