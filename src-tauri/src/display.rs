@@ -403,6 +403,32 @@ pub fn restore_builtin_gamma() {
 #[cfg(not(target_os = "macos"))]
 pub fn restore_builtin_gamma() {}
 
+/// cfg!() is a runtime bool, so cfg-gated helper functions are how the
+/// Windows build avoids resolving the macOS-only symbols at all.
+#[cfg(target_os = "macos")]
+fn builtin_gamma_supported() -> bool {
+    cg_builtin_id()
+        .map(|id| gamma_dim::supported(id))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn builtin_gamma_supported() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn builtin_gamma_set(percent: u8) -> bool {
+    cg_builtin_id()
+        .map(|display| gamma_dim::set_percent(display, percent))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn builtin_gamma_set(_percent: u8) -> bool {
+    false
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn cg_builtin_id() -> Option<u32> {
     use core_graphics::*;
@@ -507,10 +533,7 @@ pub fn list() -> Vec<DisplayStatus> {
         // Preference order: real backlight first, gamma dimming as the
         // fallback. Gamma always works but is software — labelled as such.
         let backlight_ok = builtin::controllable();
-        let gamma_ok = cfg!(target_os = "macos")
-            && cg_builtin_id()
-                .map(|id| gamma_dim::supported(id))
-                .unwrap_or(false);
+        let gamma_ok = builtin_gamma_supported();
         out.push(DisplayStatus {
             id: BUILTIN_ID.into(),
             name: String::new(), // the UI labels the built-in by kind
@@ -581,12 +604,8 @@ pub fn set_brightness(id: &str, percent: u8) -> io::Result<()> {
         if builtin::set(percent) {
             return Ok(());
         }
-        if cfg!(target_os = "macos") {
-            if let Some(display) = cg_builtin_id() {
-                if gamma_dim::set_percent(display, percent) {
-                    return Ok(());
-                }
-            }
+        if builtin_gamma_set(percent) {
+            return Ok(());
         }
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
