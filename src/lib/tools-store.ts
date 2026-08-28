@@ -12,6 +12,7 @@ export type DisplayRow = {
   brightness: number | null
   power: boolean | null
   controllable: boolean
+  method: "backlight" | "ddc" | "gamma" | "none"
 }
 
 export type ToolsState = {

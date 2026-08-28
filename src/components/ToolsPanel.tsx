@@ -234,6 +234,11 @@ function DisplayControl({
             {t("tools.brightness.main")}
           </span>
         )}
+        {display.method === "gamma" && (
+          <span className="rounded bg-muted px-1 py-px text-[9px] text-muted-foreground">
+            {t("tools.brightness.softwareDim")}
+          </span>
+        )}
         {display.kind === "external" && (
           <span className="rounded bg-muted px-1 py-px text-[9px] text-muted-foreground">
             {t("tools.brightness.external")}
@@ -272,10 +277,15 @@ function DisplayControl({
           className="mt-1.5"
         />
       ) : (
-        // Present but not drivable from an app (new macOS backlight
-        // architecture): say so instead of a dead slider pretending to work.
+        // Present but not drivable at all (no backlight API, no gamma):
+        // say so instead of a dead slider pretending to work.
         <p className="mt-1.5 rounded bg-muted/60 px-1.5 py-1 text-[10px] leading-snug text-muted-foreground">
           {t("tools.brightness.builtinUnsupported")}
+        </p>
+      )}
+      {display.method === "gamma" && (
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+          {t("tools.brightness.softwareDimHint")}
         </p>
       )}
     </div>

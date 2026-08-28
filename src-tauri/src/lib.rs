@@ -1692,8 +1692,15 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("failed to build tauri app")
+        .run(|_app, event| {
+            // Leaving the built-in panel gamma-dimmed after quit, with no
+            // obvious way back, is a support ticket. Restore on the way out.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                crate::display::restore_builtin_gamma();
+            }
+        });
 }
 
 #[cfg(test)]

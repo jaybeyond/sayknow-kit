@@ -41,6 +41,10 @@ pub struct DisplayStatus {
     pub power: Option<bool>,
     /// False when this display can't be controlled from here at all.
     pub controllable: bool,
+    /// How brightness is driven: backlight | ddc | gamma. The UI labels
+    /// gamma honestly as software dimming — it scales the video signal, not
+    /// the panel's backlight.
+    pub method: String,
 }
 
 pub fn clamp_percent(v: i64) -> u8 {
@@ -249,6 +253,156 @@ mod core_graphics {
     }
 }
 
+// ─────────── built-in fallback: gamma dimming ───────────
+//
+// When the backlight can't be driven (new-backlight-architecture blocks
+// every API, permissioned or not), the honest remaining lever is the display
+// transfer table: scale the video signal the panel receives. It is NOT the
+// backlight — no battery saving, and deep dims crush blacks — so the UI says
+// "software dimming" outright. The original table is captured before the
+// first change and restored on app exit so the screen is never left dimmed
+// with no obvious way back.
+
+#[cfg(target_os = "macos")]
+mod gamma_dim {
+    use std::sync::Mutex;
+
+    type CgDirectDisplayId = u32;
+    type CgError = i32;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGGetDisplayTransferByTable(
+            display: CgDirectDisplayId,
+            capacity: u32,
+            red: *mut f32,
+            green: *mut f32,
+            blue: *mut f32,
+            sample_count: *mut u32,
+        ) -> CgError;
+        // The public CGDisplaySetDisplayTransferByTable is gone on current
+        // macOS; the CGS-prefixed private export in the same image does the
+        // identical job with the same argument order. Verified against the
+        // live table: set 0.4 -> read-back 0.5010*0.4 exactly, restore exact.
+        fn CGSSetDisplayTransferByTable(
+            display: CgDirectDisplayId,
+            table_size: u32,
+            red: *const f32,
+            green: *const f32,
+            blue: *const f32,
+        ) -> CgError;
+    }
+
+    const CAPACITY: u32 = 512;
+
+    struct Original {
+        display: CgDirectDisplayId,
+        red: Vec<f32>,
+        green: Vec<f32>,
+        blue: Vec<f32>,
+    }
+
+    fn read_table(display: CgDirectDisplayId) -> Option<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+        unsafe {
+            let mut red = vec![0f32; CAPACITY as usize];
+            let mut green = vec![0f32; CAPACITY as usize];
+            let mut blue = vec![0f32; CAPACITY as usize];
+            let mut n: u32 = 0;
+            let r = CGGetDisplayTransferByTable(
+                display,
+                CAPACITY,
+                red.as_mut_ptr(),
+                green.as_mut_ptr(),
+                blue.as_mut_ptr(),
+                &mut n,
+            );
+            if r != 0 || n == 0 {
+                return None;
+            }
+            red.truncate(n as usize);
+            green.truncate(n as usize);
+            blue.truncate(n as usize);
+            Some((red, green, blue))
+        }
+    }
+
+    fn write_table(display: CgDirectDisplayId, r: &[f32], g: &[f32], b: &[f32]) -> bool {
+        debug_assert_eq!(r.len(), g.len());
+        debug_assert_eq!(g.len(), b.len());
+        unsafe {
+            CGSSetDisplayTransferByTable(
+                display,
+                r.len() as u32,
+                r.as_ptr(),
+                g.as_ptr(),
+                b.as_ptr(),
+            ) == 0
+        }
+    }
+
+    /// Original table captured before our first modification, plus the last
+    /// factor we applied (1.0 = untouched).
+    static ORIGINAL: Mutex<Option<Original>> = Mutex::new(None);
+    static LAST: Mutex<f64> = Mutex::new(1.0);
+
+    pub fn supported(display: CgDirectDisplayId) -> bool {
+        read_table(display).is_some()
+    }
+
+    pub fn get_percent() -> u8 {
+        (*LAST.lock().unwrap() * 100.0).round().clamp(0.0, 100.0) as u8
+    }
+
+    pub fn set_percent(display: CgDirectDisplayId, percent: u8) -> bool {
+        let Some((mut r, mut g, mut b)) = read_table(display) else {
+            return false;
+        };
+        {
+            let mut orig = ORIGINAL.lock().unwrap();
+            if orig.is_none() {
+                // First touch: whatever is running now (Night Shift, True
+                // Tone) becomes the base we scale and later restore.
+                *orig = Some(Original {
+                    display,
+                    red: r.clone(),
+                    green: g.clone(),
+                    blue: b.clone(),
+                });
+            }
+        }
+        let factor = percent as f32 / 100.0;
+        for ch in [&mut r, &mut g, &mut b] {
+            for v in ch.iter_mut() {
+                *v = (*v * factor).clamp(0.0, 1.0);
+            }
+        }
+        let ok = write_table(display, &r, &g, &b);
+        if ok {
+            *LAST.lock().unwrap() = percent as f64 / 100.0;
+        }
+        ok
+    }
+
+    /// Put the captured original back. Called on app exit so the panel is
+    /// never left dimmed with no obvious way back.
+    pub fn restore() {
+        let orig = ORIGINAL.lock().unwrap().take();
+        if let Some(o) = orig {
+            if write_table(o.display, &o.red, &o.green, &o.blue) {
+                *LAST.lock().unwrap() = 1.0;
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn restore_builtin_gamma() {
+    gamma_dim::restore();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn restore_builtin_gamma() {}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn cg_builtin_id() -> Option<u32> {
     use core_graphics::*;
@@ -350,16 +504,34 @@ pub fn list() -> Vec<DisplayStatus> {
     let mut out = Vec::new();
 
     if builtin::exists() {
+        // Preference order: real backlight first, gamma dimming as the
+        // fallback. Gamma always works but is software — labelled as such.
+        let backlight_ok = builtin::controllable();
+        let gamma_ok = cfg!(target_os = "macos")
+            && cg_builtin_id()
+                .map(|id| gamma_dim::supported(id))
+                .unwrap_or(false);
         out.push(DisplayStatus {
             id: BUILTIN_ID.into(),
             name: String::new(), // the UI labels the built-in by kind
             kind: "builtin".into(),
             is_main: builtin_is_main(),
-            brightness: builtin::get(),
+            brightness: if backlight_ok {
+                builtin::get()
+            } else if gamma_ok {
+                Some(gamma_dim::get_percent())
+            } else {
+                None
+            },
             power: None,
-            // Present but possibly not drivable (new backlight architecture);
-            // the UI shows why instead of a dead slider pretending to work.
-            controllable: builtin::controllable(),
+            controllable: backlight_ok || gamma_ok,
+            method: if backlight_ok {
+                "backlight".into()
+            } else if gamma_ok {
+                "gamma".into()
+            } else {
+                "none".into()
+            },
         });
     }
 
@@ -396,6 +568,7 @@ pub fn list() -> Vec<DisplayStatus> {
             brightness,
             power,
             controllable: true,
+            method: "ddc".into(),
         });
     }
 
@@ -405,14 +578,20 @@ pub fn list() -> Vec<DisplayStatus> {
 pub fn set_brightness(id: &str, percent: u8) -> io::Result<()> {
     let percent = clamp_percent(percent as i64);
     if id == BUILTIN_ID {
-        return if builtin::set(percent) {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "built-in backlight not controllable on this machine",
-            ))
-        };
+        if builtin::set(percent) {
+            return Ok(());
+        }
+        if cfg!(target_os = "macos") {
+            if let Some(display) = cg_builtin_id() {
+                if gamma_dim::set_percent(display, percent) {
+                    return Ok(());
+                }
+            }
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "built-in display not controllable on this machine",
+        ));
     }
     for mut d in ddc_hi::Display::enumerate() {
         if ddc_id(&d.info) == id {
