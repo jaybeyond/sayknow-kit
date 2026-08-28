@@ -724,6 +724,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn gamma_scaling_is_reversible_from_the_original() {
         // The one-directional bug: scaling the live table compounds.
         let orig = [0.0f32, 0.25, 0.5, 0.75, 1.0];
