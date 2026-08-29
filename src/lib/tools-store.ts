@@ -13,6 +13,7 @@ export type DisplayRow = {
   power: boolean | null
   controllable: boolean
   method: "backlight" | "ddc" | "gamma" | "none"
+  system_level: number | null
 }
 
 export type ToolsState = {

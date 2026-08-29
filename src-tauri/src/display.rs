@@ -45,6 +45,10 @@ pub struct DisplayStatus {
     /// gamma honestly as software dimming — it scales the video signal, not
     /// the panel's backlight.
     pub method: String,
+    /// The system backlight level 0-100, readable from the tracked tap or
+    /// the registry snapshot. The UI shows this separately from the gamma
+    /// slider so the user can see which layer is dimming the screen.
+    pub system_level: Option<u8>,
 }
 
 pub fn clamp_percent(v: i64) -> u8 {
@@ -1003,6 +1007,11 @@ pub fn list() -> Vec<DisplayStatus> {
             } else {
                 "none".into()
             },
+            system_level: if backlight_ok {
+                builtin::get()
+            } else {
+                Some((brightness_tap::system_level() * 100.0).round() as u8)
+            },
         });
     }
 
@@ -1040,6 +1049,8 @@ pub fn list() -> Vec<DisplayStatus> {
             power,
             controllable: true,
             method: "ddc".into(),
+            // DDC brightness IS the backlight — the two are the same thing.
+            system_level: brightness,
         });
     }
 

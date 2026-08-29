@@ -295,6 +295,25 @@ function DisplayControl({
           </Button>
         )}
       </div>
+      {display.method === "gamma" && display.system_level !== null && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="shrink-0 text-[9px] text-muted-foreground">
+            {t("tools.brightness.backlight")}
+          </span>
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
+            <div
+              className={cn(
+                "h-full",
+                display.system_level < 60 ? "bg-amber-500/70" : "bg-muted-foreground/50",
+              )}
+              style={{ width: `${display.system_level}%` }}
+            />
+          </div>
+          <span className="shrink-0 tabular-nums text-[9px] text-muted-foreground">
+            {display.system_level}% · F1/F2
+          </span>
+        </div>
+      )}
       {display.controllable ? (
         <Slider
           value={[v]}
