@@ -577,6 +577,14 @@ pub mod brightness_tap {
         s as f64 / 16.0
     }
 
+    /// True until the registry seed has landed. The seed can fail during
+    /// early setup (service not yet publishing), and without this the
+    /// fallback level 1.0 shows the built-in at 100% when the system is at
+    /// 50% — exactly what shipped. The 250ms sync poll retries the seed.
+    pub fn unseeded() -> bool {
+        SYSTEM_SIXTEENTHS.load(Ordering::Relaxed) == 0
+    }
+
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGEventTapCreate(
@@ -741,10 +749,15 @@ pub mod brightness_tap {
 /// listening for the brightness keys. Call from app setup.
 #[cfg(target_os = "macos")]
 pub fn start_brightness_sync(app: &tauri::AppHandle) {
+    seed_system_level();
+    brightness_tap::start(app);
+}
+
+#[cfg(target_os = "macos")]
+fn seed_system_level() {
     if let Some(f) = iokit_backlight::system_backlight_level() {
         brightness_tap::seed_sixteenths(f);
     }
-    brightness_tap::start(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -1062,6 +1075,10 @@ pub fn set_display_brightness(
 /// the tools tab is visible so the slider follows the keyboard keys.
 #[tauri::command]
 pub fn sync_builtin_brightness() -> Option<u8> {
+    #[cfg(target_os = "macos")]
+    if brightness_tap::unseeded() {
+        seed_system_level();
+    }
     builtin_total()
 }
 
@@ -1170,6 +1187,22 @@ mod tests {
         assert!(m_high > m_low, "high not brighter than low");
         // 100 is always >= ceiling -> factor clamps to 1 -> exact restore.
         assert!((m100 - base).abs() < 0.02, "100% did not restore: {m100} vs {base}");
+    }
+
+    /// Live enumeration through the exact list() path; CI-safe (empty on
+    /// machines with no DDC displays).
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn live_ddc_enumerate() {
+        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
+            return;
+        }
+        for d in list() {
+            eprintln!(
+                "{} kind={} main={} bright={:?} power={:?} ctrl={} method={}",
+                d.id, d.kind, d.is_main, d.brightness, d.power, d.controllable, d.method
+            );
+        }
     }
 
     #[test]

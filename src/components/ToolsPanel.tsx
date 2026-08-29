@@ -55,6 +55,21 @@ export function ToolsPanel({ settings, active }: Props) {
     return () => clearInterval(timer)
   }, [active])
 
+  // Rescan every time the popover opens: monitors connect, wake, or lock
+  // their DDC while the app runs, and a list scanned once at tab-activation
+  // goes stale — an external that came back showed as nothing at all.
+  useEffect(() => {
+    if (!isTauri()) return
+    let alive = true
+    void import("@tauri-apps/api/event").then(({ listen }) => {
+      if (!alive) return
+      listen("sayknow:open", () => void scanDisplays(true))
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
   // Slider commits fire one command each. The optimistic value lives in the
   // row component; a rescan on error is the honest correction.
   const apply = useCallback(async (id: string, value: number) => {
