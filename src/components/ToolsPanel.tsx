@@ -298,6 +298,7 @@ function DisplayControl({
       {display.controllable ? (
         <Slider
           value={[v]}
+          min={display.method === "gamma" ? 5 : 0}
           onValueChange={([n]) => setV(n)}
           onValueCommit={([n]) => onCommit(n)}
           className="mt-1.5"

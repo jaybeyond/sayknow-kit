@@ -523,9 +523,14 @@ mod gamma_dim {
             let g = o.green.clone();
             let b = o.blue.clone();
             drop(orig);
-            if write_table(d, &r, &g, &b) {
+            log::info!("reset_offset: write_table disp={} len={} first={:.4}", d, r.len(), r[0]);
+            let ok = write_table(d, &r, &g, &b);
+            log::info!("reset_offset: write_table ok={}", ok);
+            if ok {
                 *LAST.lock().unwrap() = 1.0;
             }
+        } else {
+            log::info!("reset_offset: no original captured — nothing to reset");
         }
     }
 
@@ -692,12 +697,8 @@ pub mod brightness_tap {
                 let next = (cur as i32 + delta).clamp(1, 16) as u8;
                 SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
                 note_key(delta);
-                // Schedule the gamma reset on the NEXT main-runloop pass via
-                // dispatch_async_f. Calling CGSSetDisplayTransferByTable
-                // (WindowServer IPC) directly here deadlocks via re-entrancy;
-                // queuing it outside the tap callback lets the tap return
-                // first, then the main queue fires the reset — even if the
-                // popover is closed and the 250ms poll is not running.
+                log::info!("tap: brightness key delta={} cur={} -> {}", delta, cur, next);
+                // Schedule the gamma reset on the NEXT main-runloop pass.
                 unsafe {
                     dispatch_async_f(
                         &_dispatch_main_q as *const () as *mut (),
@@ -745,7 +746,9 @@ pub mod brightness_tap {
     /// returned — no WindowServer re-entrancy. This is the only place the
     /// gamma reset can safely happen in response to a brightness key.
     extern "C" fn do_gamma_reset(_ctx: *mut ()) {
+        log::info!("do_gamma_reset: calling reset_offset");
         super::gamma_dim::reset_offset();
+        log::info!("do_gamma_reset: done");
     }
 
     pub fn start(app: &tauri::AppHandle) {
