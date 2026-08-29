@@ -692,11 +692,13 @@ pub mod brightness_tap {
                 let next = (cur as i32 + delta).clamp(1, 16) as u8;
                 SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
                 note_key(delta);
-                // System keys are driving the backlight now — clear the
-                // gamma offset so the keys and the slider never fight.
-                // Keys take full control; the slider becomes a pure read
-                // of the system level until the next drag.
-                super::reset_gamma_offset();
+                // Signal the poll to clear gamma on its next tick. We do NOT
+                // call write_table here: the tap callback runs inside a
+                // WindowServer event dispatch, and calling CGSSetDisplay-
+                // TransferByTable (another WindowServer IPC) from inside it
+                // deadlocks — the gamma never resets, so a fully-black
+                // screen stays black no matter how many times F2 is pressed.
+                GAMMA_RESET_PENDING.store(true, Ordering::Relaxed);
             }
         }
         std::ptr::null_mut()
@@ -709,6 +711,12 @@ pub mod brightness_tap {
     // Sync, so instead the callback only flips an atomic and the app layer
     // reads it from its own poll — no cross-thread closure call at all.
     pub static KEY_STEPS: AtomicI32 = AtomicI32::new(0);
+
+    /// Set by the tap callback when a brightness key is pressed; cleared by
+    /// the sync poll after it resets the gamma. Breaks the WindowServer
+    /// re-entrancy that made gamma reset silently fail from the callback.
+    pub static GAMMA_RESET_PENDING: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
 
     fn note_key(delta: i32) {
         KEY_STEPS.fetch_add(delta, Ordering::Relaxed);
@@ -1125,8 +1133,16 @@ pub fn set_display_brightness(
 #[tauri::command]
 pub fn sync_builtin_brightness() -> Option<u8> {
     #[cfg(target_os = "macos")]
-    if brightness_tap::unseeded() {
-        seed_system_level();
+    {
+        if brightness_tap::unseeded() {
+            seed_system_level();
+        }
+        // The tap callback can only flip an atomic (calling WindowServer
+        // from inside it deadlocks), so the actual gamma reset happens here
+        // on the Tauri main thread. 250ms worst case — imperceptible.
+        if brightness_tap::GAMMA_RESET_PENDING.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            gamma_dim::reset_offset();
+        }
     }
     builtin_total()
 }
