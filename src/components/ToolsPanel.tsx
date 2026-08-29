@@ -294,16 +294,7 @@ function DisplayControl({
           {t("tools.brightness.builtinUnsupported")}
         </p>
       )}
-      {display.method === "gamma" && (
-        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
-          {t("tools.brightness.softwareDimHint")}
-        </p>
-      )}
-      {display.method === "gamma" && (
-        <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-          {t("tools.brightness.syncHint")}
-        </p>
-      )}
+
     </div>
   )
 }
