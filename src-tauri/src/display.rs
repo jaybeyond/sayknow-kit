@@ -514,6 +514,22 @@ mod gamma_dim {
         src.iter().map(|v| (v * factor).clamp(0.0, 1.0)).collect()
     }
 
+    /// Reset the gamma offset to 1.0 (system brightness keys take over).
+    /// Keeps the captured original for future drags — no drop needed.
+    pub fn reset_offset() {
+        let orig = ORIGINAL.lock().unwrap();
+        if let Some(o) = orig.as_ref() {
+            let d = o.display;
+            let r = o.red.clone();
+            let g = o.green.clone();
+            let b = o.blue.clone();
+            drop(orig);
+            if write_table(d, &r, &g, &b) {
+                *LAST.lock().unwrap() = 1.0;
+            }
+        }
+    }
+
     pub fn restore() {
         let orig = ORIGINAL.lock().unwrap().take();
         if let Some(o) = orig {
@@ -532,6 +548,11 @@ mod gamma_dim {
 // listen for the brightness NX_SYSDEFINED events themselves: a listen-only
 // session event tap observes them fine (verified with a synthetic event),
 // and each press steps our tracked system level by one macOS division.
+
+#[cfg(target_os = "macos")]
+fn reset_gamma_offset() {
+    gamma_dim::reset_offset();
+}
 
 #[cfg(target_os = "macos")]
 pub mod brightness_tap {
@@ -672,6 +693,11 @@ pub mod brightness_tap {
                 let next = (cur as i32 + delta).clamp(1, 16) as u8;
                 SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
                 note_key(delta);
+                // System keys are driving the backlight now — clear the
+                // gamma offset so the keys and the slider never fight.
+                // Keys take full control; the slider becomes a pure read
+                // of the system level until the next drag.
+                super::reset_gamma_offset();
             }
         }
         std::ptr::null_mut()
@@ -1028,10 +1054,34 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
     let value = if on { POWER_ON } else { POWER_OFF };
     for mut d in ddc_hi::Display::enumerate() {
         if ddc_id(&d.info) == id {
-            d.handle
-                .set_vcp_feature(VCP_POWER, value)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            return Ok(());
+            // Power-on is the hard direction: a monitor in DDC standby may
+            // have its MCU asleep and not ack. Retry with a short gap, and
+            // also write luminance as a wake signal — some monitors' DDC
+            // hardware powers the MCU on any write, then the pending
+            // power-on command lands.
+            let mut last_err = None;
+            for attempt in 0..4 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                }
+                match d.handle.set_vcp_feature(VCP_POWER, value) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        log::info!("power-on attempt {} failed: {}", attempt + 1, e);
+                        last_err = Some(e);
+                        // Wake-signal: write luminance too, some MCUs
+                        // process queued commands after any DDC activity.
+                        let _ = d.handle.set_vcp_feature(VCP_LUMINANCE, 50);
+                    }
+                }
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "display did not ack power-on after 4 attempts: {}",
+                    last_err.map(|e| e.to_string()).unwrap_or_default()
+                ),
+            ));
         }
     }
     Err(io::Error::new(io::ErrorKind::NotFound, "display not found"))
