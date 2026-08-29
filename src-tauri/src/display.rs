@@ -613,24 +613,33 @@ pub mod brightness_tap {
     }
 
     /// Read NX data1 through NSEvent — CGEvent does not expose it.
+    ///
+    /// objc_msgSend is declared per-arity as NON-variadic externs. Casting it
+    /// to a C-variadic fn pointer and calling that is UB on arm64 and crashed
+    /// the tap thread (SIGSEGV in objc_msgSend, three overnight .ips reports)
+    /// — arity-specific aliases are what the objc crates themselves use.
     unsafe fn nx_data1(event: CGEventRef) -> Option<i64> {
         use objc2::runtime::{AnyObject, Sel};
-        type MsgSendFn = unsafe extern "C" fn(*const AnyObject, Sel, ...) -> isize;
         extern "C" {
             fn objc_getClass(name: *const std::ffi::c_char) -> *mut AnyObject;
-            fn objc_msgSend() -> MsgSendFn;
+            #[link_name = "objc_msgSend"]
+            fn msg_send_event(cls: *const AnyObject, sel: Sel, cg: CGEventRef) -> *const AnyObject;
+            #[link_name = "objc_msgSend"]
+            fn msg_send_d1(ev: *const AnyObject, sel: Sel) -> isize;
         }
-        let send = objc_msgSend();
         let cls = objc_getClass(b"NSEvent\0".as_ptr() as *const std::ffi::c_char);
         if cls.is_null() {
             return None;
         }
-        let ev: *const AnyObject = send(cls, Sel::register(c"eventWithCGEvent:"), event as isize)
-            as *const AnyObject;
+        let ev = msg_send_event(
+            cls,
+            Sel::register(c"eventWithCGEvent:"),
+            event,
+        );
         if ev.is_null() {
             return None;
         }
-        Some(send(ev, Sel::register(c"data1")) as i64)
+        Some(msg_send_d1(ev, Sel::register(c"data1")) as i64)
     }
 
     extern "C" fn tap_callback(
