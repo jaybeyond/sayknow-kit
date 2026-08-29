@@ -445,13 +445,15 @@ mod gamma_dim {
         super::iokit_backlight::system_backlight_level()
     }
 
-    /// Current total = system level x our gamma offset. The system level is
-    /// the tap-tracked value (registry snapshot at boot + key-press deltas):
-    /// the registry itself is static and never moves on this architecture.
+    /// Current slider value = the gamma offset alone. The slider is 0-100%
+    /// of the AVAILABLE light: 100% means no dimming (whatever the backlight
+    /// gives, we show all of it), 0% is fully dark, and the system backlight
+    /// is a separate base layer the user adjusts with F1/F2. Pressing a key
+    /// resets gamma to 1.0, so the slider always lands at 100% after a key
+    /// press — no ceiling below 100%.
     pub fn total_percent() -> Option<u8> {
         let g = *LAST.lock().unwrap();
-        let s = super::brightness_tap::system_level();
-        Some((s * g * 100.0).round().clamp(0.0, 100.0) as u8)
+        Some((g * 100.0).round().clamp(0.0, 100.0) as u8)
     }
 
     pub fn get_percent() -> u8 {
@@ -468,15 +470,12 @@ mod gamma_dim {
         set_gamma_offset(display, percent as f64 / 100.0)
     }
 
-    /// Absolute-brightness entry: the slider's V is a TOTAL. The gamma offset
-    /// becomes V / S where S is the live system backlight level, so the
-    /// slider reads the same scale as the keyboard keys. Above the current
-    /// backlight level the offset clamps to 1.0 — the backlight itself is
-    /// the ceiling only the system keys can raise.
+    /// Slider entry: percent is how much of the available light to show.
+    /// 100% = gamma 1.0 (no dimming), 0% = gamma 0.0 (fully dark). The
+    /// system backlight is a base the user sets with F1/F2; our slider only
+    /// dims below it. There is no sub-100% ceiling — 100% is always reachable.
     pub fn set_absolute(display: CgDirectDisplayId, percent: u8) -> bool {
-        let target = percent as f64 / 100.0;
-        let system = super::brightness_tap::system_level().max(0.01);
-        set_gamma_offset(display, (target / system).clamp(0.0, 1.0))
+        set_gamma_offset(display, percent as f64 / 100.0)
     }
 
     fn set_gamma_offset(display: CgDirectDisplayId, factor: f64) -> bool {
@@ -1203,39 +1202,27 @@ mod tests {
             }
             r[n as usize / 2]
         };
-        let sys = super::iokit_backlight::system_backlight_level();
-        if let Some(f) = sys {
-            super::brightness_tap::seed_sixteenths(f);
-        }
-        eprintln!("system backlight S={sys:?}");
+        eprintln!("slider-as-gamma-offset model");
         let base = mid();
-        // Targets scaled to the live ceiling so the test holds at any S:
-        // below-ceiling drags must land at V/S exactly, above-ceiling must
-        // clamp at the backlight level (factor 1.0).
-        let (s, cap) = match sys {
-            Some(s) => (s.max(0.01), (s * 100.0) as u8),
-            None => (1.0, 100),
-        };
-        let low = (cap as f64 * 0.6) as u8;
-        let high = (cap as f64 * 0.9) as u8;
-        assert!(set_brightness(BUILTIN_ID, low).is_ok(), "set low failed");
-        let m_low = mid();
-        assert!(set_brightness(BUILTIN_ID, high).is_ok(), "set high failed");
-        let m_high = mid();
+        assert!(set_brightness(BUILTIN_ID, 40).is_ok(), "set 40 failed");
+        let m40 = mid();
+        assert!(set_brightness(BUILTIN_ID, 80).is_ok(), "set 80 failed");
+        let m80 = mid();
         set_brightness(BUILTIN_ID, 100).ok();
         let m100 = mid();
-        eprintln!(
-            "base={base:.4} cap={cap} low={low} high={high} m_low={m_low:.4} m_high={m_high:.4} m100={m100:.4}"
-        );
-        // Absolute model: table = base * V/S below the ceiling.
-        let f_low = (low as f64 / 100.0 / s).clamp(0.0, 1.0);
-        let expected_low = (base as f64 * f_low) as f32;
+        eprintln!("base={base:.4} m40={m40:.4} m80={m80:.4} m100={m100:.4}");
+        // Slider percent IS the gamma factor: 40% → base×0.4, 80% → base×0.8.
         assert!(
-            (m_low - expected_low).abs() < 0.03,
-            "low absolute mismatch: {m_low} vs {expected_low} (S={s})"
+            (m40 - base * 0.4).abs() < 0.03,
+            "40% mismatch: {m40} vs {}",
+            base * 0.4
         );
-        assert!(m_high > m_low, "high not brighter than low");
-        // 100 is always >= ceiling -> factor clamps to 1 -> exact restore.
+        assert!(
+            (m80 - base * 0.8).abs() < 0.03,
+            "80% mismatch: {m80} vs {}",
+            base * 0.8
+        );
+        assert!(m80 > m40, "80% not brighter than 40%");
         assert!((m100 - base).abs() < 0.02, "100% did not restore: {m100} vs {base}");
     }
 
