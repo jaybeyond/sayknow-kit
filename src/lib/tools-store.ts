@@ -49,11 +49,20 @@ export async function syncBuiltin(): Promise<void> {
   if (!isTauri()) return
   try {
     const { invoke } = await import("@tauri-apps/api/core")
-    const total = await invoke<number | null>("sync_builtin_brightness")
-    if (total === null || total === undefined) return
+    const current = await invoke<{
+      brightness: number
+      system_level: number
+    } | null>("sync_builtin_brightness")
+    if (current === null || current === undefined) return
     set({
       displays: state.displays.map((d) =>
-        d.kind === "builtin" ? { ...d, brightness: total } : d,
+        d.kind === "builtin"
+          ? {
+              ...d,
+              brightness: current.brightness,
+              system_level: current.system_level,
+            }
+          : d,
       ),
     })
   } catch {

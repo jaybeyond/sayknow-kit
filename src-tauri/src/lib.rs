@@ -1,4 +1,6 @@
 mod agent_usage;
+#[cfg(target_os = "macos")]
+mod accessibility_backlight;
 mod display;
 mod clipboard;
 
@@ -1559,6 +1561,8 @@ pub fn run() {
             clipboard::set_clipboard_max_entries,
             display::list_displays,
             display::set_display_brightness,
+            display::set_builtin_backlight,
+            display::request_accessibility_permission,
             display::set_display_power,
             display::sync_builtin_brightness,
             agent_usage::agent_usage

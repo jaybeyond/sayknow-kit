@@ -5,10 +5,10 @@
 // - External displays speak DDC/CI, so brightness (VCP 0x10) and power
 //   (VCP 0xD6, the same code Lunar's BlackOut uses) go through ddc-hi.
 //   That works on macOS and Windows over HDMI/DP/USB-C.
-// - The built-in panel has no DDC. Its backlight is an IOKit parameter, set
-//   through IODisplaySetFloatParameter on the IODisplayConnect service that
-//   answers for it. ddc-hi deliberately excludes built-ins, so this is our
-//   own small FFI layer, macOS only.
+// - The built-in panel has no DDC. Classic IOKit is tried first; on new
+//   AppleARMBacklight Macs, real hardware brightness is driven locally through
+//   Control Center's Accessibility UI, with gamma kept as a separate second-
+//   stage dimmer. ddc-hi deliberately excludes built-ins.
 //
 // DDC is slow (tens to hundreds of ms) and some monitors don't ack reads,
 // so reads degrade to `None` instead of failing the listing, and every
@@ -17,6 +17,8 @@
 use ddc_hi::Ddc as _;
 use serde::Serialize;
 use std::io;
+#[cfg(target_os = "macos")]
+use tauri::Manager as _;
 
 const VCP_LUMINANCE: u8 = 0x10;
 const VCP_POWER: u8 = 0xd6;
@@ -49,6 +51,12 @@ pub struct DisplayStatus {
     /// the registry snapshot. The UI shows this separately from the gamma
     /// slider so the user can see which layer is dimming the screen.
     pub system_level: Option<u8>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct BuiltinBrightnessSync {
+    pub brightness: u8,
+    pub system_level: u8,
 }
 
 pub fn clamp_percent(v: i64) -> u8 {
@@ -882,6 +890,16 @@ fn builtin_gamma_percent() -> u8 {
 }
 
 #[cfg(target_os = "macos")]
+fn accessibility_backlight_level() -> Option<u8> {
+    crate::accessibility_backlight::get()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accessibility_backlight_level() -> Option<u8> {
+    None
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn cg_builtin_id() -> Option<u32> {
     use core_graphics::*;
     unsafe {
@@ -1010,7 +1028,9 @@ pub fn list() -> Vec<DisplayStatus> {
             system_level: if backlight_ok {
                 builtin::get()
             } else {
-                Some((brightness_tap::system_level() * 100.0).round() as u8)
+                accessibility_backlight_level().or_else(|| {
+                    Some((brightness_tap::system_level() * 100.0).round() as u8)
+                })
             },
         });
     }
@@ -1161,18 +1181,66 @@ pub fn set_display_brightness(
     set_brightness(&id, clamp_percent(value)).map_err(|e| e.to_string())
 }
 
-/// Cheap builtin-only refresh for polling: no DDC traffic, just the
-/// registry read and our offset. The UI calls this about once a second while
-/// the tools tab is visible so the slider follows the keyboard keys.
+/// Set the real built-in backlight through macOS Control Center's local
+/// Accessibility UI. This is separate from `set_display_brightness`, which
+/// remains the second-stage gamma dimmer.
 #[tauri::command]
-pub fn sync_builtin_brightness() -> Option<u8> {
+pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, String> {
+    let percent = clamp_percent(value);
     #[cfg(target_os = "macos")]
     {
-        if brightness_tap::unseeded() {
-            seed_system_level();
+        let actual = crate::accessibility_backlight::set(percent)?;
+        brightness_tap::seed_sixteenths(actual as f64 / 100.0);
+        // Opening Control Center steals focus and hides our popover. Put the
+        // user back where the drag started after the local UI transaction.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
         }
+        return Ok(actual);
     }
-    builtin_total()
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        let _ = percent;
+        Err("built-in backlight control is macOS-only".into())
+    }
+}
+
+#[tauri::command]
+pub fn request_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::accessibility_backlight::is_trusted(true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Cheap built-in refresh for polling. Once Accessibility permission exists,
+/// the retained Control Center slider is the authoritative live backlight
+/// value, so changes made in Control Center also flow back into SayKnow Kit.
+#[tauri::command]
+pub fn sync_builtin_brightness() -> Option<BuiltinBrightnessSync> {
+    #[cfg(target_os = "macos")]
+    if brightness_tap::unseeded() {
+        seed_system_level();
+    }
+    Some(BuiltinBrightnessSync {
+        brightness: builtin_total()?,
+        system_level: accessibility_backlight_level().unwrap_or_else(|| {
+            #[cfg(target_os = "macos")]
+            {
+                (brightness_tap::system_level() * 100.0).round() as u8
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                100
+            }
+        }),
+    })
 }
 
 #[tauri::command]

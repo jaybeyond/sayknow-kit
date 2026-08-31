@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import {
   Monitor,
   MonitorOff,
@@ -28,13 +28,14 @@ type Props = {
 
 /**
  * Tools that talk to the machine rather than to a translation provider. The
- * first one is screen brightness: hardware DDC for externals, IOKit backlight
- * for the built-in panel — no gamma overlay, so what you set is what the
- * monitor does.
+ * first one is screen brightness: hardware DDC for externals, real built-in
+ * backlight through macOS Control Center accessibility, plus a separate gamma
+ * stage for dimming below the hardware range.
  */
 export function ToolsPanel({ settings, active }: Props) {
   const { t } = useT(settings.uiLocale)
   const { displays, error, loaded } = useSyncExternalStore(subscribe, getSnapshot)
+  const accessibilityRequested = useRef(false)
 
   const refresh = useCallback(() => void scanDisplays(true), [])
 
@@ -54,6 +55,29 @@ export function ToolsPanel({ settings, active }: Props) {
     const timer = setInterval(() => void syncBuiltin(), 250)
     return () => clearInterval(timer)
   }, [active])
+
+  // Real built-in backlight control is local Control Center automation. Ask
+  // once when the Tools tab first sees the built-in display; macOS owns the
+  // consent UI, and subsequent launches are silent once permission is granted.
+  useEffect(() => {
+    if (
+      !active ||
+      accessibilityRequested.current ||
+      !displays.some((d) => d.kind === "builtin" && d.method === "gamma")
+    ) {
+      return
+    }
+    accessibilityRequested.current = true
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke<boolean>("request_accessibility_permission").then((trusted) => {
+          if (trusted) void scanDisplays(true)
+        }),
+      )
+      .catch(() => {
+        // Non-macOS builds expose the command as a no-op.
+      })
+  }, [active, displays])
 
   // Rescan every time the popover opens: monitors connect, wake, or lock
   // their DDC while the app runs, and a list scanned once at tab-activation
@@ -78,6 +102,17 @@ export function ToolsPanel({ settings, active }: Props) {
       await invoke("set_display_brightness", { id, value })
     } catch {
       void scanDisplays(true)
+    }
+  }, [])
+
+  const applyBacklight = useCallback(async (value: number) => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core")
+      await invoke<number>("set_builtin_backlight", { value })
+      void scanDisplays(true)
+    } catch {
+      // The first attempt opens macOS Accessibility settings. Once SayKnow
+      // Kit is allowed, the next drag controls the real backlight.
     }
   }, [])
 
@@ -167,6 +202,7 @@ export function ToolsPanel({ settings, active }: Props) {
                 t={t}
                 onCommit={(v) => void apply(d.id, v)}
                 onPower={(on) => void togglePower(d.id, on)}
+                onBacklight={(v) => void applyBacklight(v)}
               />
             ))}
           </div>
@@ -221,21 +257,30 @@ function DisplayControl({
   t,
   onCommit,
   onPower,
+  onBacklight,
 }: {
   display: DisplayRow
   t: (k: string) => string
   onCommit: (v: number) => void
   onPower: (on: boolean) => void
+  onBacklight: (v: number) => void
 }) {
   const [v, setV] = useState(display.brightness ?? 100)
   const [busy, setBusy] = useState(false)
 
+  const [backlightV, setBacklightV] = useState(display.system_level ?? 100)
   // Hardware value wins when it changes; the local value is only the
   // optimistic drag preview. Adopted during render rather than in an effect.
   const [seenBrightness, setSeenBrightness] = useState(display.brightness)
   if (display.brightness !== seenBrightness) {
     setSeenBrightness(display.brightness)
     if (display.brightness !== null) setV(display.brightness)
+  }
+
+  const [seenSystemLevel, setSeenSystemLevel] = useState(display.system_level)
+  if (display.system_level !== seenSystemLevel) {
+    setSeenSystemLevel(display.system_level)
+    if (display.system_level !== null) setBacklightV(display.system_level)
   }
 
   const name =
@@ -300,17 +345,15 @@ function DisplayControl({
           <span className="shrink-0 text-[9px] text-muted-foreground">
             {t("tools.brightness.backlight")}
           </span>
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
-            <div
-              className={cn(
-                "h-full",
-                display.system_level < 60 ? "bg-amber-500/70" : "bg-muted-foreground/50",
-              )}
-              style={{ width: `${display.system_level}%` }}
-            />
-          </div>
-          <span className="shrink-0 tabular-nums text-[9px] text-muted-foreground">
-            {display.system_level}% · F1/F2
+          <Slider
+            value={[backlightV]}
+            min={0}
+            onValueChange={([n]) => setBacklightV(n)}
+            onValueCommit={([n]) => onBacklight(n)}
+            className="flex-1"
+          />
+          <span className="w-7 shrink-0 text-right tabular-nums text-[9px] text-muted-foreground">
+            {backlightV}%
           </span>
         </div>
       )}
