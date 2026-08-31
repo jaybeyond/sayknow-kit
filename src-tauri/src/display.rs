@@ -900,6 +900,16 @@ fn accessibility_backlight_level() -> Option<u8> {
 }
 
 #[cfg(target_os = "macos")]
+fn tracked_system_level_percent() -> u8 {
+    (brightness_tap::system_level() * 100.0).round() as u8
+}
+
+#[cfg(not(target_os = "macos"))]
+fn tracked_system_level_percent() -> u8 {
+    100
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn cg_builtin_id() -> Option<u32> {
     use core_graphics::*;
     unsafe {
@@ -1028,9 +1038,8 @@ pub fn list() -> Vec<DisplayStatus> {
             system_level: if backlight_ok {
                 builtin::get()
             } else {
-                accessibility_backlight_level().or_else(|| {
-                    Some((brightness_tap::system_level() * 100.0).round() as u8)
-                })
+                accessibility_backlight_level()
+                    .or_else(|| Some(tracked_system_level_percent()))
             },
         });
     }
@@ -1230,16 +1239,8 @@ pub fn sync_builtin_brightness() -> Option<BuiltinBrightnessSync> {
     }
     Some(BuiltinBrightnessSync {
         brightness: builtin_total()?,
-        system_level: accessibility_backlight_level().unwrap_or_else(|| {
-            #[cfg(target_os = "macos")]
-            {
-                (brightness_tap::system_level() * 100.0).round() as u8
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                100
-            }
-        }),
+        system_level: accessibility_backlight_level()
+            .unwrap_or_else(tracked_system_level_percent),
     })
 }
 
