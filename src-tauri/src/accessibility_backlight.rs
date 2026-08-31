@@ -8,6 +8,9 @@
 
 #![cfg(target_os = "macos")]
 
+use core_foundation::{
+    base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString,
+};
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;
 use std::thread;
@@ -79,15 +82,6 @@ extern "C" {
         encoding: u32,
     ) -> bool;
     fn CFNumberGetValue(number: CfTypeRef, number_type: isize, value: *mut c_void) -> bool;
-    fn CFDictionaryCreate(
-        allocator: CfTypeRef,
-        keys: *const CfTypeRef,
-        values: *const CfTypeRef,
-        count: isize,
-        key_callbacks: *const c_void,
-        value_callbacks: *const c_void,
-    ) -> CfDictionaryRef;
-    static kCFBooleanTrue: CfTypeRef;
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -234,19 +228,10 @@ pub fn is_trusted(prompt: bool) -> bool {
         if AXIsProcessTrusted() || !prompt {
             return AXIsProcessTrusted();
         }
-        let Some(key) = cf_string("AXTrustedCheckOptionPrompt") else {
-            return false;
-        };
-        let key_ref = key.0;
-        let value = kCFBooleanTrue;
-        let options =
-            CFDictionaryCreate(ptr::null(), &key_ref, &value, 1, ptr::null(), ptr::null());
-        if options.is_null() {
-            return false;
-        }
-        let trusted = AXIsProcessTrustedWithOptions(options);
-        CFRelease(options);
-        trusted
+        let key = CFString::new("AXTrustedCheckOptionPrompt");
+        let value = CFBoolean::true_value();
+        let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as CfDictionaryRef)
     }
 }
 
