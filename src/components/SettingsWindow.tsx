@@ -10,13 +10,11 @@ import {
   Eye,
   EyeOff,
   Info,
-  Languages as LangIcon,
   LogOut,
   Pin,
   Plug,
   Settings as SettingsIcon,
   Sparkles,
-  Wallet,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,10 +34,8 @@ import { ModelPicker } from "./ModelPicker"
 import { ProviderPicker } from "./ProviderPicker"
 import { GlossaryEditor } from "./GlossaryEditor"
 import { useModels } from "@/hooks/useModels"
-import { useUsage } from "@/hooks/useUsage"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
-import { formatCost, formatTokens } from "@/lib/usage"
 import {
   DEFAULT_REFINE_PROMPT,
   DEFAULT_TRANSLATE_PROMPT,
@@ -75,7 +71,6 @@ type Section =
   | "connection"
   | "glossary"
   | "prompt"
-  | "usage"
   | "about"
 
 export function SettingsWindow({
@@ -92,14 +87,12 @@ export function SettingsWindow({
     settings.apiKey,
     settings.baseURL,
   )
-  const { today: usageToday, month: usageMonth, clear: clearUsage } = useUsage()
 
   const NAV: { id: Section; label: string; icon: typeof SettingsIcon }[] = [
     { id: "general", label: t("settings.section.general"), icon: SettingsIcon },
     { id: "connection", label: t("settings.section.connection"), icon: Plug },
     { id: "glossary", label: t("settings.section.glossary"), icon: BookText },
     { id: "prompt", label: t("settings.section.prompt"), icon: Sparkles },
-    { id: "usage", label: t("settings.section.usage"), icon: Wallet },
     { id: "about", label: t("settings.section.about"), icon: Info },
   ]
 
@@ -111,10 +104,15 @@ export function SettingsWindow({
           className="flex items-center gap-2 border-b px-4 py-3"
           data-tauri-drag-region
         >
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-foreground text-background">
-            <LangIcon className="h-3.5 w-3.5" />
+          <img
+            src="/sayo-logo.png"
+            alt=""
+            className="h-9 w-9 shrink-0 object-contain"
+          />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">SayKnow Kit</div>
+            <div className="text-[10px] text-muted-foreground">{t("settings.title")}</div>
           </div>
-          <div className="text-sm font-semibold">{t("settings.title")}</div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
           {NAV.map((n) => {
@@ -166,14 +164,6 @@ export function SettingsWindow({
             )}
             {section === "prompt" && (
               <PromptSection settings={settings} update={update} />
-            )}
-            {section === "usage" && (
-              <UsageSection
-                settings={settings}
-                today={usageToday}
-                month={usageMonth}
-                onClear={clearUsage}
-              />
             )}
             {section === "about" && (
               <AboutSection settings={settings} />
@@ -714,88 +704,6 @@ function PromptSection({
   )
 }
 
-/* ─────────── Section: Usage ─────────── */
-function UsageSection({
-  settings,
-  today,
-  month,
-  onClear,
-}: {
-  settings: Settings
-  today: import("@/lib/usage").UsageDay
-  month: import("@/lib/usage").UsageDay
-  onClear: () => void
-}) {
-  const { t } = useT(settings.uiLocale)
-  const totalToday = today.promptTokens + today.completionTokens
-  const totalMonth = month.promptTokens + month.completionTokens
-
-  return (
-    <div className="space-y-6">
-      <SectionHeader icon={Wallet} title={t("settings.section.usage")} />
-
-      <div className="grid grid-cols-2 gap-3">
-        <UsageCard
-          title={t("settings.usage.today")}
-          calls={today.calls}
-          tokens={totalToday}
-          cost={today.costUsd}
-          uiLocale={settings.uiLocale}
-        />
-        <UsageCard
-          title={t("settings.usage.month")}
-          calls={month.calls}
-          tokens={totalMonth}
-          cost={month.costUsd}
-          uiLocale={settings.uiLocale}
-        />
-      </div>
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onClear}
-        className="text-xs text-muted-foreground hover:text-destructive"
-      >
-        {t("history.clear")}
-      </Button>
-    </div>
-  )
-}
-
-function UsageCard({
-  title,
-  calls,
-  tokens,
-  cost,
-  uiLocale,
-}: {
-  title: string
-  calls: number
-  tokens: number
-  cost: number
-  uiLocale: UILocaleSetting
-}) {
-  const { t } = useT(uiLocale)
-  return (
-    <div className="rounded-md border bg-muted/30 p-4">
-      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-        {title}
-      </div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">
-        {formatCost(cost)}
-      </div>
-      <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground tabular-nums">
-        <div>
-          {calls.toLocaleString()} {t("settings.usage.calls")}
-        </div>
-        <div>
-          {formatTokens(tokens)} {t("settings.usage.tokens")}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /* ─────────── Section: About ─────────── */
 function AboutSection({ settings }: { settings: Settings }) {
@@ -828,10 +736,12 @@ function AboutSection({ settings }: { settings: Settings }) {
       <SectionHeader icon={Info} title={t("settings.section.about")} />
 
       <div className="space-y-3">
-        <div className="flex items-baseline gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground text-background">
-            <LangIcon className="h-6 w-6" />
-          </div>
+        <div className="flex items-center gap-3">
+          <img
+            src="/sayo-logo.png"
+            alt="Sayo"
+            className="h-16 w-16 shrink-0 object-contain"
+          />
           <div>
             <div className="text-lg font-semibold">SayKnow Kit</div>
             <div className="text-xs text-muted-foreground">
