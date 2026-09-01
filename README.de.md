@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="Sayo, das Oktopus-Maskottchen von SayKnow Kit" width="180" />
+
 # SayKnow Kit
 
 **KI-Kit in der Menüleiste — Übersetzen, Chat und Zwischenablage in einem Popover.**

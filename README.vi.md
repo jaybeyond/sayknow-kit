@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="Sayo, linh vật bạch tuộc của SayKnow Kit" width="180" />
+
 # SayKnow Kit
 
 **Bộ công cụ AI trên thanh menu — dịch, chat và clipboard trong một cửa sổ.**

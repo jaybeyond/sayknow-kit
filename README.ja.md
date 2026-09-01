@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="SayKnow Kitのタコマスコット Sayo" width="180" />
+
 # SayKnow Kit
 
 **メニューバーのAIキット — 翻訳・チャット・クリップボードを1つのポップオーバーに。**

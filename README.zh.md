@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="SayKnow Kit 章鱼吉祥物 Sayo" width="180" />
+
 # SayKnow Kit
 
 **菜单栏 AI 工具包 — 翻译、聊天、剪贴板集于一个弹窗。**

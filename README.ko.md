@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="SayKnow Kit 문어 마스코트 Sayo" width="180" />
+
 # SayKnow Kit
 
 **번역 · 채팅 · 클립보드를 팝오버 하나에 담은 macOS 메뉴바 AI 키트**

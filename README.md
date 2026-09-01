@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="Sayo, the SayKnow Kit octopus mascot" width="180" />
+
 # SayKnow Kit
 
 **Menu bar AI kit for macOS — translate, chat, and clipboard history in one popover.**

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="Sayo, la mascotte pieuvre de SayKnow Kit" width="180" />
+
 # SayKnow Kit
 
 **Kit IA dans la barre de menu — traduction, chat et presse-papiers dans une seule fenêtre.**

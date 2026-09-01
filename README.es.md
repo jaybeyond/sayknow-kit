@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/sayo-logo.png" alt="Sayo, la mascota pulpo de SayKnow Kit" width="180" />
+
 # SayKnow Kit
 
 **Kit de IA en la barra de menú — traducción, chat y portapapeles en una sola ventana.**
