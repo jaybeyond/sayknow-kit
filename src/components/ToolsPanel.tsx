@@ -127,11 +127,13 @@ export function ToolsPanel({ settings, active }: Props) {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
       await invoke("set_display_power", { id, on })
-      // A monitor entering standby stops acking DDC reads; don't rescan
-      // immediately or every field shows as unknown.
-      setTimeout(() => void scanDisplays(true), 2500)
+      // Keep the optimistic card state while a sleeping display disappears
+      // from CoreGraphics; the Rust DDC worker retains its wake handle.
+      setTimeout(() => void scanDisplays(true), on ? 1200 : 2500)
+      return true
     } catch {
       void scanDisplays(true)
+      return false
     }
   }, [])
 
@@ -201,7 +203,7 @@ export function ToolsPanel({ settings, active }: Props) {
                 display={d}
                 t={t}
                 onCommit={(v) => void apply(d.id, v)}
-                onPower={(on) => void togglePower(d.id, on)}
+                onPower={(on) => togglePower(d.id, on)}
                 onBacklight={(v) => void applyBacklight(v)}
               />
             ))}
@@ -262,7 +264,7 @@ function DisplayControl({
   display: DisplayRow
   t: (k: string) => string
   onCommit: (v: number) => void
-  onPower: (on: boolean) => void
+  onPower: (on: boolean) => Promise<boolean>
   onBacklight: (v: number) => void
 }) {
   const [v, setV] = useState(display.brightness ?? 100)
@@ -283,9 +285,24 @@ function DisplayControl({
     if (display.system_level !== null) setBacklightV(display.system_level)
   }
 
+  const [isOn, setIsOn] = useState(display.power !== false)
+  const [seenPower, setSeenPower] = useState(display.power)
+  if (display.power !== seenPower) {
+    setSeenPower(display.power)
+    if (display.power !== null) setIsOn(display.power)
+  }
+
+  const applyPower = async (on: boolean) => {
+    const previous = isOn
+    setIsOn(on)
+    setBusy(true)
+    const accepted = await onPower(on)
+    if (!accepted) setIsOn(previous)
+    setBusy(false)
+  }
+
   const name =
     display.kind === "builtin" ? t("tools.brightness.builtin") : display.name
-  const isOn = display.power !== false
 
   return (
     <div className="rounded-md border p-2">
@@ -319,25 +336,36 @@ function DisplayControl({
           {display.brightness === null ? "—" : `${v}%`}
         </span>
         {display.kind === "external" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-5 w-5 p-0"
-            disabled={busy}
-            title={isOn ? t("tools.brightness.powerOff") : t("tools.brightness.powerOn")}
-            onClick={() => {
-              setBusy(true)
-              onPower(!isOn)
-              setTimeout(() => setBusy(false), 3000)
-            }}
-          >
-            <Power
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
               className={cn(
-                "h-3 w-3",
-                isOn ? "text-muted-foreground" : "text-muted-foreground/40",
+                "h-5 gap-0.5 px-1 text-[8px]",
+                isOn && "bg-emerald-500/10 text-emerald-500",
               )}
-            />
-          </Button>
+              disabled={busy}
+              title={t("tools.brightness.powerOn")}
+              onClick={() => void applyPower(true)}
+            >
+              <Power className="h-2.5 w-2.5" />
+              ON
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-5 gap-0.5 px-1 text-[8px]",
+                !isOn && "bg-muted text-muted-foreground",
+              )}
+              disabled={busy}
+              title={t("tools.brightness.powerOff")}
+              onClick={() => void applyPower(false)}
+            >
+              <MonitorOff className="h-2.5 w-2.5" />
+              OFF
+            </Button>
+          </div>
         )}
       </div>
       {display.method === "gamma" && display.system_level !== null && (

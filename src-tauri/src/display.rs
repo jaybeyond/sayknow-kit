@@ -17,6 +17,7 @@
 use ddc_hi::Ddc as _;
 use serde::Serialize;
 use std::io;
+use std::sync::{mpsc, OnceLock};
 #[cfg(target_os = "macos")]
 use tauri::Manager as _;
 
@@ -1006,6 +1007,278 @@ fn main_display_identity() -> Option<(u32, u32)> {
     None
 }
 
+mod ddc_worker {
+    use super::*;
+
+    struct CachedDisplay {
+        display: ddc_hi::Display,
+        status: DisplayStatus,
+        keep_when_missing: bool,
+    }
+
+    enum Request {
+        List(mpsc::Sender<Vec<DisplayStatus>>),
+        Brightness {
+            id: String,
+            value: u8,
+            reply: mpsc::Sender<io::Result<()>>,
+        },
+        Power {
+            id: String,
+            on: bool,
+            reply: mpsc::Sender<io::Result<()>>,
+        },
+    }
+
+    fn sender() -> &'static mpsc::Sender<Request> {
+        static SENDER: OnceLock<mpsc::Sender<Request>> = OnceLock::new();
+        SENDER.get_or_init(|| {
+            let (tx, rx) = mpsc::channel();
+            std::thread::Builder::new()
+                .name("sayknow-ddc".into())
+                .spawn(move || run(rx))
+                .expect("failed to start DDC worker");
+            tx
+        })
+    }
+
+    fn run(rx: mpsc::Receiver<Request>) {
+        let mut displays = Vec::new();
+        while let Ok(request) = rx.recv() {
+            match request {
+                Request::List(reply) => {
+                    refresh(&mut displays);
+                    let _ = reply.send(
+                        displays
+                            .iter()
+                            .map(|cached| cached.status.clone())
+                            .collect(),
+                    );
+                }
+                Request::Brightness { id, value, reply } => {
+                    refresh_if_missing(&mut displays, &id);
+                    let result = displays
+                        .iter_mut()
+                        .find(|cached| cached.status.id == id)
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::NotFound, "display not found")
+                        })
+                        .and_then(|cached| {
+                            cached
+                                .display
+                                .handle
+                                .set_vcp_feature(VCP_LUMINANCE, value as u16)
+                                .map_err(ddc_error)?;
+                            cached.status.brightness = Some(value);
+                            cached.status.system_level = Some(value);
+                            Ok(())
+                        });
+                    let _ = reply.send(result);
+                }
+                Request::Power { id, on, reply } => {
+                    refresh_if_missing(&mut displays, &id);
+                    let result = displays
+                        .iter_mut()
+                        .find(|cached| cached.status.id == id)
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::NotFound, "display not found")
+                        })
+                        .and_then(|cached| set_cached_power(cached, on));
+                    let _ = reply.send(result);
+                }
+            }
+        }
+    }
+
+    fn ddc_error(error: impl ToString) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, error.to_string())
+    }
+
+    fn refresh_if_missing(displays: &mut Vec<CachedDisplay>, id: &str) {
+        if !displays.iter().any(|cached| cached.status.id == id) {
+            refresh(displays);
+        }
+    }
+
+    /// Refresh active handles without forgetting a monitor that this process
+    /// put into DDC standby. macOS may remove a sleeping display from
+    /// CoreGraphics, but its retained IOAVService handle is still the only path
+    /// that can wake it.
+    fn refresh(displays: &mut Vec<CachedDisplay>) {
+        let main = main_display_identity();
+        let fresh = ddc_hi::Display::enumerate()
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut display)| {
+                let brightness = display
+                    .handle
+                    .get_vcp_feature(VCP_LUMINANCE)
+                    .ok()
+                    .map(|v| clamp_percent(v.value() as i64));
+                let power = display
+                    .handle
+                    .get_vcp_feature(VCP_POWER)
+                    .ok()
+                    .map(|v| v.value() != POWER_OFF);
+                let id = ddc_id(&display.info);
+                let is_main = main
+                    .map(|(vendor, model)| {
+                        let model = model & 0xffff;
+                        display.info.model_id == Some(model as u16)
+                            || vendor == 0 && model == 0
+                    })
+                    .unwrap_or(false);
+                CachedDisplay {
+                    status: DisplayStatus {
+                        id,
+                        name: display_name(&display, index),
+                        kind: "external".into(),
+                        is_main,
+                        brightness,
+                        power,
+                        controllable: true,
+                        method: "ddc".into(),
+                        system_level: brightness,
+                    },
+                    display,
+                    keep_when_missing: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut previous = std::mem::take(displays);
+        let mut merged = Vec::with_capacity(fresh.len() + previous.len());
+        for mut current in fresh {
+            if let Some(index) = previous
+                .iter()
+                .position(|old| old.status.id == current.status.id)
+            {
+                let old = previous.swap_remove(index);
+                if old.keep_when_missing && old.status.power == Some(false) {
+                    // A VCP 0xD6 read can transiently report ON while the panel
+                    // is entering standby. The explicit OFF command remains
+                    // authoritative until the user sends ON.
+                    current.status.power = Some(false);
+                    current.keep_when_missing = true;
+                } else {
+                    if current.status.brightness.is_none() {
+                        current.status.brightness = old.status.brightness;
+                        current.status.system_level = old.status.system_level;
+                    }
+                    if current.status.power.is_none() {
+                        current.status.power = old.status.power;
+                    }
+                    current.keep_when_missing = false;
+                }
+            }
+            merged.push(current);
+        }
+        merged.extend(previous.into_iter().filter(|old| old.keep_when_missing));
+        *displays = merged;
+    }
+
+    fn set_cached_power(cached: &mut CachedDisplay, on: bool) -> io::Result<()> {
+        if !on {
+            cached
+                .display
+                .handle
+                .set_vcp_feature(VCP_POWER, POWER_OFF)
+                .map_err(ddc_error)?;
+            cached.status.power = Some(false);
+            cached.keep_when_missing = true;
+            return Ok(());
+        }
+
+        // A sleeping monitor may ACK the first command without waking its
+        // panel, or may need the retained IOAVService handle after it vanishes
+        // from CoreGraphics. Send a complete wake sequence instead of treating
+        // the first ACK as proof that the screen is on.
+        let mut any_write_succeeded = false;
+        let mut last_error = None;
+        for attempt in 0..6 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(450));
+            }
+            match cached
+                .display
+                .handle
+                .set_vcp_feature(VCP_POWER, POWER_ON)
+            {
+                Ok(()) => any_write_succeeded = true,
+                Err(error) => {
+                    log::info!("power-on attempt {} failed: {}", attempt + 1, error);
+                    last_error = Some(error.to_string());
+                }
+            }
+            if let Some(brightness) = cached.status.brightness {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                if cached
+                    .display
+                    .handle
+                    .set_vcp_feature(VCP_LUMINANCE, brightness as u16)
+                    .is_ok()
+                {
+                    any_write_succeeded = true;
+                }
+            }
+        }
+
+        if any_write_succeeded {
+            cached.status.power = Some(true);
+            // Keep the handle/card until a later enumeration proves the panel
+            // is active again; waking and link retraining are asynchronous.
+            cached.keep_when_missing = true;
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "display did not accept the wake sequence: {}",
+                    last_error.unwrap_or_default()
+                ),
+            ))
+        }
+    }
+
+    pub fn list() -> Vec<DisplayStatus> {
+        let (reply, response) = mpsc::channel();
+        if sender().send(Request::List(reply)).is_err() {
+            return Vec::new();
+        }
+        response
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_default()
+    }
+
+    pub fn set_brightness(id: &str, value: u8) -> io::Result<()> {
+        let (reply, response) = mpsc::channel();
+        sender()
+            .send(Request::Brightness {
+                id: id.into(),
+                value,
+                reply,
+            })
+            .map_err(ddc_error)?;
+        response
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(ddc_error)?
+    }
+
+    pub fn set_power(id: &str, on: bool) -> io::Result<()> {
+        let (reply, response) = mpsc::channel();
+        sender()
+            .send(Request::Power {
+                id: id.into(),
+                on,
+                reply,
+            })
+            .map_err(ddc_error)?;
+        response
+            .recv_timeout(std::time::Duration::from_secs(12))
+            .map_err(ddc_error)?
+    }
+}
+
 pub fn list() -> Vec<DisplayStatus> {
     let mut out = Vec::new();
 
@@ -1044,44 +1317,7 @@ pub fn list() -> Vec<DisplayStatus> {
         });
     }
 
-    for (index, d) in ddc_hi::Display::enumerate().into_iter().enumerate() {
-        let mut d = d;
-        let brightness = d
-            .handle
-            .get_vcp_feature(VCP_LUMINANCE)
-            .ok()
-            .map(|v| clamp_percent(v.value() as i64));
-        let power = d.handle.get_vcp_feature(VCP_POWER).ok().map(|v| {
-            // Some monitors report transient values (2/3/5); only 4 means off.
-            v.value() != POWER_OFF as u16
-        });
-        let id = ddc_id(&d.info);
-        let is_main = main_display_identity().map(|(vendor, model)| {
-            // CG model number packs vendor in high bits on some systems;
-            // compare low 16 bits against the EDID product id.
-            let m = model & 0xffff;
-            let v_ok = d
-                .info
-                .manufacturer_id
-                .as_deref()
-                .map(|_| true)
-                .unwrap_or(false);
-            let _ = v_ok;
-            d.info.model_id == Some(m as u16) || vendor == 0 && m == 0
-        });
-        out.push(DisplayStatus {
-            id,
-            name: display_name(&d, index),
-            kind: "external".into(),
-            is_main: is_main.unwrap_or(false),
-            brightness,
-            power,
-            controllable: true,
-            method: "ddc".into(),
-            // DDC brightness IS the backlight — the two are the same thing.
-            system_level: brightness,
-        });
-    }
+    out.extend(ddc_worker::list());
 
     out
 }
@@ -1100,15 +1336,7 @@ pub fn set_brightness(id: &str, percent: u8) -> io::Result<()> {
             "built-in display not controllable on this machine",
         ));
     }
-    for mut d in ddc_hi::Display::enumerate() {
-        if ddc_id(&d.info) == id {
-            d.handle
-                .set_vcp_feature(VCP_LUMINANCE, percent as u16)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            return Ok(());
-        }
-    }
-    Err(io::Error::new(io::ErrorKind::NotFound, "display not found"))
+    ddc_worker::set_brightness(id, percent)
 }
 
 pub fn set_power(id: &str, on: bool) -> io::Result<()> {
@@ -1121,40 +1349,7 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
             "power control is DDC-only; the built-in display has no DDC",
         ));
     }
-    let value = if on { POWER_ON } else { POWER_OFF };
-    for mut d in ddc_hi::Display::enumerate() {
-        if ddc_id(&d.info) == id {
-            // Power-on is the hard direction: a monitor in DDC standby may
-            // have its MCU asleep and not ack. Retry with a short gap, and
-            // also write luminance as a wake signal — some monitors' DDC
-            // hardware powers the MCU on any write, then the pending
-            // power-on command lands.
-            let mut last_err = None;
-            for attempt in 0..4 {
-                if attempt > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(600));
-                }
-                match d.handle.set_vcp_feature(VCP_POWER, value) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        log::info!("power-on attempt {} failed: {}", attempt + 1, e);
-                        last_err = Some(e);
-                        // Wake-signal: write luminance too, some MCUs
-                        // process queued commands after any DDC activity.
-                        let _ = d.handle.set_vcp_feature(VCP_LUMINANCE, 50);
-                    }
-                }
-            }
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "display did not ack power-on after 4 attempts: {}",
-                    last_err.map(|e| e.to_string()).unwrap_or_default()
-                ),
-            ));
-        }
-    }
-    Err(io::Error::new(io::ErrorKind::NotFound, "display not found"))
+    ddc_worker::set_power(id, on)
 }
 
 // ─────────── Tauri commands ───────────
@@ -1353,6 +1548,46 @@ mod tests {
                 d.id, d.kind, d.is_main, d.brightness, d.power, d.controllable, d.method
             );
         }
+    }
+
+    /// Physical OFF→ON cycle through the same retained worker handle used by
+    /// the app. Opt-in only: this visibly blanks the external monitor.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn live_external_power_cycle() {
+        if std::env::var("SAYKNOW_LIVE_DDC_POWER").ok().as_deref() != Some("1") {
+            return;
+        }
+        let external = ddc_worker::list()
+            .into_iter()
+            .find(|display| display.kind == "external")
+            .expect("no external DDC display");
+        let id = external.id;
+
+        struct Restore(String);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = ddc_worker::set_power(&self.0, true);
+            }
+        }
+        let restore = Restore(id.clone());
+
+        ddc_worker::set_power(&id, false).expect("DDC power off failed");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let off = ddc_worker::list()
+            .into_iter()
+            .find(|display| display.id == id)
+            .expect("powered-off display card was lost");
+        assert_eq!(off.power, Some(false), "display did not report cached off state");
+
+        ddc_worker::set_power(&id, true).expect("DDC wake sequence failed");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let on = ddc_worker::list()
+            .into_iter()
+            .find(|display| display.id == id)
+            .expect("woken display card was lost");
+        assert_eq!(on.power, Some(true), "display did not return to on state");
+        std::mem::forget(restore);
     }
 
     #[test]
