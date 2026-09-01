@@ -496,7 +496,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
                   : t("input.placeholderManual")
               }
               autoFocus
-              className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-0 text-[13px] leading-relaxed shadow-none transition-none placeholder:text-muted-foreground/70 focus-visible:border-0 focus-visible:shadow-none focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent"
+              className="field-sizing-fixed min-h-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-[13px] leading-relaxed shadow-none transition-none placeholder:text-muted-foreground/70 focus-visible:border-0 focus-visible:shadow-none focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent"
             />
           </div>
           <Separator orientation="vertical" />
@@ -512,7 +512,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
         </div>
       ) : (
         <>
-          <div className="px-3 pt-3">
+          <div className="flex min-h-[120px] max-h-[40%] basis-[36%] shrink-0 flex-col overflow-hidden px-3 pt-3">
             <Textarea
               value={input}
               onChange={(e) => changeInput(e.target.value)}
@@ -528,7 +528,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
                   : t("input.placeholderManual")
               }
               autoFocus
-              className="min-h-[140px] resize-none rounded-none border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none transition-none placeholder:text-muted-foreground/70 focus-visible:border-0 focus-visible:shadow-none focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent"
+              className="field-sizing-fixed min-h-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none transition-none placeholder:text-muted-foreground/70 focus-visible:border-0 focus-visible:shadow-none focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent"
             />
           </div>
 
@@ -538,7 +538,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             <Separator className="flex-1" />
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 pb-3">
+          <div className="min-h-[200px] flex-1 overflow-y-auto px-3 pb-3">
             <div
               className="min-h-[120px] whitespace-pre-wrap text-[14px] leading-relaxed"
               aria-live="polite"
