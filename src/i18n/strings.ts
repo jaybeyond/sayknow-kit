@@ -181,6 +181,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "텍스트 입력 후 ⌘⏎ 또는 아래 번역 버튼",
     "output.translating": "번역 중...",
     "output.waitManual": "⌘⏎ 또는 번역 버튼을 누르세요",
+    "output.resize": "입력과 번역 영역 크기 조절",
 
     "stop": "정지",
     "translate": "번역",
@@ -447,6 +448,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "Type then press ⌘⏎ or the Translate button below",
     "output.translating": "Translating...",
     "output.waitManual": "Press ⌘⏎ or the Translate button",
+    "output.resize": "Resize source and translation areas",
 
     "stop": "Stop",
     "translate": "Translate",
@@ -642,6 +644,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "入力後 ⌘⏎ または下の翻訳ボタン",
     "output.translating": "翻訳中...",
     "output.waitManual": "⌘⏎ または翻訳ボタンを押してください",
+    "output.resize": "入力欄と翻訳欄のサイズを調整",
 
     "stop": "停止",
     "translate": "翻訳",
@@ -910,6 +913,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "输入后按 ⌘⏎ 或下方翻译按钮",
     "output.translating": "翻译中...",
     "output.waitManual": "按 ⌘⏎ 或翻译按钮",
+    "output.resize": "调整原文和译文区域大小",
 
     "stop": "停止",
     "translate": "翻译",
@@ -1178,6 +1182,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "Escribe y pulsa ⌘⏎ o el botón Traducir",
     "output.translating": "Traduciendo...",
     "output.waitManual": "Pulsa ⌘⏎ o el botón Traducir",
+    "output.resize": "Ajustar las áreas de origen y traducción",
 
     "stop": "Detener",
     "translate": "Traducir",
@@ -1446,6 +1451,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "Saisissez puis ⌘⏎ ou le bouton ci-dessous",
     "output.translating": "Traduction...",
     "output.waitManual": "Appuyez sur ⌘⏎ ou le bouton Traduire",
+    "output.resize": "Redimensionner les zones source et traduction",
 
     "stop": "Arrêter",
     "translate": "Traduire",
@@ -1714,6 +1720,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "Eingeben, dann ⌘⏎ oder Übersetzen",
     "output.translating": "Übersetze...",
     "output.waitManual": "⌘⏎ oder Übersetzen drücken",
+    "output.resize": "Quell- und Übersetzungsbereich anpassen",
 
     "stop": "Stopp",
     "translate": "Übersetzen",
@@ -1982,6 +1989,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "output.emptyManual": "Nhập rồi nhấn ⌘⏎ hoặc nút Dịch",
     "output.translating": "Đang dịch...",
     "output.waitManual": "Nhấn ⌘⏎ hoặc nút Dịch",
+    "output.resize": "Điều chỉnh vùng văn bản gốc và bản dịch",
 
     "stop": "Dừng",
     "translate": "Dịch",

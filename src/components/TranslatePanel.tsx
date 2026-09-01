@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react"
 import {
   ArrowLeftRight,
   Check,
   Copy,
+  GripHorizontal,
+  GripVertical,
   CornerDownLeft,
   Loader2,
   Sparkles,
@@ -83,6 +91,9 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [refineText, setRefineText] = useState("")
   const abortRef = useRef<AbortController | null>(null)
+  const [compactSplit, setCompactSplit] = useState(50)
+  const [stackedSplit, setStackedSplit] = useState(36)
+  const splitContainerRef = useRef<HTMLDivElement | null>(null)
   const { models } = useModels(settings.apiKey, settings.baseURL)
   // History is listed and restored from the tab strip; this panel only files
   // new entries into it.
@@ -416,6 +427,59 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     LANGS.find((l) => l.code === settings.to)?.label ?? settings.to
   const isCompact = settings.windowMode === "compact"
 
+  const splitLimits = isCompact ? { min: 25, max: 75 } : { min: 20, max: 60 }
+  const split = isCompact ? compactSplit : stackedSplit
+
+  const setSplit = (value: number | ((current: number) => number)) => {
+    if (isCompact) {
+      setCompactSplit(value)
+    } else {
+      setStackedSplit(value)
+    }
+  }
+
+  const clampSplit = (value: number) =>
+    Math.min(splitLimits.max, Math.max(splitLimits.min, value))
+
+  const beginSplitResize = (event: ReactPointerEvent<HTMLElement>) => {
+    event.preventDefault()
+    const container = splitContainerRef.current
+    if (!container) return
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = isCompact ? "col-resize" : "row-resize"
+    document.body.style.userSelect = "none"
+
+    const resize = (pointerEvent: PointerEvent) => {
+      const rect = container.getBoundingClientRect()
+      const percent = isCompact
+        ? ((pointerEvent.clientX - rect.left) / rect.width) * 100
+        : ((pointerEvent.clientY - rect.top) / rect.height) * 100
+      setSplit(clampSplit(percent))
+    }
+    const finish = () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener("pointermove", resize)
+      window.removeEventListener("pointerup", finish)
+      window.removeEventListener("pointercancel", finish)
+    }
+
+    window.addEventListener("pointermove", resize)
+    window.addEventListener("pointerup", finish)
+    window.addEventListener("pointercancel", finish)
+  }
+
+  const resizeSplitWithKeyboard = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const decreaseKey = isCompact ? "ArrowLeft" : "ArrowUp"
+    const increaseKey = isCompact ? "ArrowRight" : "ArrowDown"
+    if (event.key !== decreaseKey && event.key !== increaseKey) return
+    event.preventDefault()
+    const delta = event.key === decreaseKey ? -5 : 5
+    setSplit((current) => clampSplit(current + delta))
+  }
+
   const targetIndicator =
     translating || refining ? (
       <button
@@ -479,8 +543,11 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       </div>
 
       {isCompact ? (
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col px-3 py-2">
+        <div ref={splitContainerRef} className="flex min-h-0 flex-1">
+          <div
+            className="flex min-w-0 shrink-0 flex-col px-3 py-2"
+            style={{ width: `${compactSplit}%` }}
+          >
             <Textarea
               value={input}
               onChange={(e) => changeInput(e.target.value)}
@@ -499,7 +566,21 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               className="field-sizing-fixed min-h-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-[13px] leading-relaxed shadow-none transition-none placeholder:text-muted-foreground/70 focus-visible:border-0 focus-visible:shadow-none focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent"
             />
           </div>
-          <Separator orientation="vertical" />
+          <div
+            role="separator"
+            tabIndex={0}
+            aria-label={t("output.resize")}
+            aria-orientation="vertical"
+            aria-valuemin={splitLimits.min}
+            aria-valuemax={splitLimits.max}
+            aria-valuenow={Math.round(split)}
+            className="group flex w-3 shrink-0 cursor-col-resize items-center justify-center border-x border-transparent outline-none hover:bg-muted/60 focus-visible:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
+            onPointerDown={beginSplitResize}
+            onDoubleClick={() => setCompactSplit(50)}
+            onKeyDown={resizeSplitWithKeyboard}
+          >
+            <GripVertical className="h-4 w-2.5 text-muted-foreground/50 group-hover:text-muted-foreground" />
+          </div>
           <div className="flex min-w-0 flex-1 flex-col px-3 py-2">
             <div className="mb-1 flex items-center">{targetIndicator}</div>
             <div
@@ -511,8 +592,11 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
           </div>
         </div>
       ) : (
-        <>
-          <div className="flex min-h-[120px] max-h-[40%] basis-[36%] shrink-0 flex-col overflow-hidden px-3 pt-3">
+        <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col">
+          <div
+            className="flex min-h-[120px] shrink-0 flex-col overflow-hidden px-3 pt-3"
+            style={{ height: `${stackedSplit}%` }}
+          >
             <Textarea
               value={input}
               onChange={(e) => changeInput(e.target.value)}
@@ -532,13 +616,31 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             />
           </div>
 
-          <div className="flex items-center gap-2 px-3 pb-1.5 pt-1">
-            <Separator className="flex-1" />
-            {targetIndicator}
-            <Separator className="flex-1" />
+          <div
+            role="separator"
+            tabIndex={0}
+            aria-label={t("output.resize")}
+            aria-orientation="horizontal"
+            aria-valuemin={splitLimits.min}
+            aria-valuemax={splitLimits.max}
+            aria-valuenow={Math.round(split)}
+            className="group flex h-7 shrink-0 cursor-row-resize items-center gap-2 px-3 outline-none hover:bg-muted/40 focus-visible:bg-muted/60 focus-visible:ring-1 focus-visible:ring-ring"
+            onPointerDown={beginSplitResize}
+            onDoubleClick={() => setStackedSplit(36)}
+            onKeyDown={resizeSplitWithKeyboard}
+          >
+            <Separator className="pointer-events-none flex-1" />
+            <div
+              className="flex items-center gap-1"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {targetIndicator}
+            </div>
+            <GripHorizontal className="pointer-events-none h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground" />
+            <Separator className="pointer-events-none flex-1" />
           </div>
 
-          <div className="min-h-[200px] flex-1 overflow-y-auto px-3 pb-3">
+          <div className="min-h-[160px] flex-1 overflow-y-auto px-3 pb-3">
             <div
               className="min-h-[120px] whitespace-pre-wrap text-[14px] leading-relaxed"
               aria-live="polite"
@@ -546,7 +648,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               {outputBody}
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <div className="border-t bg-muted/20 px-2 py-1.5">
