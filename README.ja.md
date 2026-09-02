@@ -27,7 +27,7 @@ SayKnow Kit は **macOS のメニューバーまたはWindowsのシステムト�
 ## 主な機能
 
 - 🌞 **ツールタブ（macOS専用表示機能）** — 外部ディスプレイは DDC/CI、対応Macの内蔵パネルは IOKit バックライトで明るさを制御。外部DDCの機能はハードウェアにより異なります。IOKitへ直接アクセスできない新しい対応Macでは、macOSのコントロールセンターのアクセシビリティUIを自動操作します。いずれの内蔵ディスプレイ経路もmacOS専用です。
-- 📊 **システムステータス** — システムCPU・メモリ・システムディスクを表示。v0.2.8には検証済み温度アダプターがないため、CPUパッケージ温度は利用不可と表示
+- 📊 **システムステータス** — システムCPU・メモリ・システムディスクを表示。v0.2.9には検証済み温度アダプターがないため、CPUパッケージ温度は利用不可と表示
 - 📊 **エージェント使用量タブ** — Claude Code / Codex / SayKnow CLI がローカルに残すセッションログを直接読み取り。5 時間の課金ブロック(残り時間・消費レート)と、CLI が記録した 5 時間・週間の実際の使用率をリセット時刻付きで表示。リセット済みのウィンドウは取り消し線で明示し、現在値としては描画しない。通信も追加ログインも不要
 - 📋 **クリップボード履歴タブ** — コピー内容をバックグラウンド収集。本文とメモを横断検索、ピン留め、翻訳タブへ送信、2 段階の削除。空文字・OTP 形式・PEM 鍵ブロックは保存対象外
 - 💬 **チャットタブ** — 同じウィンドウで軽い Q&A、マルチ会話サイドバー、メッセージごとの 再生成 / 編集 / コピー / 停止
@@ -60,13 +60,13 @@ SayKnow Kit は **macOS のメニューバーまたはWindowsのシステムト�
 
 ## インストール
 
-### v0.2.8 公式インストーラー（推奨）
+### v0.2.9 公式インストーラー（推奨）
 
 [公式GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases) からのみダウンロードし、`SHA256SUMS.txt` で検証してください。
 
-**macOS（Apple Silicon）:** `SayKnow-Kit_0.2.8_aarch64.dmg` を開き、アプリを `/Applications` へドラッグします。v0.2.8アプリは**アドホック署名のみ**で、Developer IDもnotarizationもないため、Gatekeeperの警告は想定内です。Finderで右クリック → **開く** → **開く**。
+**macOS（Apple Silicon）:** `SayKnow-Kit_0.2.9_aarch64.dmg` を開き、アプリを `/Applications` へドラッグします。v0.2.9アプリは**アドホック署名のみ**で、Developer IDもnotarizationもないため、Gatekeeperの警告は想定内です。Finderで右クリック → **開く** → **開く**。
 
-**Windows（x64）:** `SayKnow-Kit_0.2.8_x64-setup.exe`（NSIS）または `SayKnow-Kit_0.2.8_x64_en-US.msi` を実行します。インストーラーは**未署名**で、SmartScreenの警告は想定内です。公式Releaseと`SHA256SUMS.txt`を確認した後に「詳細情報 → 実行」を選択してください。
+**Windows（x64）:** `SayKnow-Kit_0.2.9_x64-setup.exe`（NSIS）または `SayKnow-Kit_0.2.9_x64_en-US.msi` を実行します。インストーラーは**未署名**で、SmartScreenの警告は想定内です。公式Releaseと`SHA256SUMS.txt`を確認した後に「詳細情報 → 実行」を選択してください。
 
 ### アンインストール
 
@@ -114,7 +114,7 @@ OpenRouter API キーは課金が発生する認証情報のため、平文で�
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-インストーラーは公式GitHub Releaseからのみ取得し、`SHA256SUMS.txt`を検証してください。v0.2.8のmacOSアプリはDeveloper ID・notarizationなしのアドホック署名で、WindowsインストーラーはAuthenticodeなしの未署名です。GatekeeperとSmartScreenの警告は想定内です。
+インストーラーは公式GitHub Releaseからのみ取得し、`SHA256SUMS.txt`を検証してください。v0.2.9のmacOSアプリはDeveloper ID・notarizationなしのアドホック署名で、WindowsインストーラーはAuthenticodeなしの未署名です。GatekeeperとSmartScreenの警告は想定内です。
 
 ## ライセンス
 
