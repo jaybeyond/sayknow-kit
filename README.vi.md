@@ -10,7 +10,7 @@
 
 [한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · **Tiếng Việt**
 
-[![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/) · [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://www.microsoft.com/windows/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -20,14 +20,14 @@
 
 ## Tổng quan
 
-SayKnow Kit nằm trên **thanh menu macOS**. Một phím tắt mở popup chứa ba công cụ bạn dùng mỗi ngày: **dịch** (tự chạy khi bạn ngừng gõ), **chat** và **lịch sử clipboard**. Không cần chuyển tab giữa trang dịch và copy-paste qua lại nữa.
+SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh menu macOS** hoặc **khay hệ thống Windows**. Phím tắt mở popup chứa ba công cụ hằng ngày: **dịch**, **chat** và **lịch sử clipboard**.
 
 **Ba nhà cung cấp** trong cùng một cửa sổ (OpenRouter / OCP / endpoint tùy chỉnh). Chỉ riêng OpenRouter đã cho phép dùng hơn 360 model (GPT-4o, Claude, Gemini, Llama,...) bằng một khóa duy nhất.
 
 ## Tính năng
 
-- 🌞 **Tab công cụ** — điều khiển độ sáng mọi màn hình đã kết nối ở cấp phần cứng (DDC/CI cho màn ngoài, IOKit cho màn tích hợp nếu được phép) và bật/tắt màn ngoài (chờ DDC)
-- 🌞 **Tab công cụ** — điều khiển độ sáng mọi màn hình đã kết nối ở cấp phần cứng (DDC/CI cho màn ngoài, IOKit cho màn tích hợp nếu được phép) và bật/tắt màn ngoài (chờ DDC)
+- 🌞 **Tab công cụ** — trên macOS điều khiển độ sáng (DDC/CI cho màn ngoài; IOKit cho đèn nền màn tích hợp nếu được hỗ trợ). Trên các máy Mac mới được hỗ trợ nhưng không có IOKit, ứng dụng dùng tự động hóa Trợ năng của Trung tâm điều khiển. IOKit và tự động hóa này chỉ dành cho macOS; khả năng DDC tùy phần cứng.
+- 📊 **Trạng thái hệ thống** — CPU, bộ nhớ và ổ đĩa hệ thống; nhiệt độ gói CPU hiển thị “không khả dụng” trong v0.2.4 vì chưa có bộ chuyển đổi nhiệt độ được xác minh, cũng như trên hệ thống không hỗ trợ.
 - 📊 **Tab mức dùng** — đọc trực tiếp nhật ký phiên mà Claude Code, Codex và SayKnow CLI đã ghi cục bộ. Hiển thị khối tính phí 5 giờ (thời gian còn lại, tốc độ tiêu thụ) cùng phần trăm 5 giờ và hàng tuần thật do CLI ghi lại, kèm giờ reset. Cửa sổ đã reset bị gạch ngang và không bao giờ được vẽ như mức hiện tại. Không cần mạng, không cần đăng nhập thêm
 - 📋 **Tab lịch sử clipboard** — thu thập nền, tìm kiếm cả nội dung lẫn ghi chú, ghim, gửi sang dịch và xoá hai mức. Chuỗi rỗng, dạng OTP và khối khoá PEM không bao giờ được lưu
 - 💬 **Tab Chat** — hỏi-đáp gọn trong cùng cửa sổ, thanh bên đa cuộc trò chuyện, theo từng tin nhắn: tạo lại / chỉnh sửa / sao chép / dừng
@@ -36,12 +36,12 @@ SayKnow Kit nằm trên **thanh menu macOS**. Một phím tắt mở popup chứ
 - 📐 **Chế độ ngang gọn** — 720×240 hai cột, phù hợp để mở thường trực
 - 🪟 **Chuyển kích thước cửa sổ** — Gọn ↔ Bình thường ngay tại thanh tiêu đề
 - ⚡ **Tự động dịch** — sau 1.5 giây ngừng gõ
-- ⌨️ **Chế độ thủ công** — chỉ khi nhấn `⌘⏎` hoặc nút Dịch
+- ⌨️ **Chế độ thủ công** — chỉ khi nhấn `⌘⏎` (macOS), `Ctrl+Enter` (Windows) hoặc nút Dịch
 - 🪄 **Tinh chỉnh** — Lịch sự / Thân mật / Ngắn / Công sở / Sát nghĩa + prompt tự do
 - 🌐 **OpenRouter BYOK** — combobox tìm kiếm 360+ model
 - 🔁 **Model dự phòng** — OpenRouter tự chuyển khi model chính lỗi
 - ⏹ **Dừng** — hủy cuộc gọi đang chạy
-- 📋 **Tự lấy clipboard** — `⌘⇧T` tự điền text vào ô nhập
+- 📋 **Tự lấy clipboard** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) tự điền text vào ô nhập
 - 🕘 **Lịch sử** — tìm kiếm, ghim mục để giữ lại vĩnh viễn
 - 📌 **Ghim cửa sổ** — tắt tự ẩn
 - 📚 **Thuật ngữ** (Glossary) — dịch nhất quán tên riêng
@@ -50,24 +50,33 @@ SayKnow Kit nằm trên **thanh menu macOS**. Một phím tắt mở popup chứ
 - 🌓 **Sáng / tối / hệ thống**
 - 🌍 **8 ngôn ngữ giao diện** — tự nhận diện
 - 🔄 **36 ngôn ngữ dịch**
-- 🔒 **macOS Keychain** — API key mã hóa AES-256
+- 🔒 **Lưu trữ an toàn** — thông tin xác thực trong kho hệ thống (macOS Keychain / Windows Credential Manager)
 
 ## Yêu cầu hệ thống
 
-- macOS 11.0 (Big Sur) trở lên
-- Apple Silicon (aarch64)
+- macOS 11.0 (Big Sur) trở lên trên Apple Silicon (aarch64)
+- Windows 10/11 x64
 - OpenRouter API key — lấy tại [openrouter.ai/keys](https://openrouter.ai/keys)
 
 ## Cài đặt
 
-### Cách 1 — DMG đóng gói sẵn (khuyến nghị)
+### macOS — DMG
 
-1. Tải `SayKnow Kit_x.x.x_aarch64.dmg` từ [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+1. Tải DMG macOS aarch64 từ [bản phát hành GitHub chính thức](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Mở DMG, kéo SayKnow Kit.app vào `/Applications`.
-3. Build chưa code-sign nên Gatekeeper sẽ chặn lần đầu:
-   ```bash
-   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
-   ```
+3. Ứng dụng v0.2.4 chỉ có chữ ký **ad hoc**, không có Developer ID hay notarization; cảnh báo Gatekeeper là điều bình thường.
+4. Kiểm tra `SHA256SUMS.txt` được phát hành cùng phiên bản trước khi mở.
+
+### Windows — EXE hoặc MSI
+
+1. Chỉ tải bộ cài NSIS `.exe` hoặc bộ cài MSI `.msi` x64 từ GitHub Release chính thức.
+2. Windows SmartScreen có thể cảnh báo vì v0.2.4 chưa được ký; điều này bình thường. Không có Authenticode.
+3. Kiểm tra `SHA256SUMS.txt`, sau đó chạy trình cài đặt.
+4. Gỡ cài đặt qua **Cài đặt → Ứng dụng → Ứng dụng đã cài đặt → SayKnow Kit → Gỡ cài đặt**.
+
+Trên macOS, gỡ bằng cách xóa SayKnow Kit.app khỏi `/Applications` và xóa dữ liệu Keychain nếu không còn cần.
+
+Chỉ tải từ [GitHub Releases chính thức](https://github.com/jaybeyond/sayknow-kit/releases).
 
 ### Cách 2 — Build từ source
 
@@ -80,17 +89,17 @@ pnpm tauri build
 
 ## Sử dụng
 
-1. Một icon nhỏ xuất hiện ở thanh menu (cạnh đồng hồ). Không hiện trong Dock.
-2. Bấm icon → nhập OpenRouter API key → **Kết nối & bắt đầu**.
-3. Key được lưu vào macOS Keychain.
-4. Bấm icon hoặc `⌘⇧T` → gõ → tự dịch sau 1.5 giây.
+1. Một biểu tượng xuất hiện ở thanh menu macOS hoặc khay hệ thống Windows và luôn sẵn sàng ở đó.
+2. Bấm biểu tượng → nhập OpenRouter API key → **Kết nối & bắt đầu**. Key được lưu trong kho thông tin xác thực hệ thống.
+3. Bấm biểu tượng hoặc nhấn `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) để mở cửa sổ → gõ → tự dịch sau 1,5 giây.
 
 ### Phím tắt
 
 | Phím tắt | Hành động |
 |---|---|
-| `⌘⇧T` | Mở/đóng popup (toàn cục) |
-| `⌘⏎` | Dịch ngay (chế độ thủ công) |
+| `⌘⇧T` (macOS) | Mở/đóng cửa sổ (toàn cục) |
+| `Ctrl+Shift+T` (Windows) | Mở/đóng cửa sổ (toàn cục) |
+| `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Dịch ngay (chế độ thủ công) |
 
 ### Cài đặt (cửa sổ riêng)
 
@@ -104,11 +113,12 @@ pnpm tauri build
 
 ## Bảo mật
 
-Key OpenRouter là thông tin tính phí, SayKnow Kit không bao giờ lưu plaintext:
+OpenRouter API key là thông tin tính phí và chỉ được lưu trong kho bảo mật hệ thống:
 
-- macOS **Keychain** (`com.sayknow.app`)
-- Mã hóa AES-256, key dẫn xuất từ mật khẩu đăng nhập macOS
-- Ứng dụng khác cố đọc sẽ kích hoạt prompt Cho phép/Từ chối của hệ thống
+- macOS **Keychain** và Windows **Credential Manager**
+- Không lưu plaintext và không dẫn xuất từ mật khẩu đăng nhập
+- Chỉ tải từ GitHub Releases chính thức và kiểm tra `SHA256SUMS.txt`
+- Ứng dụng macOS v0.2.4 dùng chữ ký ad hoc, không có Developer ID hay notarization; trình cài Windows không có chữ ký Authenticode. Cảnh báo Gatekeeper và SmartScreen là điều bình thường.
 
 ## Giấy phép
 

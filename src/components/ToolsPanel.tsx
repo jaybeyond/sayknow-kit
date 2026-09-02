@@ -19,6 +19,17 @@ import {
   syncBuiltin,
   type DisplayRow,
 } from "@/lib/tools-store"
+import {
+  getSnapshot as getMetricsSnapshot,
+  refresh as refreshMetrics,
+  setActive as setMetricsActive,
+  subscribe as subscribeMetrics,
+  formatBytes,
+  formatPercent,
+  type CpuMetric,
+  type ResourceMetric,
+  type TemperatureMetric,
+} from "@/lib/system-metrics-store"
 import { cn } from "@/lib/utils"
 
 type Props = {
@@ -35,15 +46,23 @@ type Props = {
 export function ToolsPanel({ settings, active }: Props) {
   const { t } = useT(settings.uiLocale)
   const { displays, error, loaded } = useSyncExternalStore(subscribe, getSnapshot)
+  const metrics = useSyncExternalStore(subscribeMetrics, getMetricsSnapshot)
   const accessibilityRequested = useRef(false)
 
-  const refresh = useCallback(() => void scanDisplays(true), [])
+  const refreshAll = useCallback(() => {
+    void scanDisplays(true)
+    void refreshMetrics()
+  }, [])
 
   // DDC reads take tens of ms per display, so only scan while visible. The
   // effect is a pure trigger; state lands in the store.
   useEffect(() => {
     if (!active) return
     void scanDisplays()
+  }, [active])
+  useEffect(() => {
+    setMetricsActive(active)
+    return () => setMetricsActive(false)
   }, [active])
 
   // Follow the keyboard keys: the built-in slider is an absolute brightness
@@ -83,16 +102,22 @@ export function ToolsPanel({ settings, active }: Props) {
   // their DDC while the app runs, and a list scanned once at tab-activation
   // goes stale — an external that came back showed as nothing at all.
   useEffect(() => {
-    if (!isTauri()) return
+    if (!active || !isTauri()) return
     let alive = true
-    void import("@tauri-apps/api/event").then(({ listen }) => {
-      if (!alive) return
-      listen("sayknow:open", () => void scanDisplays(true))
+    let unlisten: (() => void) | null = null
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const stop = await listen("sayknow:open", () => void scanDisplays(true))
+      if (alive) unlisten = stop
+      else stop()
+    })
+    .catch(() => {
+      if (alive) void scanDisplays(true)
     })
     return () => {
       alive = false
+      unlisten?.()
     }
-  }, [])
+  }, [active])
 
   // Slider commits fire one command each. The optimistic value lives in the
   // row component; a rescan on error is the honest correction.
@@ -158,7 +183,7 @@ export function ToolsPanel({ settings, active }: Props) {
           variant="ghost"
           size="sm"
           className="h-6 px-2 text-[11px]"
-          onClick={() => void refresh()}
+          onClick={() => void refreshAll()}
           title={t("tools.refresh")}
         >
           <RefreshCw className="h-3 w-3" />
@@ -166,6 +191,7 @@ export function ToolsPanel({ settings, active }: Props) {
       </div>
 
       <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
+        <SystemMetricsSection state={metrics} t={t} />
         <section className="rounded-lg border bg-muted/30 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium">
             <Sun className="h-3.5 w-3.5" />
@@ -220,6 +246,66 @@ export function ToolsPanel({ settings, active }: Props) {
   )
 }
 
+function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetricsSnapshot>; t: (key: string) => string }) {
+  const age = state.age_ms
+  const stale = state.status === "stale" || state.status === "stale_with_error" || (age != null && age > 6000)
+  const label = (kind: string) => t(`tools.metrics.${kind}`)
+  const value = (metric: CpuMetric | ResourceMetric | TemperatureMetric): string => {
+    if (metric.state === "available") {
+      if ("percent" in metric) return formatPercent(metric.percent)
+      if ("celsius" in metric) return `${metric.celsius.toFixed(1)} °C`
+      return `${formatBytes(metric.used_bytes)} / ${formatBytes(metric.total_bytes)}`
+    }
+    if (metric.state === "warming_up") return label("warming")
+    if (metric.reason === "no_verified_package_sensor") return label("temperatureUnavailable")
+    return label("unavailable")
+  }
+  const snapshot = state.snapshot
+  const seconds = age == null ? null : label("seconds").replace("{count}", `${Math.floor(age / 1000)}`)
+  const statusParts = snapshot
+    ? [stale ? label("stale") : "", state.refreshing ? label("refreshing") : ""].filter(Boolean)
+    : [label(state.status === "initial_error" ? "error" : "loading")]
+  const statusText = statusParts.join(" · ")
+  return (
+    <section
+      aria-label={label("title")}
+      className="rounded-lg border bg-muted/30 p-2.5"
+    >
+      <div className="mb-1.5 flex items-center justify-between text-xs font-medium">
+        <span>{label("title")}</span>
+        <span aria-atomic="true" aria-live="polite" role="status" className="text-muted-foreground">
+          {statusText}
+        </span>
+      </div>
+      {!snapshot ? (
+        <p className="text-xs text-muted-foreground">
+          {label(state.status === "initial_error" ? "error" : "loading")}
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-1.5 text-xs">
+          <div><span className="text-muted-foreground">{label("cpu")}</span><div>{value(snapshot.cpu)}</div></div>
+          <div><span className="text-muted-foreground">{label("memory")}</span><div>{value(snapshot.memory)}</div></div>
+          <div><span className="text-muted-foreground">{label("storage")}</span><div>{value(snapshot.storage)}</div></div>
+          <div><span className="text-muted-foreground">{label("temperature")}</span><div>{value(snapshot.cpu_package_temperature)}</div></div>
+        </div>
+      )}
+      {state.error && (
+        <div className="mt-1 flex items-center justify-between gap-2 text-xs text-destructive">
+          <span>{label("error")}: {state.error}</span>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void refreshMetrics()}>
+            {label("retry")}
+          </Button>
+        </div>
+      )}
+      {state.listener_error && (
+        <p className="mt-1 text-xs text-muted-foreground">{label("listenerError")}</p>
+      )}
+      {seconds != null && (
+        <p className="mt-1 text-xs text-muted-foreground">{label("updated").replace("{age}", seconds)}</p>
+      )}
+    </section>
+  )
+}
 function AllSlider({
   label,
   hint,
@@ -244,6 +330,7 @@ function AllSlider({
         <span className="tabular-nums text-muted-foreground">{v}%</span>
       </div>
       <Slider
+        aria-label={label}
         value={[v]}
         onValueChange={([n]) => setV(n)}
         onValueCommit={([n]) => onCommit(n)}
@@ -374,6 +461,7 @@ function DisplayControl({
             {t("tools.brightness.backlight")}
           </span>
           <Slider
+            aria-label={`${display.name} ${t("tools.brightness.backlight")}`}
             value={[backlightV]}
             min={0}
             onValueChange={([n]) => setBacklightV(n)}
@@ -387,6 +475,7 @@ function DisplayControl({
       )}
       {display.controllable ? (
         <Slider
+          aria-label={`${display.name} ${display.method === "gamma" ? t("tools.brightness.softwareDim") : t("tools.brightness.title")}`}
           value={[v]}
           min={0}
           onValueChange={([n]) => setV(n)}

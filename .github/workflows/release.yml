@@ -1,92 +1,694 @@
 name: Release
 
-# Tag-driven release: push a tag like `v0.2.0` to trigger cross-platform builds.
-# Manual: also runnable from the Actions tab via workflow_dispatch (no Release).
-
 on:
   push:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: Commit or tag to rehearse
+        required: true
+        default: main
+      version:
+        description: Expected application version
+        required: true
+        default: 0.2.4
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.meta.outputs.candidate_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      workflow_sha256: ${{ steps.meta.outputs.workflow_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_ref || github.ref }}
+
+      - name: Verify candidate, tag, and version sources
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const crypto = require("crypto");
+          const { execFileSync } = require("child_process");
+          const read = (path) => fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+          const pkg = JSON.parse(read("package.json")).version;
+          const conf = JSON.parse(read("src-tauri/tauri.conf.json")).version;
+          const toml = read("src-tauri/Cargo.toml").match(/^version = "(.+)"$/m)?.[1];
+          const lockBlock = read("src-tauri/Cargo.lock")
+            .split("\n[[package]]\n")
+            .find((block) => block.startsWith('name = "sayknow"'));
+          const lock = lockBlock?.match(/^version = "(.+)"$/m)?.[1];
+          const expected = process.env.EXPECTED_VERSION.replace(/^v/, "");
+          const versions = { pkg, conf, toml, lock };
+          if (!/^\d+\.\d+\.\d+$/.test(expected)) throw new Error(`invalid expected version: ${expected}`);
+          for (const [source, value] of Object.entries(versions)) {
+            if (value !== expected) throw new Error(`${source} version ${value} != ${expected}`);
+          }
+          if (process.env.EVENT_NAME === "push" && process.env.REF_NAME !== `v${expected}`) {
+            throw new Error(`tag ${process.env.REF_NAME} != v${expected}`);
+          }
+          const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+          if (process.env.EVENT_NAME === "workflow_dispatch" && sha !== process.env.EVENT_SHA) {
+            throw new Error(`candidate ${sha} != immutable dispatch SHA ${process.env.EVENT_SHA}`);
+          }
+          const tag = process.env.EVENT_NAME === "push" ? process.env.REF_NAME : "";
+          const workflowSha256 = crypto.createHash("sha256").update(read(".github/workflows/release.yml")).digest("hex");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `candidate_sha=${sha}\nversion=${expected}\ntag=${tag}\nworkflow_sha256=${workflowSha256}\n`);
+          console.log({ sha, expected, versions, tag });
+          NODE
+
+      - name: Require candidate ancestry on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "${{ steps.meta.outputs.candidate_sha }}" refs/remotes/origin/main
+
+      - name: Require an annotated immutable release tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          test "$(git cat-file -t "${{ github.ref_name }}")" = tag
+          test "$(git rev-list -n 1 "${{ github.ref_name }}")" = "${{ steps.meta.outputs.candidate_sha }}"
+          test "$(git rev-parse "refs/tags/${{ github.ref_name }}")" = "${{ github.event.after }}"
+
+      - name: Authenticate immutable release approval
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          CANDIDATE_SHA: ${{ steps.meta.outputs.candidate_sha }}
+        run: |
+          approval_tag="release-approval/v${VERSION}/${CANDIDATE_SHA}"
+          approval_ref="refs/tags/${approval_tag}"
+          approval_path=".github/release-approvals/v${VERSION}/${CANDIDATE_SHA}.json"
+          git fetch --no-tags origin "${approval_ref}:${approval_ref}"
+          remote_approval_object="$(gh api "repos/${REPOSITORY}/git/ref/${approval_ref#refs/}" --jq .object.sha)"
+          test "$(git rev-parse "$approval_ref")" = "$remote_approval_object"
+          test "$(git cat-file -t "$approval_ref")" = tag
+          approval_commit="$(git rev-parse "${approval_ref}^{}")"
+          test "$(git rev-parse "${approval_commit}^")" = "$CANDIDATE_SHA"
+          test "$(git diff --name-only "$CANDIDATE_SHA" "$approval_commit")" = "$approval_path"
+          git fetch --no-tags origin refs/heads/release-approvals:refs/remotes/origin/release-approvals
+          test "$(git rev-parse refs/remotes/origin/release-approvals)" = "$approval_commit"
+
+          cat > "$RUNNER_TEMP/allowed_signers" <<'KEY'
+          jaybeyond ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDHz0L/TXXvkFNI3gc/3fQL7fUmrTblJF1vzba12d3KQcA8wsG70qvtju+9tmbG2uFkIvgNpCcsYqgfawSqxxMwQNDpFOa0Qylop1v3HtM+ecNhKEseRKX7iloaPeo2P22euAM5FYpQdGu4N4s3zMfh//t8O7calCt73daDixpGA8u3C8Y89rmI8uxQjk4DK72c6ncrmO0EX4KfCO2hPRf8Jm7/WloNiYoI49NsRtTuCbXWxaEJOtqYRZzbOc/+o2GiWFkxC7u7pB2I3Xbq1kRRgMnxrnK15TbCm0H0yb7YA7CpZmBPmnnuMPXJBtH2YLlFdTExXLcNwFBGpY4Cj+UTeh3Lo/pK5/GxapwTPYdbwJMqZZEfk+Tp9Zm05YbLUPovPBedxpvmNetBuRvZy0b/Ob/DS+92EzHsNYyyITodRbP4LjY9PlE1pfQYbX7SSfk0HopcFw4mhsJ9WIfHozBJOD+MfZM71OOAIwDp0W3CYVrqXHf/sL1eob7lgO2WzLjLssfXG2+1+W4tkYe++yv432sOoFqCT7nD7lHX4TdhML/YLyEJFblFf4VqUp7fyjKDdrQIUyQW+IpJBBCol+Bqe0blbYpmIaL1rTJptv6a8QuGR9tjzJ1OJAKlE8hTFPT6Iy8sVMykTm/6WPvezJK5zpc1nI4flD59HNvmO3x+Yw== info@jaybeyond.icu
+          KEY
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile "$RUNNER_TEMP/allowed_signers"
+          git verify-tag "$approval_ref"
+          git verify-commit "$approval_commit"
+          git verify-tag "${{ github.ref_name }}"
+          git for-each-ref --format='%(contents)' "$approval_ref" > "$RUNNER_TEMP/approval-tag-message.txt"
+          git show "${approval_commit}:${approval_path}" > "$RUNNER_TEMP/approval.json"
+
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const { canonicalize } = require("./.github/scripts/release-validation.cjs");
+          const raw = fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`);
+          const approval = JSON.parse(raw);
+          if (!raw.equals(Buffer.from(canonicalize(approval)))) throw new Error("approval manifest is not canonical JSON");
+          const keys = (value) => Object.keys(value).sort().join(",");
+          if (keys(approval) !== "approval,artifacts,candidate_sha,manifest_sha256,rehearsal,repository,schema,signing_posture,version") throw new Error("approval manifest keys are not exact");
+          if (approval.schema !== "sayknow.release-approval/v1") throw new Error("invalid approval schema");
+          if (approval.repository !== process.env.REPOSITORY || approval.version !== process.env.VERSION || approval.candidate_sha !== process.env.CANDIDATE_SHA) throw new Error("approval identity mismatch");
+          if (keys(approval.rehearsal) !== "completed_at,run_attempt,run_id,workflow" || approval.rehearsal.workflow !== "release.yml" || !Number.isInteger(approval.rehearsal.run_id) || approval.rehearsal.run_id <= 0 || !Number.isInteger(approval.rehearsal.run_attempt) || approval.rehearsal.run_attempt <= 0) throw new Error("invalid rehearsal identity");
+          if (keys(approval.signing_posture) !== "macos,windows" || approval.signing_posture.macos !== "adhoc" || approval.signing_posture.windows !== "unsigned") throw new Error("invalid signing posture");
+          if (keys(approval.approval) !== "approval_tag,approved_at,approver_login" || approval.approval.approver_login !== "jaybeyond") throw new Error("unauthorized approver");
+          if (approval.approval.approval_tag !== `release-approval/v${process.env.VERSION}/${process.env.CANDIDATE_SHA}`) throw new Error("approval tag mismatch");
+          if (!/^[0-9a-f]{64}$/.test(approval.manifest_sha256) || !/^[0-9a-f]{40}$/.test(approval.candidate_sha)) throw new Error("invalid digest");
+          const utc = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$/;
+          if (!utc.test(approval.rehearsal.completed_at) || !utc.test(approval.approval.approved_at)) throw new Error("timestamps must be UTC RFC3339");
+          console.log(`validated approval manifest for rehearsal run ${approval.rehearsal.run_id}`);
+          NODE
+          REHEARSAL_RUN_ID="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/approval.json")).rehearsal.run_id')"
+          REHEARSAL_MANIFEST_SHA="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/approval.json")).manifest_sha256')"
+          REHEARSAL_RUN_ATTEMPT="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/approval.json")).rehearsal.run_attempt')"
+          export REHEARSAL_RUN_ID REHEARSAL_RUN_ATTEMPT REHEARSAL_MANIFEST_SHA
+
+          gh api "repos/${REPOSITORY}/actions/runs/${REHEARSAL_RUN_ID}" > "$RUNNER_TEMP/rehearsal-run.json"
+          gh api "repos/${REPOSITORY}/actions/runs/${REHEARSAL_RUN_ID}/attempts/${REHEARSAL_RUN_ATTEMPT}/jobs?per_page=100" > "$RUNNER_TEMP/rehearsal-jobs.json"
+          approval_ruleset_id="$(gh api "repos/${REPOSITORY}/rulesets" --jq '.[] | select(.name == "release-approvals-protection") | .id')"
+          tag_ruleset_id="$(gh api "repos/${REPOSITORY}/rulesets" --jq '.[] | select(.name == "release-tags-protection") | .id')"
+          test -n "$approval_ruleset_id"
+          test -n "$tag_ruleset_id"
+          gh api "repos/${REPOSITORY}/rulesets/${approval_ruleset_id}" > "$RUNNER_TEMP/approval-ruleset.json"
+          gh api "repos/${REPOSITORY}/rulesets/${tag_ruleset_id}" > "$RUNNER_TEMP/tag-ruleset.json"
+          mkdir "$RUNNER_TEMP/rehearsal"
+          gh run download "$REHEARSAL_RUN_ID" --repo "$REPOSITORY" --name "verified-release-${VERSION}" --dir "$RUNNER_TEMP/rehearsal"
+
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const { parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
+          const approval = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`, "utf8"));
+          const run = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-run.json`, "utf8"));
+          const jobs = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-jobs.json`, "utf8")).jobs;
+          const rehearsalPath = `${process.env.RUNNER_TEMP}/rehearsal/REHEARSAL-MANIFEST.json`;
+          const rehearsalRaw = fs.readFileSync(rehearsalPath);
+          const rehearsal = JSON.parse(rehearsalRaw);
+          const digest = crypto.createHash("sha256").update(rehearsalRaw).digest("hex");
+          if (digest !== approval.manifest_sha256 || digest !== process.env.REHEARSAL_MANIFEST_SHA) throw new Error("rehearsal manifest digest mismatch");
+          const workflowPath = typeof run.path === "string" ? run.path.split("@", 1)[0] : "";
+          if (run.id !== approval.rehearsal.run_id || run.run_attempt !== approval.rehearsal.run_attempt || run.event !== "workflow_dispatch" || run.status !== "completed" || run.conclusion !== "success" || run.head_sha !== process.env.CANDIDATE_SHA || workflowPath !== ".github/workflows/release.yml") throw new Error("rehearsal workflow evidence mismatch");
+          const requireSuccessfulJob = (name, label) => {
+            const job = jobs.find((candidate) => candidate.name === name);
+            if (!job || job.status !== "completed" || job.conclusion !== "success" || !job.runner_name || !(job.labels ?? []).includes(label)) {
+              throw new Error(`missing successful ${name} job on ${label}`);
+            }
+          };
+          requireSuccessfulJob("Build — macOS (Apple Silicon)", "macos-15");
+          requireSuccessfulJob("Build — Windows (x64)", "windows-2025");
+          requireSuccessfulJob("Smoke — Windows NSIS", "windows-2025");
+          requireSuccessfulJob("Smoke — Windows MSI", "windows-2025");
+          if (run.updated_at !== approval.rehearsal.completed_at || Date.parse(approval.approval.approved_at) < Date.parse(approval.rehearsal.completed_at)) throw new Error("approval chronology mismatch");
+          const workflowDigest = crypto.createHash("sha256").update(fs.readFileSync(".github/workflows/release.yml")).digest("hex");
+          validateRehearsalBinding(approval, rehearsal, {
+            candidateSha: process.env.CANDIDATE_SHA,
+            runAttempt: run.run_attempt,
+            runId: run.id,
+            version: process.env.VERSION,
+            workflowSha256: workflowDigest,
+          });
+          if (approval.artifacts.length !== 3) throw new Error("exactly three artifacts are required");
+          const artifactKeys = "architecture,bytes,candidate_sha,format,name,platform,product_name,sha256,smoke,version";
+          const expected = new Set(["macos-aarch64:dmg:aarch64", "windows-x64:exe:x64", "windows-x64:msi:x64"]);
+          const expectedNames = new Set([
+            `SayKnow Kit_${process.env.VERSION}_aarch64.dmg`,
+            `SayKnow Kit_${process.env.VERSION}_x64-setup.exe`,
+            `SayKnow Kit_${process.env.VERSION}_x64_en-US.msi`,
+          ]);
+          for (const artifact of approval.artifacts) {
+            if (Object.keys(artifact).sort().join(",") !== artifactKeys) throw new Error("artifact keys are not exact");
+            if (!expected.delete(`${artifact.platform}:${artifact.format}:${artifact.architecture}`) || artifact.product_name !== "SayKnow Kit" || artifact.version !== process.env.VERSION || artifact.candidate_sha !== process.env.CANDIDATE_SHA || !/^[0-9a-f]{64}$/.test(artifact.sha256) || !Number.isInteger(artifact.bytes) || artifact.bytes <= 0) throw new Error("invalid artifact");
+            if (!expectedNames.delete(artifact.name) || path.basename(artifact.name) !== artifact.name) throw new Error("unexpected artifact name");
+            const expectedSmokeFormat = artifact.format === "exe" ? "nsis" : artifact.format;
+            if (Object.keys(artifact.smoke).sort().join(",") !== "format,installed,launched,os_build,runner,uninstalled" || artifact.smoke.format !== expectedSmokeFormat || !/^[A-Za-z0-9._-]+-[A-Za-z0-9._-]+$/.test(artifact.smoke.runner) || !/^[A-Za-z0-9._-]+$/.test(artifact.smoke.os_build) || artifact.smoke.installed !== true || artifact.smoke.launched !== true || artifact.smoke.uninstalled !== true) throw new Error("invalid smoke evidence");
+            if (artifact.platform === "macos-aarch64" && !artifact.smoke.runner.toLowerCase().startsWith("macos")) throw new Error("macOS smoke runner mismatch");
+            if (artifact.platform === "windows-x64" && !artifact.smoke.runner.toLowerCase().startsWith("win")) throw new Error("Windows smoke runner mismatch");
+            const downloaded = path.join(process.env.RUNNER_TEMP, "rehearsal", artifact.name);
+            if (!fs.existsSync(downloaded) || fs.statSync(downloaded).size !== artifact.bytes) throw new Error(`artifact size mismatch: ${artifact.name}`);
+            const artifactDigest = crypto.createHash("sha256").update(fs.readFileSync(downloaded)).digest("hex");
+            if (artifactDigest !== artifact.sha256) throw new Error(`artifact digest mismatch: ${artifact.name}`);
+          }
+          if (expected.size) throw new Error("artifact set is incomplete");
+          if (expectedNames.size) throw new Error("artifact names are incomplete");
+          const rehearsalDirectory = path.join(process.env.RUNNER_TEMP, "rehearsal");
+          const expectedFiles = new Set([
+            ...approval.artifacts.map((artifact) => artifact.name),
+            "BUILD-PROVENANCE.txt",
+            "REHEARSAL-MANIFEST.json",
+            "SHA256SUMS.txt",
+          ]);
+          const actualFiles = fs.readdirSync(rehearsalDirectory).sort();
+          if (JSON.stringify(actualFiles) !== JSON.stringify([...expectedFiles].sort())) throw new Error("rehearsal artifact file set is not exact");
+          const checksumText = fs.readFileSync(path.join(rehearsalDirectory, "SHA256SUMS.txt"), "utf8");
+          const checksumEntries = parseChecksums(checksumText);
+          if (checksumEntries.size !== approval.artifacts.length) throw new Error("checksum entry count mismatch");
+          for (const artifact of approval.artifacts) {
+            if (checksumEntries.get(artifact.name) !== artifact.sha256) throw new Error(`checksum file mismatch: ${artifact.name}`);
+          }
+          const expectedChecksumText = ["dmg", "msi", "exe"]
+            .map((format) => approval.artifacts.find((artifact) => artifact.format === format))
+            .map((artifact) => `${artifact.sha256}  ${artifact.name}\n`)
+            .join("");
+          if (checksumText !== expectedChecksumText) throw new Error("checksum file bytes are not canonical");
+          const provenance = fs.readFileSync(path.join(rehearsalDirectory, "BUILD-PROVENANCE.txt"), "utf8");
+          const expectedProvenance =
+            `candidate_sha=${process.env.CANDIDATE_SHA}\n` +
+            `version=${process.env.VERSION}\n` +
+            `run_id=${run.id}\n` +
+            `run_attempt=${run.run_attempt}\n` +
+            "macos_signing=adhoc\n" +
+            "macos_developer_id=false\n" +
+            "macos_notarized=false\n" +
+            "windows_signing=unsigned\n";
+          if (provenance !== expectedProvenance) throw new Error("build provenance bytes are not exact");
+          const message = fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-tag-message.txt`, "utf8");
+          for (const binding of [
+            `version=${process.env.VERSION}`,
+            `candidate_sha=${process.env.CANDIDATE_SHA}`,
+            `manifest_sha256=${approval.manifest_sha256}`,
+            `approver_login=${approval.approval.approver_login}`,
+            `approved_at=${approval.approval.approved_at}`,
+          ]) {
+            if (!message.split(/\\r?\\n/).includes(binding)) throw new Error(`approval tag is missing ${binding}`);
+          }
+          validateRuleset(JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-ruleset.json`, "utf8")), {
+            name: "release-approvals-protection",
+            target: "branch",
+            patterns: ["refs/heads/release-approvals"],
+            rules: ["creation", "update", "deletion", "non_fast_forward", "required_linear_history", "required_signatures", "pull_request"],
+            pullRequest: {
+              allowed_merge_methods: ["squash", "rebase"],
+              dismiss_stale_reviews_on_push: true,
+              require_code_owner_review: true,
+              require_last_push_approval: false,
+              required_approving_review_count: 1,
+              required_review_thread_resolution: true,
+            },
+          });
+          validateRuleset(JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/tag-ruleset.json`, "utf8")), {
+            name: "release-tags-protection",
+            target: "tag",
+            patterns: ["refs/tags/v*", "refs/tags/release-approval/**"],
+            rules: ["creation", "update", "deletion", "non_fast_forward"],
+          });
+          NODE
+
+      - name: Stage authenticated rehearsal assets for the release jobs
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: approved-release-assets
+          path: ${{ runner.temp }}/rehearsal/*
+          if-no-files-found: error
+          retention-days: 1
+
   build:
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14            # Apple Silicon runner
+          - platform: macos-15
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
+            artifact: bundle-macos-aarch64
             label: macOS (Apple Silicon)
-          - platform: windows-latest
+          - platform: windows-2025
             target: x86_64-pc-windows-msvc
             args: ""
+            artifact: bundle-windows-x64
             label: Windows (x64)
 
     runs-on: ${{ matrix.platform }}
     name: Build — ${{ matrix.label }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+          persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 9
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: lts/*
           cache: pnpm
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: ${{ matrix.target }}
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ./src-tauri -> target
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
 
-      - name: Install frontend deps
+      - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # Fail the release build if Cargo.lock would drift from the tag's
-      # manifests, so hosted runners can't silently regenerate a lockfile and
-      # ship artifacts that don't match the tagged source.
-      - name: Lockfile must match manifests (--locked)
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - name: Frontend lint
+        run: pnpm lint
 
-      - name: Build & release
-        uses: tauri-apps/tauri-action@v0
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Frontend production build
+        run: pnpm build
+
+      - name: Rust quality gates
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build installers without writing a GitHub Release
+        id: tauri
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.target == 'aarch64-apple-darwin' && '-' || '' }}
         with:
-          # When triggered by a tag (v*.*.*), tauri-action creates a draft Release
-          # and uploads the platform artifacts to it. On workflow_dispatch (no tag),
-          # it just builds and uploads to the workflow artifact storage.
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('SayKnow Kit {0}', github.ref_name) || '' }}
-          releaseBody: |
-            See [README](https://github.com/jaybeyond/sayknow-kit#readme) for usage.
-
-            ### Downloads
-            - **macOS (Apple Silicon)**: `.dmg`
-            - **Windows (x64)**: `.exe` (NSIS installer) and `.msi`
-
-            ### macOS first launch
-            The build is unsigned. Either right-click → Open, or:
-            ```bash
-            xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
-            ```
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify final macOS DMG contents and ad-hoc posture
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          dmg="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
+          test -n "$dmg"
+          mount="$RUNNER_TEMP/sayknow-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          app="$mount/SayKnow Kit.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" = true
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSQuitAlwaysKeepsWindows' "$app/Contents/Info.plist")" = false
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = com.sayknow.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "${{ needs.preflight.outputs.version }}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "SayKnow Kit"
+          test "$(lipo -archs "$app/Contents/MacOS/sayknow")" = arm64
+          codesign -dv --verbose=4 "$app" 2> "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Signature=adhoc' "$RUNNER_TEMP/codesign.txt"
+          grep -q '^TeamIdentifier=not set' "$RUNNER_TEMP/codesign.txt"
+          if grep -q '^Authority=' "$RUNNER_TEMP/codesign.txt"; then
+            echo "Unexpected distribution signature in approved unsigned release" >&2
+            exit 1
+          fi
+          install_root="$RUNNER_TEMP/sayknow-install"
+          mkdir -p "$install_root"
+          ditto "$app" "$install_root/SayKnow Kit.app"
+          "$install_root/SayKnow Kit.app/Contents/MacOS/sayknow" > "$RUNNER_TEMP/sayknow-launch.log" 2>&1 &
+          app_pid=$!
+          sleep 5
+          kill -0 "$app_pid"
+          kill "$app_pid"
+          wait "$app_pid" || true
+          rm -rf "$install_root"
+          test ! -e "$install_root/SayKnow Kit.app"
+          os_build="$(sw_vers -buildVersion)"
+          test -n "${ImageOS:-}"
+          test -n "${ImageVersion:-}"
+          RUNNER_IMAGE="${ImageOS}-${ImageVersion}" OS_BUILD="$os_build" node -e 'const fs=require("fs"); fs.writeFileSync(process.env.RUNNER_TEMP + "/sayknow-smoke-macos.json", JSON.stringify({format:"dmg",runner:process.env.RUNNER_IMAGE,os_build:process.env.OS_BUILD,installed:true,launched:true,uninstalled:true}))'
+
+      - name: Verify final Windows installers are unsigned
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $installers = @(
+            Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe",
+                         "src-tauri/target/release/bundle/msi/*.msi"
+          )
+          if ($installers.Count -ne 2) {
+            throw "Expected one NSIS EXE and one MSI, found $($installers.Count)"
+          }
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature $installer.FullName
+            if ($signature.Status -ne "NotSigned") {
+              throw "Expected unsigned installer $($installer.Name), got $($signature.Status)"
+            }
+          }
+
+      - name: Upload immutable platform bundles
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ steps.tauri.outputs.artifactPaths }}
+            ${{ runner.temp }}/sayknow-smoke-*.json
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [preflight, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: nsis
+            label: NSIS
+          - format: msi
+            label: MSI
+    runs-on: windows-2025
+    name: Smoke — Windows ${{ matrix.label }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle-windows-x64
+          path: built-assets
+
+      - name: Install, launch, and uninstall in isolation
+        shell: pwsh
+        env:
+          FORMAT: ${{ matrix.format }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          function Assert-Success([System.Diagnostics.Process] $process, [string] $operation) {
+            if ($process.ExitCode -notin 0, 3010) {
+              throw "$operation failed with exit code $($process.ExitCode)"
+            }
+          }
+          function Find-SayKnowExecutable {
+            $candidates = @(
+              "$env:LOCALAPPDATA\SayKnow Kit\SayKnow Kit.exe",
+              "$env:LOCALAPPDATA\SayKnow Kit\sayknow.exe",
+              "$env:LOCALAPPDATA\Programs\SayKnow Kit\SayKnow Kit.exe",
+              "$env:LOCALAPPDATA\Programs\SayKnow Kit\sayknow.exe",
+              "$env:ProgramFiles\SayKnow Kit\SayKnow Kit.exe",
+              "$env:ProgramFiles\SayKnow Kit\sayknow.exe"
+            )
+            return $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          function Assert-X64Binary([string] $executable) {
+            $bytes = [System.IO.File]::ReadAllBytes($executable)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) { throw "Installed executable is not x64: 0x$($machine.ToString('x4'))" }
+            $version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
+            if ($version.FileVersion -ne $env:VERSION) {
+              throw "Installed executable file version $($version.FileVersion) is not $env:VERSION"
+            }
+            if ($version.ProductVersion -ne $env:VERSION) {
+              throw "Installed executable product version $($version.ProductVersion) is not $env:VERSION"
+            }
+          }
+          $pattern = if ($env:FORMAT -eq "nsis") { "*-setup.exe" } else { "*.msi" }
+          $installers = @(Get-ChildItem "built-assets" -Recurse -File -Filter $pattern)
+          if ($installers.Count -ne 1) { throw "Expected one $env:FORMAT installer, found $($installers.Count)" }
+          $installer = $installers[0]
+          if ($env:FORMAT -eq "nsis") {
+            $install = Start-Process $installer.FullName -ArgumentList "/S" -Wait -PassThru
+          } else {
+            $quotedInstaller = '"' + $installer.FullName + '"'
+            $install = Start-Process msiexec.exe -ArgumentList "/i $quotedInstaller /qn /norestart" -Wait -PassThru
+          }
+          Assert-Success $install "$env:FORMAT install"
+          $executable = Find-SayKnowExecutable
+          if (-not $executable) { throw "Installed SayKnow Kit executable was not found" }
+          Assert-X64Binary $executable
+          $process = Start-Process $executable -PassThru
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) { throw "SayKnow Kit exited during launch smoke" }
+          Stop-Process -Id $process.Id -Force
+          $process.WaitForExit()
+          if ($env:FORMAT -eq "nsis") {
+            $uninstaller = Join-Path (Split-Path $executable) "uninstall.exe"
+            if (-not (Test-Path $uninstaller)) { throw "NSIS uninstaller was not found" }
+            $uninstall = Start-Process $uninstaller -ArgumentList "/S" -Wait -PassThru
+          } else {
+            $uninstall = Start-Process msiexec.exe -ArgumentList "/x $quotedInstaller /qn /norestart" -Wait -PassThru
+          }
+          Assert-Success $uninstall "$env:FORMAT uninstall"
+          Start-Sleep -Seconds 2
+          if (Test-Path $executable) { throw "$env:FORMAT uninstall left the application installed" }
+          if (-not $env:ImageOS -or -not $env:ImageVersion) {
+            throw "GitHub runner image provenance is unavailable"
+          }
+          @{
+            format = $env:FORMAT
+            runner = "$env:ImageOS-$env:ImageVersion"
+            os_build = (Get-CimInstance Win32_OperatingSystem).BuildNumber
+            installed = $true
+            launched = $true
+            uninstalled = $true
+          } | ConvertTo-Json -Compress | Set-Content "$env:RUNNER_TEMP/sayknow-smoke-windows-$env:FORMAT.json" -Encoding utf8NoBOM
+
+      - name: Upload isolated smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smoke-windows-${{ matrix.format }}
+          path: ${{ runner.temp }}/sayknow-smoke-windows-${{ matrix.format }}.json
+          if-no-files-found: error
+          retention-days: 14
+  verify:
+    needs: [preflight, build, windows-smoke]
+    if: always() && needs.preflight.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.windows-smoke.result == 'success' || needs.windows-smoke.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          pattern: bundle-*
+          path: built-assets
+          merge-multiple: true
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          pattern: smoke-windows-*
+          path: built-assets
+          merge-multiple: true
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: github.event_name == 'push'
+        with:
+          name: approved-release-assets
+          path: built-assets
+
+      - name: Verify exact artifact set and write checksums
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_SHA256: ${{ needs.preflight.outputs.workflow_sha256 }}
+        run: |
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const root = "built-assets";
+          const output = "release-assets";
+          const files = [];
+          const walk = (directory) => {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const fullPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) walk(fullPath);
+              else files.push(fullPath);
+            }
+          };
+          const { canonicalize } = require("./.github/scripts/release-validation.cjs");
+          const sha256 = (source) => crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
+          walk(root);
+          const matches = (suffix) => files.filter((name) => name.toLowerCase().endsWith(suffix));
+          const exactlyOne = (values, label) => {
+            if (values.length !== 1) throw new Error(`expected one ${label}; got ${JSON.stringify(values)}`);
+            return values[0];
+          };
+          const dmg = exactlyOne(matches(".dmg"), "DMG");
+          const msi = exactlyOne(matches(".msi"), "MSI");
+          const exe = exactlyOne(matches("-setup.exe"), "setup EXE");
+          const macSmoke = JSON.parse(fs.readFileSync(exactlyOne(matches("sayknow-smoke-macos.json"), "macOS smoke record"), "utf8"));
+          const nsisSmoke = JSON.parse(fs.readFileSync(exactlyOne(matches("sayknow-smoke-windows-nsis.json"), "Windows NSIS smoke record"), "utf8"));
+          const msiSmoke = JSON.parse(fs.readFileSync(exactlyOne(matches("sayknow-smoke-windows-msi.json"), "Windows MSI smoke record"), "utf8"));
+          for (const smoke of [macSmoke, nsisSmoke, msiSmoke]) {
+            if (Object.keys(smoke).sort().join(",") !== "format,installed,launched,os_build,runner,uninstalled" || !["dmg", "nsis", "msi"].includes(smoke.format) || !smoke.runner || !smoke.os_build || smoke.installed !== true || smoke.launched !== true || smoke.uninstalled !== true) {
+              throw new Error(`invalid smoke evidence: ${JSON.stringify(smoke)}`);
+            }
+          }
+          if (macSmoke.format !== "dmg" || nsisSmoke.format !== "nsis" || msiSmoke.format !== "msi") {
+            throw new Error("smoke evidence format mismatch");
+          }
+          fs.mkdirSync(output);
+          const describe = (source, platform, format, architecture, smoke) => {
+            const name = path.basename(source);
+            if (!name.includes(process.env.VERSION)) throw new Error(`${name} does not contain ${process.env.VERSION}`);
+            fs.copyFileSync(source, path.join(output, name));
+            return {
+              architecture,
+              bytes: fs.statSync(source).size,
+              candidate_sha: process.env.CANDIDATE_SHA,
+              format,
+              name,
+              platform,
+              product_name: "SayKnow Kit",
+              sha256: sha256(source),
+              smoke,
+              version: process.env.VERSION,
+            };
+          };
+          const artifacts = [
+            describe(dmg, "macos-aarch64", "dmg", "aarch64", macSmoke),
+            describe(exe, "windows-x64", "exe", "x64", nsisSmoke),
+            describe(msi, "windows-x64", "msi", "x64", msiSmoke),
+          ];
+          const rehearsal = {
+            artifacts,
+            candidate_sha: process.env.CANDIDATE_SHA,
+            workflow_sha256: process.env.WORKFLOW_SHA256,
+            run_attempt: Number(process.env.RUN_ATTEMPT),
+            run_id: Number(process.env.RUN_ID),
+            schema: "sayknow.rehearsal/v1",
+            signing_posture: { macos: "adhoc", windows: "unsigned" },
+            version: process.env.VERSION,
+          };
+          fs.writeFileSync(path.join(output, "REHEARSAL-MANIFEST.json"), canonicalize(rehearsal));
+          fs.writeFileSync(path.join(output, "BUILD-PROVENANCE.txt"),
+            `candidate_sha=${process.env.CANDIDATE_SHA}\nversion=${process.env.VERSION}\nrun_id=${process.env.RUN_ID}\nrun_attempt=${process.env.RUN_ATTEMPT}\nmacos_signing=adhoc\nmacos_developer_id=false\nmacos_notarized=false\nwindows_signing=unsigned\n`);
+          console.log(artifacts);
+          NODE
+          cd release-assets
+          sha256sum *.dmg *.msi *-setup.exe > SHA256SUMS.txt
+
+
+      - name: Reuse the byte-identical approved rehearsal assets
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir release-assets
+          cp -R built-assets/. release-assets/
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-release-${{ needs.preflight.outputs.version }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    if: github.event_name == 'push'
+    needs: [preflight, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-release-${{ needs.preflight.outputs.version }}
+          path: release-assets
+
+      - name: Create one draft after aggregate verification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## Downloads
+          - **macOS (Apple Silicon)**: `.dmg`
+          - **Windows (x64)**: `.exe` (NSIS) or `.msi`
+
+          ## Security notice
+          The macOS app uses an **ad-hoc signature only** (no Developer ID or notarization), and the Windows installers are **unsigned** (no Authenticode). macOS Gatekeeper and Windows SmartScreen will show a warning. Download only from this official GitHub repository and verify the included `SHA256SUMS.txt` before opening an installer.
+
+          ### macOS first launch
+          Move SayKnow Kit to Applications, then right-click it and choose **Open**. If macOS still blocks it:
+          ```bash
+          xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
+          ```
+
+          CPU temperature is shown only when the operating system exposes a verified, unprivileged CPU-package sensor. Unsupported systems display “Unavailable” instead of estimating a value.
+          NOTES
+          gh release create "$TAG" release-assets/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ needs.preflight.outputs.candidate_sha }}" \
+            --title "SayKnow Kit v${VERSION}" \
+            --notes-file release-notes.md \
+            --draft

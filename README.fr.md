@@ -10,7 +10,7 @@
 
 [한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français** · [Deutsch](README.de.md) · [Tiếng Việt](README.vi.md)
 
-[![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-11.0%2B-black?logo=apple)](https://www.apple.com/macos/) · [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://www.microsoft.com/windows/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -20,28 +20,28 @@
 
 ## Aperçu
 
-SayKnow Kit vit dans la **barre de menu macOS**. Un raccourci ouvre une petite fenêtre contenant les trois outils du quotidien : **traduction** (déclenchée dès que vous arrêtez de taper), **chat** et **historique du presse-papiers**. Plus besoin de jongler entre onglets et copier-coller.
+SayKnow Kit fonctionne sur macOS et Windows : il apparaît dans la **barre de menu macOS** ou la **zone de notification Windows**. Un raccourci ouvre une petite fenêtre avec les trois outils du quotidien : **traduction**, **chat** et **historique du presse-papiers**.
 
 **Trois fournisseurs** dans la même fenêtre (OpenRouter / OCP / endpoint personnalisé). OpenRouter seul donne déjà accès à plus de 360 modèles (GPT-4o, Claude, Gemini, Llama, ...) avec une unique clé.
 
 ## Fonctionnalités
 
-- 🌞 **Onglet outils** — luminosité de tous les écrans connectés au niveau matériel (DDC/CI pour les externes, IOKit pour l'intégré quand c'est permis) et marche/arrêt des écrans externes (veille DDC)
-- 🌞 **Onglet outils** — luminosité de tous les écrans connectés au niveau matériel (DDC/CI pour les externes, IOKit pour l'intégré quand c'est permis) et marche/arrêt des écrans externes (veille DDC)
+- 🌞 **Onglet outils** — sur macOS, contrôle la luminosité (DDC/CI pour les écrans externes ; IOKit pour le rétroéclairage intégré lorsqu'il est pris en charge). Sur les Mac récents compatibles où IOKit n'est pas disponible, l'automatisation d'Accessibilité du Centre de contrôle est utilisée. IOKit et cette automatisation sont réservés à macOS ; les capacités DDC varient selon le matériel.
+- 📊 **État du système** — CPU, mémoire et disque système ; la température du package CPU est « indisponible » dans la v0.2.4, faute d'adaptateur de température vérifié, ainsi que sur les systèmes non pris en charge.
 - 📊 **Onglet usage** — Claude Code, Codex et SayKnow CLI lus dans les journaux de session qu'ils écrivent déjà en local. Affiche le bloc de facturation de 5 h (temps restant, rythme de consommation) et les pourcentages réels 5 h et hebdomadaires enregistrés par la CLI, avec leur heure de réinitialisation. Une fenêtre déjà réinitialisée est barrée, jamais présentée comme votre niveau actuel. Sans réseau ni connexion supplémentaire
 - 📋 **Onglet presse-papiers** — historique capturé en arrière-plan, cherchable sur le texte et les notes, avec épinglage, envoi vers la traduction et effacement à deux niveaux. Vides, chaînes de type OTP et blocs de clé PEM ne sont jamais stockés
-- 💬 **Onglet Chat** — Q&R léger dans la même fenêtre, barre latérale multi-conversation, actions par message : régénérer / éditer / copier / arrêter
+- 💬 **Onglet Chat** — questions-réponses légères dans la même fenêtre, barre latérale multi-conversation, actions par message : régénérer / éditer / copier / arrêter
 - 🤖 **Multi-fournisseur** — OpenRouter / OCP / tout endpoint compatible OpenAI
 - 📦 **Installation OCP en un clic** — l'app lance `git clone → npm install → setup.mjs` pour vous, logs en direct
 - 📐 **Mode compact horizontal** — 720×240 côte à côte, conçu pour rester ouvert en permanence
 - 🪟 **Bascule de taille** — compact ↔ normal depuis l'en-tête
 - ⚡ **Traduction automatique** — 1,5 s après l'arrêt de la frappe
-- ⌨️ **Mode manuel** — seulement sur `⌘⏎` ou le bouton (économise les tokens)
+- ⌨️ **Mode manuel** — seulement avec `⌘⏎` (macOS), `Ctrl+Enter` (Windows) ou le bouton (économise les tokens)
 - 🪄 **Affiner** — Formel / Décontracté / Plus court / Pro / Littéral + prompt libre
 - 🌐 **OpenRouter BYOK** — recherche dans 360+ modèles
 - 🔁 **Modèle de secours** — OpenRouter bascule si le principal échoue
 - ⏹ **Arrêter** — annule un appel en cours
-- 📋 **Coller automatique** — `⌘⇧T` remplit l'entrée depuis le presse-papiers
+- 📋 **Coller automatiquement** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) remplit l'entrée depuis le presse-papiers
 - 🕘 **Historique** — recherche, épingler des entrées
 - 📌 **Épingler la fenêtre** — désactive l'auto-masquage
 - 📚 **Glossaire** — traductions cohérentes pour les noms propres
@@ -50,24 +50,33 @@ SayKnow Kit vit dans la **barre de menu macOS**. Un raccourci ouvre une petite f
 - 🌓 **Clair / sombre / système**
 - 🌍 **8 langues d'interface** — détection auto
 - 🔄 **36 langues de traduction**
-- 🔒 **macOS Keychain** — clé API chiffrée AES-256
+- 🔒 **Stockage sécurisé** — identifiants dans le stockage système (macOS Keychain / Windows Credential Manager)
 
 ## Prérequis
 
-- macOS 11.0 (Big Sur) ou plus récent
-- Apple Silicon (aarch64)
+- macOS 11.0 (Big Sur) ou plus récent sur Apple Silicon (aarch64)
+- Windows 10/11 x64
 - Clé API OpenRouter — [openrouter.ai/keys](https://openrouter.ai/keys)
 
 ## Installation
 
-### Option 1 — DMG (recommandé)
+### macOS — DMG
 
-1. Téléchargez `SayKnow Kit_x.x.x_aarch64.dmg` depuis [Releases](https://github.com/jaybeyond/sayknow-kit/releases).
-2. Ouvrez le DMG, glissez SayKnow Kit.app dans `/Applications`.
-3. Build non signée, Gatekeeper bloquera au premier lancement :
-   ```bash
-   xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
-   ```
+1. Téléchargez le DMG macOS aarch64 depuis la [version officielle GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
+2. Ouvrez le DMG et glissez SayKnow Kit.app dans `/Applications`.
+3. L’application v0.2.4 utilise uniquement une signature **ad hoc**, sans Developer ID ni notarisation ; les avertissements Gatekeeper sont attendus.
+4. Vérifiez `SHA256SUMS.txt` publié avec la version.
+
+### Windows — EXE ou MSI
+
+1. Téléchargez l'installateur NSIS `.exe` ou l'installateur MSI `.msi` x64 depuis GitHub Releases officiel.
+2. Windows SmartScreen peut avertir car v0.2.4 n'est pas signé ; c'est normal. Aucun Authenticode.
+3. Vérifiez `SHA256SUMS.txt`, puis lancez l'assistant.
+4. Désinstallez via **Paramètres → Applications → Applications installées → SayKnow Kit → Désinstaller**.
+
+Sur macOS, désinstallez en supprimant SayKnow Kit.app de `/Applications` et, si nécessaire, ses données du Keychain.
+
+Téléchargez uniquement depuis la [version officielle GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
 
 ### Option 2 — Build depuis les sources
 
@@ -80,17 +89,17 @@ pnpm tauri build
 
 ## Utilisation
 
-1. Une petite icône apparaît dans la barre de menu (à côté de l'horloge). Pas dans le Dock.
-2. Clic sur l'icône → entrez la clé OpenRouter → **Connecter & démarrer**.
-3. La clé est sauvée dans macOS Keychain.
-4. Clic sur l'icône ou `⌘⇧T` → tapez → traduction automatique 1,5 s plus tard.
+1. Une icône apparaît dans la barre de menu macOS ou la zone de notification Windows ; l'application y reste accessible.
+2. Cliquez sur l'icône → saisissez la clé OpenRouter → **Connecter & démarrer**. Elle est enregistrée dans le stockage d'identifiants du système.
+3. Cliquez sur l'icône ou utilisez `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) pour ouvrir la fenêtre → tapez → traduction automatique après 1,5 s.
 
 ### Raccourcis
 
 | Raccourci | Action |
 |---|---|
-| `⌘⇧T` | Ouvrir/fermer la fenêtre (global) |
-| `⌘⏎` | Traduire immédiatement (mode manuel) |
+| `⌘⇧T` (macOS) | Ouvrir/fermer la fenêtre (global) |
+| `Ctrl+Shift+T` (Windows) | Ouvrir/fermer la fenêtre (global) |
+| `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Traduire immédiatement (mode manuel) |
 
 ### Réglages (fenêtre séparée)
 
@@ -104,11 +113,12 @@ pnpm tauri build
 
 ## Sécurité
 
-Votre clé API OpenRouter est une donnée facturable, jamais stockée en clair :
+La clé API OpenRouter est une donnée facturable et est conservée uniquement dans le stockage sécurisé du système :
 
-- macOS **Keychain** (`com.sayknow.app`)
-- Chiffrement AES-256 dérivé du mot de passe de session macOS
-- Toute autre app qui tente de lire la clé déclenche une invite système
+- macOS **Keychain** et Windows **Credential Manager**
+- Jamais en clair et jamais dérivée du mot de passe de session
+- Téléchargez depuis GitHub Releases officiel et vérifiez `SHA256SUMS.txt`
+- L’application macOS v0.2.4 est signée ad hoc, sans Developer ID ni notarisation ; les installateurs Windows ne sont pas signés avec Authenticode. Les avertissements Gatekeeper et SmartScreen sont attendus.
 
 ## Licence
 

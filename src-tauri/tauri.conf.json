@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SayKnow Kit",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "com.sayknow.app",
   "build": {
     "frontendDist": "../dist",
@@ -49,7 +49,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

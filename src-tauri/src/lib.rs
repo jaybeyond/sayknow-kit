@@ -4,6 +4,7 @@ mod accessibility_backlight;
 mod display;
 mod clipboard;
 
+mod system_metrics;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -1526,6 +1527,7 @@ pub fn run() {
             tray_positioned: AtomicBool::new(false),
             logical_width: Mutex::new(480.0),
         })
+        .manage(system_metrics::SystemMetricsService::new())
         .invoke_handler(tauri::generate_handler![
             get_api_key,
             set_api_key,
@@ -1565,7 +1567,8 @@ pub fn run() {
             display::request_accessibility_permission,
             display::set_display_power,
             display::sync_builtin_brightness,
-            agent_usage::agent_usage
+            agent_usage::agent_usage,
+            system_metrics::get_system_metrics,
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");

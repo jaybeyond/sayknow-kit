@@ -1,12 +1,12 @@
 [package]
 name = "sayknow"
-version = "0.2.3"
+version = "0.2.4"
 description = "SayKnow Kit — menu bar AI kit for translation, chat, and clipboard"
 authors = ["SayKnow"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88.0"
 
 [lib]
 name = "sayknow_lib"
@@ -26,13 +26,19 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-http = "2"
-keyring = { version = "3", features = ["apple-native"] }
+keyring = "3"
 ddc-hi = "0.4"
+sysinfo = { version = "=0.30.13", default-features = false }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
 
 # macOS-only: used by the gamma/backlight registry reads. A plain
 # [dependencies] entry breaks the Windows build (std::os::unix).
 [target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
 core-foundation = "0.9"
 # NX event parsing: the tap callback receives CGEvent, and the NX data1
 # field is only exposed through NSEvent. Already in the graph via wry.
 objc2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
