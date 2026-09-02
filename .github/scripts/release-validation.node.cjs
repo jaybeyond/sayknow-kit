@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   canonicalize,
+  hasExactLines,
   isUtcRfc3339,
   parseChecksums,
   validateRehearsalBinding,
@@ -78,6 +79,12 @@ test("UTC RFC3339 validation accepts GitHub and ISO timestamps", () => {
   assert.equal(isUtcRfc3339("2026-09-02T15:11:10Z"), true);
   assert.equal(isUtcRfc3339("2026-09-02T15:12:52.309Z"), true);
   assert.equal(isUtcRfc3339("2026-09-02 15:11:10Z"), false);
+});
+
+test("tag message matching uses real LF and CRLF line boundaries", () => {
+  assert.equal(hasExactLines("version=0.2.5\ncandidate=abc\n", ["version=0.2.5", "candidate=abc"]), true);
+  assert.equal(hasExactLines("version=0.2.5\r\ncandidate=abc\r\n", ["candidate=abc"]), true);
+  assert.equal(hasExactLines("version=0.2.5\\ncandidate=abc", ["candidate=abc"]), false);
 });
 
 test("checksum parser rejects malformed and duplicate entries", () => {

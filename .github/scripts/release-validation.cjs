@@ -12,6 +12,11 @@ function isUtcRfc3339(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value);
 }
 
+function hasExactLines(text, expectedLines) {
+  const lines = text.split(/\r?\n/);
+  return expectedLines.every((line) => lines.includes(line));
+}
+
 function parseChecksums(text) {
   const entries = new Map();
   const lines = text.trim().split(/\r?\n/);
@@ -72,4 +77,4 @@ function validateRehearsalBinding(approval, rehearsal, context) {
   }
 }
 
-module.exports = { canonicalize, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset };
+module.exports = { canonicalize, hasExactLines, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset };

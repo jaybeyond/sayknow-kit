@@ -161,7 +161,7 @@ jobs:
           const crypto = require("crypto");
           const fs = require("fs");
           const path = require("path");
-          const { parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
+          const { hasExactLines, parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
           const approval = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`, "utf8"));
           const run = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-run.json`, "utf8"));
           const jobs = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-jobs.json`, "utf8")).jobs;
@@ -246,15 +246,14 @@ jobs:
             "windows_signing=unsigned\n";
           if (provenance !== expectedProvenance) throw new Error("build provenance bytes are not exact");
           const message = fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-tag-message.txt`, "utf8");
-          for (const binding of [
+          const bindings = [
             `version=${process.env.VERSION}`,
             `candidate_sha=${process.env.CANDIDATE_SHA}`,
             `manifest_sha256=${approval.manifest_sha256}`,
             `approver_login=${approval.approval.approver_login}`,
             `approved_at=${approval.approval.approved_at}`,
-          ]) {
-            if (!message.split(/\\r?\\n/).includes(binding)) throw new Error(`approval tag is missing ${binding}`);
-          }
+          ];
+          if (!hasExactLines(message, bindings)) throw new Error("approval tag is missing required bindings");
           validateRuleset(JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-ruleset.json`, "utf8")), {
             name: "release-approvals-protection",
             target: "branch",
