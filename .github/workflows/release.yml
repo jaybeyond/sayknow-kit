@@ -296,12 +296,10 @@ jobs:
           - platform: macos-15
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-            artifact: bundle-macos-aarch64
             label: macOS (Apple Silicon)
           - platform: windows-2025
             target: x86_64-pc-windows-msvc
             args: ""
-            artifact: bundle-windows-x64
             label: Windows (x64)
 
     runs-on: ${{ matrix.platform }}
@@ -346,7 +344,6 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Build installers without writing a GitHub Release
-        id: tauri
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.target == 'aarch64-apple-darwin' && '-' || '' }}
@@ -411,13 +408,25 @@ jobs:
             }
           }
 
-      - name: Upload immutable platform bundles
+      - name: Upload immutable macOS bundle
+        if: matrix.target == 'aarch64-apple-darwin'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ matrix.artifact }}
+          name: bundle-macos-aarch64
           path: |
-            ${{ steps.tauri.outputs.artifactPaths }}
-            ${{ runner.temp }}/sayknow-smoke-*.json
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            ${{ runner.temp }}/sayknow-smoke-macos.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload immutable Windows bundle
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 14
 
