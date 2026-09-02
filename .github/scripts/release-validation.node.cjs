@@ -17,19 +17,19 @@ const artifact = {
   bytes: 42,
   candidate_sha: "b".repeat(40),
   format: "dmg",
-  name: "SayKnow Kit_0.2.6_aarch64.dmg",
+  name: "SayKnow Kit_0.2.7_aarch64.dmg",
   platform: "macos-aarch64",
   product_name: "SayKnow Kit",
   sha256: digest,
   smoke: { format: "dmg", installed: true, launched: true, os_build: "24E263", runner: "macos15-20260801", uninstalled: true },
-  version: "0.2.6",
+  version: "0.2.7",
 };
 const approval = { artifacts: [artifact], signing_posture: { macos: "adhoc", windows: "unsigned" } };
 const context = {
   candidateSha: artifact.candidate_sha,
   runAttempt: 1,
   runId: 123,
-  version: "0.2.6",
+  version: "0.2.7",
   workflowSha256: "c".repeat(64),
 };
 const rehearsal = {
@@ -82,9 +82,9 @@ test("UTC RFC3339 validation accepts GitHub and ISO timestamps", () => {
 });
 
 test("tag message matching uses real LF and CRLF line boundaries", () => {
-  assert.equal(hasExactLines("version=0.2.6\ncandidate=abc\n", ["version=0.2.6", "candidate=abc"]), true);
-  assert.equal(hasExactLines("version=0.2.6\r\ncandidate=abc\r\n", ["candidate=abc"]), true);
-  assert.equal(hasExactLines("version=0.2.6\\ncandidate=abc", ["candidate=abc"]), false);
+  assert.equal(hasExactLines("version=0.2.7\ncandidate=abc\n", ["version=0.2.7", "candidate=abc"]), true);
+  assert.equal(hasExactLines("version=0.2.7\r\ncandidate=abc\r\n", ["candidate=abc"]), true);
+  assert.equal(hasExactLines("version=0.2.7\\ncandidate=abc", ["candidate=abc"]), false);
 });
 
 test("checksum parser rejects malformed and duplicate entries", () => {

@@ -59,7 +59,7 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 - 🌞 **화면 밝기(macOS 전용)** — 외부 화면은 DDC/CI(HDMI/DP/USB-C), 지원되는 Mac 내장 패널은 IOKit 백라이트로 하드웨어 수준에서 제어합니다. 외부 DDC 기능은 하드웨어에 따라 다릅니다. IOKit 직접 접근을 사용할 수 없는 최신 지원 Mac에서는 macOS 제어 센터 접근성 UI 자동화를 사용하며, 두 내장 경로 모두 macOS 전용입니다.
 - 🔌 **화면 전원(macOS 전용)** — 외부 모니터를 DDC 대기로 끄고 켭니다.
 - 🎚️ **한 번에 전부** — 슬라이더 하나로 모든 화면을 함께, 또는 각각 조절
-- 📊 **시스템 상태** — 시스템 CPU·메모리·시스템 디스크를 표시합니다. v0.2.6에는 검증된 온도 어댑터가 없어 CPU 패키지 온도는 사용할 수 없음으로 표시합니다.
+- 📊 **시스템 상태** — 시스템 CPU·메모리·시스템 디스크를 표시합니다. v0.2.7에는 검증된 온도 어댑터가 없어 CPU 패키지 온도는 사용할 수 없음으로 표시합니다.
 - ⌨️ **키보드 친화적** — 슬라이더는 놓을 때 한 번만 커맨드를 보냅니다
 
 ### 프로바이더
@@ -86,13 +86,13 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 
 ## 설치
 
-### v0.2.6 공식 설치 프로그램 (권장)
+### v0.2.7 공식 설치 프로그램 (권장)
 
 [공식 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)에서만 다운로드하고 `SHA256SUMS.txt`로 확인하세요.
 
-**macOS (Apple Silicon):** `SayKnow Kit_0.2.6_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.2.6 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. Finder에서 우클릭 → **열기** → **열기**를 다시 선택하세요.
+**macOS (Apple Silicon):** `SayKnow Kit_0.2.7_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.2.7 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. Finder에서 우클릭 → **열기** → **열기**를 다시 선택하세요.
 
-**Windows (x64):** `SayKnow Kit_0.2.6_x64-setup.exe`(NSIS) 또는 `SayKnow Kit_0.2.6_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
+**Windows (x64):** `SayKnow Kit_0.2.7_x64-setup.exe`(NSIS) 또는 `SayKnow Kit_0.2.7_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
 
 ### 제거
 
@@ -162,7 +162,7 @@ OpenRouter API 키는 **청구되는 자격증명**이라 평문으로 저장하
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.2.6 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
+설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.2.7 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
 
 ## 개발 환경
 
