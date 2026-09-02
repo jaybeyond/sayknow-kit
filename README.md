@@ -60,7 +60,7 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 🔌 **Display power (macOS-specific)** — turn an external monitor off and back on (DDC standby); charging, audio and USB keep working
 - 🎚️ **One slider for all** — move every display at once, or adjust each on its own
 - 🔍 **Honest readouts** — a monitor that won't report brightness over DDC still adjusts; it just shows —
-- 📊 **System status** — system CPU, memory, and system disk; v0.2.4 has no verified temperature adapter, so CPU package temperature is shown as unavailable
+- 📊 **System status** — system CPU, memory, and system disk; v0.2.5 has no verified temperature adapter, so CPU package temperature is shown as unavailable
 - ⌨️ **Keyboard-friendly** — sliders commit on release, so one drag is one command
 ### Providers
 - 🌐 **OpenRouter BYOK** — searchable combobox over 360+ models, automatic fallback model retry
@@ -86,13 +86,13 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ## Install
 
-### v0.2.4 prebuilt installers (recommended)
+### v0.2.5 prebuilt installers (recommended)
 
 Download only from the [official GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases), and verify the matching file in `SHA256SUMS.txt`.
 
-**macOS (Apple Silicon):** Download `SayKnow Kit_0.2.4_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.2.4 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. In Finder, right-click the app → **Open** → **Open** again.
+**macOS (Apple Silicon):** Download `SayKnow Kit_0.2.5_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.2.5 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. In Finder, right-click the app → **Open** → **Open** again.
 
-**Windows (x64):** Download `SayKnow Kit_0.2.4_x64-setup.exe` (NSIS) or `SayKnow Kit_0.2.4_x64_en-US.msi`, run the installer, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
+**Windows (x64):** Download `SayKnow Kit_0.2.5_x64-setup.exe` (NSIS) or `SayKnow Kit_0.2.5_x64_en-US.msi`, run the installer, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
 
 ### Uninstall
 
@@ -162,7 +162,7 @@ Your OpenRouter key is a **billable credential**, so SayKnow Kit never stores it
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.2.4 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
+Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.2.5 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
 
 ## Development
 

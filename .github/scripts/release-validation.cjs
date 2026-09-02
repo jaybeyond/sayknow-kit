@@ -8,6 +8,10 @@ function canonicalize(value) {
   return JSON.stringify(value);
 }
 
+function isUtcRfc3339(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value);
+}
+
 function parseChecksums(text) {
   const entries = new Map();
   const lines = text.trim().split(/\r?\n/);
@@ -68,4 +72,4 @@ function validateRehearsalBinding(approval, rehearsal, context) {
   }
 }
 
-module.exports = { canonicalize, parseChecksums, validateRehearsalBinding, validateRuleset };
+module.exports = { canonicalize, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset };

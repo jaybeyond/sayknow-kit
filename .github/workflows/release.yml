@@ -13,7 +13,7 @@ on:
       version:
         description: Expected application version
         required: true
-        default: 0.2.4
+        default: 0.2.5
 
 permissions:
   contents: read
@@ -100,6 +100,7 @@ jobs:
           approval_tag="release-approval/v${VERSION}/${CANDIDATE_SHA}"
           approval_ref="refs/tags/${approval_tag}"
           approval_path=".github/release-approvals/v${VERSION}/${CANDIDATE_SHA}.json"
+          approval_branch="release-approvals/v${VERSION}/${CANDIDATE_SHA}"
           git fetch --no-tags origin "${approval_ref}:${approval_ref}"
           remote_approval_object="$(gh api "repos/${REPOSITORY}/git/ref/${approval_ref#refs/}" --jq .object.sha)"
           test "$(git rev-parse "$approval_ref")" = "$remote_approval_object"
@@ -107,8 +108,8 @@ jobs:
           approval_commit="$(git rev-parse "${approval_ref}^{}")"
           test "$(git rev-parse "${approval_commit}^")" = "$CANDIDATE_SHA"
           test "$(git diff --name-only "$CANDIDATE_SHA" "$approval_commit")" = "$approval_path"
-          git fetch --no-tags origin refs/heads/release-approvals:refs/remotes/origin/release-approvals
-          test "$(git rev-parse refs/remotes/origin/release-approvals)" = "$approval_commit"
+          git fetch --no-tags origin "refs/heads/${approval_branch}:refs/remotes/origin/${approval_branch}"
+          test "$(git rev-parse "refs/remotes/origin/${approval_branch}")" = "$approval_commit"
 
           cat > "$RUNNER_TEMP/allowed_signers" <<'KEY'
           jaybeyond ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDHz0L/TXXvkFNI3gc/3fQL7fUmrTblJF1vzba12d3KQcA8wsG70qvtju+9tmbG2uFkIvgNpCcsYqgfawSqxxMwQNDpFOa0Qylop1v3HtM+ecNhKEseRKX7iloaPeo2P22euAM5FYpQdGu4N4s3zMfh//t8O7calCt73daDixpGA8u3C8Y89rmI8uxQjk4DK72c6ncrmO0EX4KfCO2hPRf8Jm7/WloNiYoI49NsRtTuCbXWxaEJOtqYRZzbOc/+o2GiWFkxC7u7pB2I3Xbq1kRRgMnxrnK15TbCm0H0yb7YA7CpZmBPmnnuMPXJBtH2YLlFdTExXLcNwFBGpY4Cj+UTeh3Lo/pK5/GxapwTPYdbwJMqZZEfk+Tp9Zm05YbLUPovPBedxpvmNetBuRvZy0b/Ob/DS+92EzHsNYyyITodRbP4LjY9PlE1pfQYbX7SSfk0HopcFw4mhsJ9WIfHozBJOD+MfZM71OOAIwDp0W3CYVrqXHf/sL1eob7lgO2WzLjLssfXG2+1+W4tkYe++yv432sOoFqCT7nD7lHX4TdhML/YLyEJFblFf4VqUp7fyjKDdrQIUyQW+IpJBBCol+Bqe0blbYpmIaL1rTJptv6a8QuGR9tjzJ1OJAKlE8hTFPT6Iy8sVMykTm/6WPvezJK5zpc1nI4flD59HNvmO3x+Yw== info@jaybeyond.icu
@@ -124,7 +125,7 @@ jobs:
           node <<'NODE'
           const crypto = require("crypto");
           const fs = require("fs");
-          const { canonicalize } = require("./.github/scripts/release-validation.cjs");
+          const { canonicalize, isUtcRfc3339 } = require("./.github/scripts/release-validation.cjs");
           const raw = fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`);
           const approval = JSON.parse(raw);
           if (!raw.equals(Buffer.from(canonicalize(approval)))) throw new Error("approval manifest is not canonical JSON");
@@ -137,8 +138,7 @@ jobs:
           if (keys(approval.approval) !== "approval_tag,approved_at,approver_login" || approval.approval.approver_login !== "jaybeyond") throw new Error("unauthorized approver");
           if (approval.approval.approval_tag !== `release-approval/v${process.env.VERSION}/${process.env.CANDIDATE_SHA}`) throw new Error("approval tag mismatch");
           if (!/^[0-9a-f]{64}$/.test(approval.manifest_sha256) || !/^[0-9a-f]{40}$/.test(approval.candidate_sha)) throw new Error("invalid digest");
-          const utc = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$/;
-          if (!utc.test(approval.rehearsal.completed_at) || !utc.test(approval.approval.approved_at)) throw new Error("timestamps must be UTC RFC3339");
+          if (!isUtcRfc3339(approval.rehearsal.completed_at) || !isUtcRfc3339(approval.approval.approved_at)) throw new Error("timestamps must be UTC RFC3339");
           console.log(`validated approval manifest for rehearsal run ${approval.rehearsal.run_id}`);
           NODE
           REHEARSAL_RUN_ID="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/approval.json")).rehearsal.run_id')"
@@ -258,7 +258,7 @@ jobs:
           validateRuleset(JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-ruleset.json`, "utf8")), {
             name: "release-approvals-protection",
             target: "branch",
-            patterns: ["refs/heads/release-approvals"],
+            patterns: ["refs/heads/release-approvals", "refs/heads/release-approvals/**"],
             rules: ["creation", "update", "deletion", "non_fast_forward", "required_linear_history", "required_signatures", "pull_request"],
             pullRequest: {
               allowed_merge_methods: ["squash", "rebase"],

@@ -27,7 +27,7 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 ## Tính năng
 
 - 🌞 **Tab công cụ** — trên macOS điều khiển độ sáng (DDC/CI cho màn ngoài; IOKit cho đèn nền màn tích hợp nếu được hỗ trợ). Trên các máy Mac mới được hỗ trợ nhưng không có IOKit, ứng dụng dùng tự động hóa Trợ năng của Trung tâm điều khiển. IOKit và tự động hóa này chỉ dành cho macOS; khả năng DDC tùy phần cứng.
-- 📊 **Trạng thái hệ thống** — CPU, bộ nhớ và ổ đĩa hệ thống; nhiệt độ gói CPU hiển thị “không khả dụng” trong v0.2.4 vì chưa có bộ chuyển đổi nhiệt độ được xác minh, cũng như trên hệ thống không hỗ trợ.
+- 📊 **Trạng thái hệ thống** — CPU, bộ nhớ và ổ đĩa hệ thống; nhiệt độ gói CPU hiển thị “không khả dụng” trong v0.2.5 vì chưa có bộ chuyển đổi nhiệt độ được xác minh, cũng như trên hệ thống không hỗ trợ.
 - 📊 **Tab mức dùng** — đọc trực tiếp nhật ký phiên mà Claude Code, Codex và SayKnow CLI đã ghi cục bộ. Hiển thị khối tính phí 5 giờ (thời gian còn lại, tốc độ tiêu thụ) cùng phần trăm 5 giờ và hàng tuần thật do CLI ghi lại, kèm giờ reset. Cửa sổ đã reset bị gạch ngang và không bao giờ được vẽ như mức hiện tại. Không cần mạng, không cần đăng nhập thêm
 - 📋 **Tab lịch sử clipboard** — thu thập nền, tìm kiếm cả nội dung lẫn ghi chú, ghim, gửi sang dịch và xoá hai mức. Chuỗi rỗng, dạng OTP và khối khoá PEM không bao giờ được lưu
 - 💬 **Tab Chat** — hỏi-đáp gọn trong cùng cửa sổ, thanh bên đa cuộc trò chuyện, theo từng tin nhắn: tạo lại / chỉnh sửa / sao chép / dừng
@@ -64,13 +64,13 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 
 1. Tải DMG macOS aarch64 từ [bản phát hành GitHub chính thức](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Mở DMG, kéo SayKnow Kit.app vào `/Applications`.
-3. Ứng dụng v0.2.4 chỉ có chữ ký **ad hoc**, không có Developer ID hay notarization; cảnh báo Gatekeeper là điều bình thường.
+3. Ứng dụng v0.2.5 chỉ có chữ ký **ad hoc**, không có Developer ID hay notarization; cảnh báo Gatekeeper là điều bình thường.
 4. Kiểm tra `SHA256SUMS.txt` được phát hành cùng phiên bản trước khi mở.
 
 ### Windows — EXE hoặc MSI
 
 1. Chỉ tải bộ cài NSIS `.exe` hoặc bộ cài MSI `.msi` x64 từ GitHub Release chính thức.
-2. Windows SmartScreen có thể cảnh báo vì v0.2.4 chưa được ký; điều này bình thường. Không có Authenticode.
+2. Windows SmartScreen có thể cảnh báo vì v0.2.5 chưa được ký; điều này bình thường. Không có Authenticode.
 3. Kiểm tra `SHA256SUMS.txt`, sau đó chạy trình cài đặt.
 4. Gỡ cài đặt qua **Cài đặt → Ứng dụng → Ứng dụng đã cài đặt → SayKnow Kit → Gỡ cài đặt**.
 
@@ -118,7 +118,7 @@ OpenRouter API key là thông tin tính phí và chỉ được lưu trong kho b
 - macOS **Keychain** và Windows **Credential Manager**
 - Không lưu plaintext và không dẫn xuất từ mật khẩu đăng nhập
 - Chỉ tải từ GitHub Releases chính thức và kiểm tra `SHA256SUMS.txt`
-- Ứng dụng macOS v0.2.4 dùng chữ ký ad hoc, không có Developer ID hay notarization; trình cài Windows không có chữ ký Authenticode. Cảnh báo Gatekeeper và SmartScreen là điều bình thường.
+- Ứng dụng macOS v0.2.5 dùng chữ ký ad hoc, không có Developer ID hay notarization; trình cài Windows không có chữ ký Authenticode. Cảnh báo Gatekeeper và SmartScreen là điều bình thường.
 
 ## Giấy phép
 

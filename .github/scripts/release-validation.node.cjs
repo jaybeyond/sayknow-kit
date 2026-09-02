@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   canonicalize,
+  isUtcRfc3339,
   parseChecksums,
   validateRehearsalBinding,
   validateRuleset,
@@ -15,19 +16,19 @@ const artifact = {
   bytes: 42,
   candidate_sha: "b".repeat(40),
   format: "dmg",
-  name: "SayKnow Kit_0.2.4_aarch64.dmg",
+  name: "SayKnow Kit_0.2.5_aarch64.dmg",
   platform: "macos-aarch64",
   product_name: "SayKnow Kit",
   sha256: digest,
   smoke: { format: "dmg", installed: true, launched: true, os_build: "24E263", runner: "macos15-20260801", uninstalled: true },
-  version: "0.2.4",
+  version: "0.2.5",
 };
 const approval = { artifacts: [artifact], signing_posture: { macos: "adhoc", windows: "unsigned" } };
 const context = {
   candidateSha: artifact.candidate_sha,
   runAttempt: 1,
   runId: 123,
-  version: "0.2.4",
+  version: "0.2.5",
   workflowSha256: "c".repeat(64),
 };
 const rehearsal = {
@@ -52,7 +53,7 @@ const pullRequest = {
 const expectedRuleset = {
   name: "release-approvals-protection",
   target: "branch",
-  patterns: ["refs/heads/release-approvals"],
+  patterns: ["refs/heads/release-approvals", "refs/heads/release-approvals/**"],
   rules: ["creation", "update", "pull_request"],
   pullRequest,
 };
@@ -71,6 +72,12 @@ const ruleset = {
 
 test("canonical JSON has stable sorted bytes", () => {
   assert.equal(canonicalize({ z: 1, a: [true, { y: 2, b: 3 }] }), '{"a":[true,{"b":3,"y":2}],"z":1}');
+});
+
+test("UTC RFC3339 validation accepts GitHub and ISO timestamps", () => {
+  assert.equal(isUtcRfc3339("2026-09-02T15:11:10Z"), true);
+  assert.equal(isUtcRfc3339("2026-09-02T15:12:52.309Z"), true);
+  assert.equal(isUtcRfc3339("2026-09-02 15:11:10Z"), false);
 });
 
 test("checksum parser rejects malformed and duplicate entries", () => {
