@@ -53,7 +53,7 @@ const pullRequest = {
 const expectedRuleset = {
   name: "release-approvals-protection",
   target: "branch",
-  patterns: ["refs/heads/release-approvals", "refs/heads/release-approvals/**"],
+  patterns: ["refs/heads/release-approvals", "refs/heads/release-approval-v*"],
   rules: ["creation", "update", "pull_request"],
   pullRequest,
 };

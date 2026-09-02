@@ -100,7 +100,7 @@ jobs:
           approval_tag="release-approval/v${VERSION}/${CANDIDATE_SHA}"
           approval_ref="refs/tags/${approval_tag}"
           approval_path=".github/release-approvals/v${VERSION}/${CANDIDATE_SHA}.json"
-          approval_branch="release-approvals/v${VERSION}/${CANDIDATE_SHA}"
+          approval_branch="release-approval-v${VERSION}-${CANDIDATE_SHA}"
           git fetch --no-tags origin "${approval_ref}:${approval_ref}"
           remote_approval_object="$(gh api "repos/${REPOSITORY}/git/ref/${approval_ref#refs/}" --jq .object.sha)"
           test "$(git rev-parse "$approval_ref")" = "$remote_approval_object"
@@ -258,7 +258,7 @@ jobs:
           validateRuleset(JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval-ruleset.json`, "utf8")), {
             name: "release-approvals-protection",
             target: "branch",
-            patterns: ["refs/heads/release-approvals", "refs/heads/release-approvals/**"],
+            patterns: ["refs/heads/release-approvals", "refs/heads/release-approval-v*"],
             rules: ["creation", "update", "deletion", "non_fast_forward", "required_linear_history", "required_signatures", "pull_request"],
             pullRequest: {
               allowed_merge_methods: ["squash", "rebase"],
