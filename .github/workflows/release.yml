@@ -13,7 +13,12 @@ on:
       version:
         description: Expected application version
         required: true
-        default: 0.2.5
+        default: 0.2.6
+      approval_check:
+        description: Validate an existing signed approval before creating the release tag
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -89,10 +94,11 @@ jobs:
           test "$(git rev-parse "refs/tags/${{ github.ref_name }}")" = "${{ github.event.after }}"
 
       - name: Authenticate immutable release approval
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.approval_check
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ steps.meta.outputs.version }}
           CANDIDATE_SHA: ${{ steps.meta.outputs.candidate_sha }}
@@ -118,7 +124,9 @@ jobs:
           git config gpg.ssh.allowedSignersFile "$RUNNER_TEMP/allowed_signers"
           git verify-tag "$approval_ref"
           git verify-commit "$approval_commit"
-          git verify-tag "${{ github.ref_name }}"
+          if [ "$EVENT_NAME" = "push" ]; then
+            git verify-tag "${{ github.ref_name }}"
+          fi
           git for-each-ref --format='%(contents)' "$approval_ref" > "$RUNNER_TEMP/approval-tag-message.txt"
           git show "${approval_commit}:${approval_path}" > "$RUNNER_TEMP/approval.json"
 
@@ -287,7 +295,7 @@ jobs:
 
   build:
     needs: preflight
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.approval_check }}
     strategy:
       fail-fast: false
       matrix:
@@ -430,7 +438,7 @@ jobs:
           retention-days: 14
 
   windows-smoke:
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.approval_check }}
     needs: [preflight, build]
     strategy:
       fail-fast: false
@@ -533,7 +541,7 @@ jobs:
           retention-days: 14
   verify:
     needs: [preflight, build, windows-smoke]
-    if: always() && needs.preflight.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.windows-smoke.result == 'success' || needs.windows-smoke.result == 'skipped')
+    if: ${{ !inputs.approval_check && always() && needs.preflight.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.windows-smoke.result == 'success' || needs.windows-smoke.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

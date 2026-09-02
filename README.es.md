@@ -27,7 +27,7 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 ## Funciones
 
 - 🌞 **Pestaña de herramientas** — en macOS controla el brillo de las pantallas (DDC/CI para externas; IOKit para la retroiluminación integrada cuando sea compatible). En los Mac compatibles más recientes donde IOKit no está disponible, usa la automatización de Accesibilidad del Centro de control. Tanto IOKit como la automatización del Centro de control son funciones exclusivas de macOS; las capacidades DDC externas dependen del hardware.
-- 📊 **Estado del sistema** — CPU, memoria y disco del sistema; la temperatura del paquete de CPU se muestra como «no disponible» en v0.2.5 porque no hay un adaptador de temperatura verificado, y también en sistemas no compatibles.
+- 📊 **Estado del sistema** — CPU, memoria y disco del sistema; la temperatura del paquete de CPU se muestra como «no disponible» en v0.2.6 porque no hay un adaptador de temperatura verificado, y también en sistemas no compatibles.
 - 📊 **Pestaña de uso** — Claude Code, Codex y SayKnow CLI leídos de los registros de sesión que ya escriben en local. Muestra el bloque de facturación de 5 h (tiempo restante y ritmo de consumo) y los porcentajes reales de 5 h y semanales que registra la CLI, con su hora de reinicio. Una ventana ya reiniciada aparece tachada y nunca como tu nivel actual. Sin red y sin inicio de sesión adicional
 - 📋 **Pestaña de portapapeles** — historial capturado en segundo plano, buscable por texto y notas, con fijado, envío a traducir y borrado en dos niveles. Vacíos, cadenas tipo OTP y bloques de clave PEM nunca se guardan
 - 💬 **Pestaña de chat** — preguntas y respuestas ligeras en la misma ventana, barra lateral multi-conversación, acciones por mensaje: regenerar / editar / copiar / detener
@@ -64,13 +64,13 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 
 1. Descarga el DMG macOS aarch64 de la [versión oficial en GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Abre el DMG y arrastra SayKnow Kit.app a `/Applications`.
-3. La aplicación v0.2.5 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
+3. La aplicación v0.2.6 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
 4. Verifica el archivo `SHA256SUMS.txt` publicado junto a la versión antes de abrirlo.
 
 ### Windows — EXE o MSI
 
 1. Descarga el instalador NSIS `.exe` o el instalador MSI `.msi` x64 de la versión oficial en GitHub Releases.
-2. Windows SmartScreen puede mostrar una advertencia porque v0.2.5 no está firmado; es normal. No hay Authenticode.
+2. Windows SmartScreen puede mostrar una advertencia porque v0.2.6 no está firmado; es normal. No hay Authenticode.
 3. Verifica `SHA256SUMS.txt` antes de ejecutar el instalador y sigue el asistente.
 4. Para desinstalar, usa **Configuración → Aplicaciones → Aplicaciones instaladas → SayKnow Kit → Desinstalar**.
 
@@ -118,7 +118,7 @@ La clave API es una credencial facturable y se guarda únicamente en el almacena
 - macOS **Keychain** y Windows **Credential Manager**
 - Nunca se almacena en texto plano ni se deriva del inicio de sesión
 - Descarga solo desde GitHub Releases oficial y verifica `SHA256SUMS.txt`
-- La aplicación macOS v0.2.5 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
+- La aplicación macOS v0.2.6 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
 
 ## Licencia
 
