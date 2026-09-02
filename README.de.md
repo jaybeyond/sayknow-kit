@@ -27,7 +27,7 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 ## Funktionen
 
 - 🌞 **Werkzeuge-Tab** — unter macOS steuert die App die Helligkeit (DDC/CI für externe Displays; IOKit für die integrierte Hintergrundbeleuchtung, sofern unterstützt). Auf neueren unterstützten Macs, auf denen IOKit nicht verfügbar ist, wird die Bedienungshilfe-Automatisierung des Control Centers verwendet. IOKit und diese Automatisierung sind macOS-spezifisch; DDC-Funktionen hängen von der Hardware ab.
-- 📊 **Systemstatus** — CPU, Arbeitsspeicher und Systemdatenträger; die CPU-Package-Temperatur wird in v0.2.7 mangels verifiziertem Temperaturadapter als „nicht verfügbar“ angezeigt, ebenso auf nicht unterstützten Systemen.
+- 📊 **Systemstatus** — CPU, Arbeitsspeicher und Systemdatenträger; die CPU-Package-Temperatur wird in v0.2.8 mangels verifiziertem Temperaturadapter als „nicht verfügbar“ angezeigt, ebenso auf nicht unterstützten Systemen.
 - 📊 **Verbrauchs-Tab** — Claude Code, Codex und SayKnow CLI, gelesen aus den Sitzungsprotokollen, die sie ohnehin lokal schreiben. Zeigt den 5-Stunden-Abrechnungsblock (Restzeit, Verbrauchsrate) sowie die von der CLI aufgezeichneten echten 5-Stunden- und Wochenwerte samt Reset-Zeit. Ein bereits zurückgesetztes Fenster wird durchgestrichen und nie als aktueller Stand gezeigt. Ohne Netzwerk und ohne zusätzliche Anmeldung
 - 📋 **Zwischenablage-Tab** — im Hintergrund erfasster Verlauf, durchsuchbar über Text und Notizen, mit Anheften, Senden an die Übersetzung und zweistufigem Löschen. Leeres, OTP-artige Strings und PEM-Schlüsselblöcke werden nie gespeichert
 - 💬 **Chat-Tab** — leichtes Q&A im selben Fenster, Multi-Konversation in der Seitenleiste, pro Nachricht: regenerieren / bearbeiten / kopieren / stoppen
@@ -64,13 +64,13 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 
 1. Lade das macOS-aarch64-DMG vom [offiziellen GitHub-Release](https://github.com/jaybeyond/sayknow-kit/releases) herunter.
 2. Öffne das DMG und ziehe SayKnow Kit.app nach `/Applications`.
-3. Die v0.2.7-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
+3. Die v0.2.8-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
 4. Prüfe vor dem Öffnen die veröffentlichte `SHA256SUMS.txt`.
 
 ### Windows — EXE oder MSI
 
 1. Lade den x64-NSIS-Installer (`.exe`) oder den x64-MSI-Installer (`.msi`) ausschließlich vom offiziellen GitHub-Release.
-2. Windows SmartScreen kann warnen, da v0.2.7 unsigniert ist; das ist erwartbar. Kein Authenticode.
+2. Windows SmartScreen kann warnen, da v0.2.8 unsigniert ist; das ist erwartbar. Kein Authenticode.
 3. Prüfe `SHA256SUMS.txt` und führe den Installationsassistenten aus.
 4. Deinstallation: **Einstellungen → Apps → Installierte Apps → SayKnow Kit → Deinstallieren**.
 
@@ -118,7 +118,7 @@ Der OpenRouter-Key ist abrechnungsrelevant und wird ausschließlich im sicheren 
 - macOS **Keychain** und Windows **Credential Manager**
 - Nie im Klartext und nicht aus dem Login-Passwort abgeleitet
 - Nur vom offiziellen GitHub-Release laden und `SHA256SUMS.txt` prüfen
-- Die macOS-App v0.2.7 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
+- Die macOS-App v0.2.8 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
 
 ## Lizenz
 

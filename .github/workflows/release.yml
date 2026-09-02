@@ -13,7 +13,7 @@ on:
       version:
         description: Expected application version
         required: true
-        default: 0.2.7
+        default: 0.2.8
       approval_check:
         description: Validate an existing signed approval before creating the release tag
         required: false
@@ -203,9 +203,9 @@ jobs:
           const artifactKeys = "architecture,bytes,candidate_sha,format,name,platform,product_name,sha256,smoke,version";
           const expected = new Set(["macos-aarch64:dmg:aarch64", "windows-x64:exe:x64", "windows-x64:msi:x64"]);
           const expectedNames = new Set([
-            `SayKnow Kit_${process.env.VERSION}_aarch64.dmg`,
-            `SayKnow Kit_${process.env.VERSION}_x64-setup.exe`,
-            `SayKnow Kit_${process.env.VERSION}_x64_en-US.msi`,
+            `SayKnow-Kit_${process.env.VERSION}_aarch64.dmg`,
+            `SayKnow-Kit_${process.env.VERSION}_x64-setup.exe`,
+            `SayKnow-Kit_${process.env.VERSION}_x64_en-US.msi`,
           ]);
           for (const artifact of approval.artifacts) {
             if (Object.keys(artifact).sort().join(",") !== artifactKeys) throw new Error("artifact keys are not exact");
@@ -615,9 +615,10 @@ jobs:
             throw new Error("smoke evidence format mismatch");
           }
           fs.mkdirSync(output);
-          const describe = (source, platform, format, architecture, smoke) => {
-            const name = path.basename(source);
-            if (!name.includes(process.env.VERSION)) throw new Error(`${name} does not contain ${process.env.VERSION}`);
+          const describe = (source, name, platform, format, architecture, smoke) => {
+            if (!path.basename(source).includes(process.env.VERSION)) {
+              throw new Error(`${path.basename(source)} does not contain ${process.env.VERSION}`);
+            }
             fs.copyFileSync(source, path.join(output, name));
             return {
               architecture,
@@ -633,9 +634,9 @@ jobs:
             };
           };
           const artifacts = [
-            describe(dmg, "macos-aarch64", "dmg", "aarch64", macSmoke),
-            describe(exe, "windows-x64", "exe", "x64", nsisSmoke),
-            describe(msi, "windows-x64", "msi", "x64", msiSmoke),
+            describe(dmg, `SayKnow-Kit_${process.env.VERSION}_aarch64.dmg`, "macos-aarch64", "dmg", "aarch64", macSmoke),
+            describe(exe, `SayKnow-Kit_${process.env.VERSION}_x64-setup.exe`, "windows-x64", "exe", "x64", nsisSmoke),
+            describe(msi, `SayKnow-Kit_${process.env.VERSION}_x64_en-US.msi`, "windows-x64", "msi", "x64", msiSmoke),
           ];
           const rehearsal = {
             artifacts,
