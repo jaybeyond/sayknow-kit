@@ -16,13 +16,26 @@ export type DisplayRow = {
   system_level: number | null
 }
 
+export type AccessibilityState = {
+  trusted: boolean
+  /** Quarantined copy running from a randomized read-only path: macOS throws
+   *  the granted permission away on the next launch, so consent cannot fix it. */
+  translocated: boolean
+}
+
 export type ToolsState = {
   displays: DisplayRow[]
   error: string | null
   loaded: boolean
+  accessibility: AccessibilityState | null
 }
 
-let state: ToolsState = { displays: [], error: null, loaded: false }
+let state: ToolsState = {
+  displays: [],
+  error: null,
+  loaded: false,
+  accessibility: null,
+}
 const listeners = new Set<() => void>()
 let inFlight = false
 
@@ -81,5 +94,31 @@ export async function scanDisplays(force = false): Promise<void> {
     set({ error: String(e), loaded: true })
   } finally {
     inFlight = false
+  }
+}
+
+/** Whether macOS lets us drive the built-in backlight. This reads, never
+ *  prompts: the consent dialog belongs to an explicit user action, because
+ *  macOS re-shows it on every call while the grant cannot be stored. */
+export async function refreshAccessibility(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    const accessibility = await invoke<AccessibilityState>("accessibility_status")
+    set({ accessibility })
+  } catch {
+    /* command unavailable; keep the last known state */
+  }
+}
+
+/** Explicit user request for the macOS consent dialog. */
+export async function requestAccessibility(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    const trusted = await invoke<boolean>("request_accessibility_permission")
+    if (trusted) await scanDisplays(true)
+  } finally {
+    await refreshAccessibility()
   }
 }

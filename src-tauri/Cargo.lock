@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "sayknow"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "core-foundation 0.9.4",
  "ddc-hi",

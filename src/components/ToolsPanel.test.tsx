@@ -8,7 +8,14 @@ const mocks = vi.hoisted(() => ({
   setMetricsActive: vi.fn(),
   scanDisplays: vi.fn(() => Promise.resolve()),
   syncBuiltin: vi.fn(() => Promise.resolve()),
-  toolsState: { displays: [], error: null, loaded: true },
+  refreshAccessibility: vi.fn(() => Promise.resolve()),
+  requestAccessibility: vi.fn(() => Promise.resolve()),
+  toolsState: {
+    displays: [] as Array<Record<string, unknown>>,
+    error: null,
+    loaded: true,
+    accessibility: null as { trusted: boolean; translocated: boolean } | null,
+  },
   metricsState: {
     status: "stale_with_error" as const,
     refreshing: true,
@@ -55,6 +62,10 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.body": "Brightness controls",
       "tools.brightness.none": "No display",
       "tools.brightness.ddcNote": "DDC note",
+      "tools.brightness.axTitle": "Accessibility permission required",
+      "tools.brightness.axBody": "Allow SayKnow Kit in Accessibility",
+      "tools.brightness.axTranslocated": "Move SayKnow Kit to Applications",
+      "tools.brightness.axGrant": "Request permission",
     })[key] ?? key,
   }),
 }))
@@ -63,6 +74,8 @@ vi.mock("@/lib/tools-store", () => ({
   subscribe: () => () => undefined,
   scanDisplays: mocks.scanDisplays,
   syncBuiltin: mocks.syncBuiltin,
+  refreshAccessibility: mocks.refreshAccessibility,
+  requestAccessibility: mocks.requestAccessibility,
 }))
 vi.mock("@/lib/system-metrics-store", () => ({
   getSnapshot: () => mocks.metricsState,
@@ -77,6 +90,14 @@ vi.mock("@/components/UsagePanel", () => ({
     <section aria-label="Usage" data-active={String(active)} />
   ),
 }))
+
+// Radix' slider measures its thumb; jsdom ships no ResizeObserver.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver
 
 import { ToolsPanel } from "./ToolsPanel"
 
@@ -118,5 +139,53 @@ describe("ToolsPanel system metrics", () => {
       brightness!.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(container.querySelector('[aria-label="Usage"]')).toBe(usage)
+  })
+})
+
+describe("ToolsPanel accessibility notice", () => {
+  const builtinOnGamma = {
+    id: "builtin",
+    name: "",
+    kind: "builtin",
+    is_main: true,
+    brightness: 50,
+    power: null,
+    controllable: true,
+    method: "gamma",
+    system_level: 50,
+  }
+
+  afterEach(() => {
+    mocks.toolsState.displays = []
+    mocks.toolsState.accessibility = null
+  })
+
+  it("reads permission state instead of prompting on every visit", async () => {
+    mocks.toolsState.displays = [builtinOnGamma]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    await waitFor(() => expect(mocks.refreshAccessibility).toHaveBeenCalled())
+    expect(mocks.requestAccessibility).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Request permission" }))
+    expect(mocks.requestAccessibility).toHaveBeenCalledOnce()
+  })
+
+  it("tells a translocated copy to move instead of offering a futile prompt", () => {
+    mocks.toolsState.displays = [builtinOnGamma]
+    mocks.toolsState.accessibility = { trusted: false, translocated: true }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByText("Move SayKnow Kit to Applications")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Request permission" })).toBeNull()
+  })
+
+  it("stays silent once the built-in backlight is actually controllable", () => {
+    mocks.toolsState.displays = [{ ...builtinOnGamma, method: "backlight" }]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.queryByText("Accessibility permission required")).toBeNull()
   })
 })

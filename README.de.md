@@ -64,13 +64,14 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 
 1. Lade das macOS-aarch64-DMG vom [offiziellen GitHub-Release](https://github.com/jaybeyond/sayknow-kit/releases) herunter.
 2. Öffne das DMG und ziehe SayKnow Kit.app nach `/Applications`.
-3. Die v0.2.10-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
-4. Prüfe vor dem Öffnen die veröffentlichte `SHA256SUMS.txt`.
+3. Die v0.2.11-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
+4. macOS 13+ akzeptiert den Rechtsklick-Trick nicht mehr: einmal starten, dann **Systemeinstellungen → Datenschutz & Sicherheit → Dennoch öffnen**. Alternativ `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Aus dem DMG heraus gestartet, läuft die App aus einer zufälligen Nur-Lese-Kopie, in der die Bedienungshilfen-Berechtigung nie gespeichert wird.
+5. Prüfe vor dem Öffnen die veröffentlichte `SHA256SUMS.txt`.
 
 ### Windows — EXE oder MSI
 
 1. Lade den x64-NSIS-Installer (`.exe`) oder den x64-MSI-Installer (`.msi`) ausschließlich vom offiziellen GitHub-Release.
-2. Windows SmartScreen kann warnen, da v0.2.10 unsigniert ist; das ist erwartbar. Kein Authenticode.
+2. Windows SmartScreen kann warnen, da v0.2.11 unsigniert ist; das ist erwartbar. Kein Authenticode.
 3. Prüfe `SHA256SUMS.txt` und führe den Installationsassistenten aus.
 4. Deinstallation: **Einstellungen → Apps → Installierte Apps → SayKnow Kit → Deinstallieren**.
 
@@ -118,7 +119,7 @@ Der OpenRouter-Key ist abrechnungsrelevant und wird ausschließlich im sicheren 
 - macOS **Keychain** und Windows **Credential Manager**
 - Nie im Klartext und nicht aus dem Login-Passwort abgeleitet
 - Nur vom offiziellen GitHub-Release laden und `SHA256SUMS.txt` prüfen
-- Die macOS-App v0.2.10 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
+- Die macOS-App v0.2.11 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
 
 ## Lizenz
 

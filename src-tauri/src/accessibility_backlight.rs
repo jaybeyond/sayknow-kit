@@ -13,8 +13,10 @@ use core_foundation::{
 };
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type CfTypeRef = *const ();
 type CfStringRef = *const ();
@@ -195,7 +197,15 @@ unsafe fn size_attribute(element: AxElement, attribute: &str) -> Option<Size> {
     AXValueGetValue(value.0, AX_VALUE_SIZE, &mut out as *mut _ as *mut c_void).then_some(out)
 }
 
-fn control_center_pid() -> Option<i32> {
+/// `proc_name` on a single pid, used to keep a cached ControlCenter pid honest
+/// without walking the whole process table again.
+unsafe fn is_control_center(pid: i32) -> bool {
+    let mut name = [0i8; 128];
+    proc_name(pid, name.as_mut_ptr() as *mut c_void, name.len() as u32) > 0
+        && CStr::from_ptr(name.as_ptr()).to_bytes() == b"ControlCenter"
+}
+
+fn scan_control_center_pid() -> Option<i32> {
     unsafe {
         let bytes = proc_listpids(PROC_ALL_PIDS, 0, ptr::null_mut(), 0);
         if bytes <= 0 {
@@ -212,10 +222,7 @@ fn control_center_pid() -> Option<i32> {
             if pid <= 0 {
                 continue;
             }
-            let mut name = [0i8; 128];
-            if proc_name(pid, name.as_mut_ptr() as *mut c_void, name.len() as u32) > 0
-                && CStr::from_ptr(name.as_ptr()).to_bytes() == b"ControlCenter"
-            {
+            if is_control_center(pid) {
                 return Some(pid);
             }
         }
@@ -223,16 +230,53 @@ fn control_center_pid() -> Option<i32> {
     }
 }
 
+/// ControlCenter outlives us and keeps its pid, so walking every process on the
+/// machine belongs in the cold path only. The hot path is one `proc_name` call.
+fn control_center_pid() -> Option<i32> {
+    let cached = CONTROL_CENTER_PID.load(Ordering::Relaxed);
+    if cached > 0 && unsafe { is_control_center(cached) } {
+        return Some(cached);
+    }
+    let found = scan_control_center_pid()?;
+    CONTROL_CENTER_PID.store(found, Ordering::Relaxed);
+    Some(found)
+}
+
+static CONTROL_CENTER_PID: AtomicI32 = AtomicI32::new(0);
+static PROMPTED: AtomicBool = AtomicBool::new(false);
+
 pub fn is_trusted(prompt: bool) -> bool {
     unsafe {
-        if AXIsProcessTrusted() || !prompt {
-            return AXIsProcessTrusted();
+        if AXIsProcessTrusted() {
+            return true;
+        }
+        // macOS re-shows the consent dialog on every prompting call, and a
+        // translocated or ad-hoc bundle can never make the grant stick, so a
+        // loop of identical dialogs is all the user would get. Prompt once per
+        // launch; the Tools panel explains the rest in-app.
+        if !prompt || PROMPTED.swap(true, Ordering::SeqCst) {
+            return false;
         }
         let key = CFString::new("AXTrustedCheckOptionPrompt");
         let value = CFBoolean::true_value();
         let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
         AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef() as CfDictionaryRef)
     }
+}
+
+/// True when macOS is running us from a randomized read-only App Translocation
+/// copy, which happens to a quarantined bundle launched outside /Applications.
+/// Accessibility grants against that path are discarded on the next launch, so
+/// no amount of consent makes the backlight work until the app is moved.
+pub fn bundle_is_translocated() -> bool {
+    std::env::current_exe()
+        .map(|path| path_is_translocated(&path))
+        .unwrap_or(false)
+}
+
+fn path_is_translocated(path: &std::path::Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "AppTranslocation")
 }
 
 unsafe fn post_event(event: CgEvent) {
@@ -357,6 +401,65 @@ pub fn get() -> Option<u8> {
         value
     }
 }
+
+/// How often the sampler thread is allowed to touch Control Center's AX tree.
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(700);
+/// A sample older than this is stale: report nothing rather than a stale level.
+const SAMPLE_TTL: Duration = Duration::from_secs(4);
+/// The sampler idles once the UI stops asking, so a hidden window costs nothing.
+const DEMAND_TTL: Duration = Duration::from_secs(3);
+
+static SAMPLE: Mutex<Option<(u8, Instant)>> = Mutex::new(None);
+static DEMAND: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Non-blocking live backlight for the 250ms UI poll.
+///
+/// Every `get()` is a synchronous accessibility round trip into another
+/// process; on a busy Mac it can take hundreds of milliseconds, which is why
+/// polling it from the command thread made the whole Tools tab crawl and its
+/// sliders stop responding. One sampler thread does the expensive read, and
+/// callers only load its last value.
+pub fn level_cached() -> Option<u8> {
+    if let Ok(mut demand) = DEMAND.lock() {
+        *demand = Some(Instant::now());
+    }
+    ensure_sampler();
+    match *SAMPLE.lock().ok()? {
+        Some((value, at)) if at.elapsed() < SAMPLE_TTL => Some(value),
+        _ => None,
+    }
+}
+
+/// Publish a value the sampler would otherwise take up to a second to observe,
+/// so the slider does not snap back to the previous level after our own write.
+pub fn publish_level(percent: u8) {
+    if let Ok(mut sample) = SAMPLE.lock() {
+        *sample = Some((percent, Instant::now()));
+    }
+}
+
+fn ensure_sampler() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    thread::spawn(|| loop {
+        thread::sleep(SAMPLE_INTERVAL);
+        let wanted = DEMAND
+            .lock()
+            .ok()
+            .and_then(|demand| *demand)
+            .map(|at| at.elapsed() < DEMAND_TTL)
+            .unwrap_or(false);
+        if !wanted || !is_trusted(false) {
+            continue;
+        }
+        let value = get();
+        if let Ok(mut sample) = SAMPLE.lock() {
+            *sample = value.map(|percent| (percent, Instant::now()));
+        }
+    });
+}
 pub fn set(percent: u8) -> Result<u8, String> {
     if !is_trusted(true) {
         return Err("Accessibility permission is required; allow SayKnow Kit and try again".into());
@@ -438,6 +541,46 @@ pub fn set(percent: u8) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn translocated_bundles_are_recognized_by_path() {
+        assert!(path_is_translocated(Path::new(
+            "/private/var/folders/ab/T/AppTranslocation/1C2E/d/SayKnow Kit.app/Contents/MacOS/sayknow"
+        )));
+    }
+
+    #[test]
+    fn installed_bundles_are_not_translocated() {
+        assert!(!path_is_translocated(Path::new(
+            "/Applications/SayKnow Kit.app/Contents/MacOS/sayknow"
+        )));
+        // A directory that merely mentions the word is not the system path.
+        assert!(!path_is_translocated(Path::new(
+            "/Users/jay/AppTranslocationNotes/SayKnow Kit.app/Contents/MacOS/sayknow"
+        )));
+    }
+
+    // One test owns the shared sample slot: split tests would race each other.
+    #[test]
+    fn the_poll_path_reports_only_a_fresh_sample() {
+        if let Ok(mut sample) = SAMPLE.lock() {
+            *sample = None;
+        }
+        assert_eq!(
+            level_cached(),
+            None,
+            "no sample yet must not invent a level"
+        );
+
+        publish_level(42);
+        assert_eq!(level_cached(), Some(42));
+
+        if let Ok(mut sample) = SAMPLE.lock() {
+            *sample = Some((77, Instant::now() - SAMPLE_TTL - Duration::from_secs(1)));
+        }
+        assert_eq!(level_cached(), None, "a stale sample must not look live");
+    }
 
     #[test]
     fn live_control_center_backlight() {

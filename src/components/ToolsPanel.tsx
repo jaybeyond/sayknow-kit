@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import {
   Monitor,
   MonitorOff,
   Power,
   RefreshCw,
+  ShieldAlert,
   Sun,
   Wrench,
 } from "lucide-react"
@@ -15,9 +16,12 @@ import { useT } from "@/i18n"
 import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
+  refreshAccessibility,
+  requestAccessibility,
   scanDisplays,
   subscribe,
   syncBuiltin,
+  type AccessibilityState,
   type DisplayRow,
 } from "@/lib/tools-store"
 import {
@@ -46,9 +50,11 @@ type Props = {
  */
 export function ToolsPanel({ settings, active }: Props) {
   const { t } = useT(settings.uiLocale)
-  const { displays, error, loaded } = useSyncExternalStore(subscribe, getSnapshot)
+  const { displays, error, loaded, accessibility } = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+  )
   const metrics = useSyncExternalStore(subscribeMetrics, getMetricsSnapshot)
-  const accessibilityRequested = useRef(false)
 
   const refreshAll = useCallback(() => {
     void scanDisplays(true)
@@ -76,28 +82,13 @@ export function ToolsPanel({ settings, active }: Props) {
     return () => clearInterval(timer)
   }, [active])
 
-  // Real built-in backlight control is local Control Center automation. Ask
-  // once when the Tools tab first sees the built-in display; macOS owns the
-  // consent UI, and subsequent launches are silent once permission is granted.
+  // Never auto-prompt. macOS re-shows the same consent dialog on every call,
+  // and an app running from quarantine can never keep the grant, so the loop
+  // the user saw was infinite. Read the state and say it once, in-app.
   useEffect(() => {
-    if (
-      !active ||
-      accessibilityRequested.current ||
-      !displays.some((d) => d.kind === "builtin" && d.method === "gamma")
-    ) {
-      return
-    }
-    accessibilityRequested.current = true
-    void import("@tauri-apps/api/core")
-      .then(({ invoke }) =>
-        invoke<boolean>("request_accessibility_permission").then((trusted) => {
-          if (trusted) void scanDisplays(true)
-        }),
-      )
-      .catch(() => {
-        // Non-macOS builds expose the command as a no-op.
-      })
-  }, [active, displays])
+    if (!active) return
+    void refreshAccessibility()
+  }, [active])
 
   // Rescan every time the popover opens: monitors connect, wake, or lock
   // their DDC while the app runs, and a list scanned once at tab-activation
@@ -208,6 +199,14 @@ export function ToolsPanel({ settings, active }: Props) {
             </p>
           )}
 
+          <AccessibilityNotice
+            state={accessibility}
+            needed={displays.some(
+              (d) => d.kind === "builtin" && d.method !== "backlight",
+            )}
+            t={t}
+          />
+
           {loaded && displays.length === 0 && (
             <p className="py-4 text-center text-[11px] text-muted-foreground">
               {t("tools.brightness.none")}
@@ -245,6 +244,44 @@ export function ToolsPanel({ settings, active }: Props) {
 
         <UsagePanel settings={settings} active={active} />
       </div>
+    </div>
+  )
+}
+
+/** One honest explanation instead of an endless macOS consent dialog. A
+ *  quarantined copy cannot keep the grant at all, so that case gets its own
+ *  instruction rather than a button that would prompt forever. */
+function AccessibilityNotice({
+  state,
+  needed,
+  t,
+}: {
+  state: AccessibilityState | null
+  needed: boolean
+  t: (key: string) => string
+}) {
+  if (!state || state.trusted || !needed) return null
+  return (
+    <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium">
+        <ShieldAlert className="h-3.5 w-3.5" />
+        {t("tools.brightness.axTitle")}
+      </div>
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+        {state.translocated
+          ? t("tools.brightness.axTranslocated")
+          : t("tools.brightness.axBody")}
+      </p>
+      {!state.translocated && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-1.5 h-6 px-2 text-[10px]"
+          onClick={() => void requestAccessibility()}
+        >
+          {t("tools.brightness.axGrant")}
+        </Button>
+      )}
     </div>
   )
 }

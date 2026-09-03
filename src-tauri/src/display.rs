@@ -176,13 +176,9 @@ mod iokit_backlight {
     /// a returned service handle transfers to the caller; everything else is
     /// released here. The service is kept alive by its retain count from the
     /// iterator, exactly as before.
-    fn for_each_backlight_service<T>(
-        mut f: impl FnMut(IoObject) -> Option<T>,
-    ) -> Option<T> {
+    fn for_each_backlight_service<T>(mut f: impl FnMut(IoObject) -> Option<T>) -> Option<T> {
         unsafe {
-            for class_name in
-                [&b"IODisplayConnect\0"[..], &b"AppleARMBacklight\0"[..]]
-            {
+            for class_name in [&b"IODisplayConnect\0"[..], &b"AppleARMBacklight\0"[..]] {
                 let matching = IOServiceMatching(class_name.as_ptr() as *const c_char);
                 if matching.is_null() {
                     continue;
@@ -280,8 +276,7 @@ mod iokit_backlight {
     pub fn get() -> Option<u8> {
         let svc = find_backlight_service()?;
         let mut v: f32 = 0.0;
-        let ok =
-            unsafe { IODisplayGetFloatParameter(svc.service, 0, svc.key, &mut v) == 0 };
+        let ok = unsafe { IODisplayGetFloatParameter(svc.service, 0, svc.key, &mut v) == 0 };
         ok.then(|| super::float_to_percent(v))
     }
 
@@ -290,12 +285,8 @@ mod iokit_backlight {
             return false;
         };
         unsafe {
-            IODisplaySetFloatParameter(
-                svc.service,
-                0,
-                svc.key,
-                super::percent_to_float(percent),
-            ) == 0
+            IODisplaySetFloatParameter(svc.service, 0, svc.key, super::percent_to_float(percent))
+                == 0
         }
     }
 
@@ -500,7 +491,12 @@ mod gamma_dim {
                 let Some((r, g, b)) = read_table(display) else {
                     return false;
                 };
-                *orig = Some(Original { display, red: r, green: g, blue: b });
+                *orig = Some(Original {
+                    display,
+                    red: r,
+                    green: g,
+                    blue: b,
+                });
             }
         }
         let factor = factor as f32;
@@ -536,7 +532,12 @@ mod gamma_dim {
             let g = o.green.clone();
             let b = o.blue.clone();
             drop(orig);
-            log::info!("reset_offset: write_table disp={} len={} first={:.4}", d, r.len(), r[0]);
+            log::info!(
+                "reset_offset: write_table disp={} len={} first={:.4}",
+                d,
+                r.len(),
+                r[0]
+            );
             let ok = write_table(d, &r, &g, &b);
             log::info!("reset_offset: write_table ok={}", ok);
             if ok {
@@ -649,11 +650,7 @@ pub mod brightness_tap {
             order: isize,
         ) -> CfRunLoopSourceRef;
         fn CFRunLoopGetCurrent() -> CfRunLoopRef;
-        fn CFRunLoopAddSource(
-            rl: CfRunLoopRef,
-            source: CfRunLoopSourceRef,
-            mode: CfStringRef,
-        );
+        fn CFRunLoopAddSource(rl: CfRunLoopRef, source: CfRunLoopSourceRef, mode: CfStringRef);
         fn CFRunLoopRun();
         static kCFRunLoopDefaultMode: CfStringRef;
     }
@@ -677,11 +674,7 @@ pub mod brightness_tap {
         if cls.is_null() {
             return None;
         }
-        let ev = msg_send_event(
-            cls,
-            Sel::register(c"eventWithCGEvent:"),
-            event,
-        );
+        let ev = msg_send_event(cls, Sel::register(c"eventWithCGEvent:"), event);
         if ev.is_null() {
             return None;
         }
@@ -710,7 +703,12 @@ pub mod brightness_tap {
                 let next = (cur as i32 + delta).clamp(1, 16) as u8;
                 SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
                 note_key(delta);
-                log::info!("tap: brightness key delta={} cur={} -> {}", delta, cur, next);
+                log::info!(
+                    "tap: brightness key delta={} cur={} -> {}",
+                    delta,
+                    cur,
+                    next
+                );
                 // Schedule the gamma reset on the NEXT main-runloop pass.
                 unsafe {
                     dispatch_async_f(
@@ -748,11 +746,7 @@ pub mod brightness_tap {
     // symbol resolves fine.
     extern "C" {
         static _dispatch_main_q: ();
-        fn dispatch_async_f(
-            queue: *mut (),
-            context: *mut (),
-            work: extern "C" fn(*mut ()),
-        );
+        fn dispatch_async_f(queue: *mut (), context: *mut (), work: extern "C" fn(*mut ()));
     }
 
     /// Runs on the main queue (main runloop) AFTER the tap callback has
@@ -781,14 +775,9 @@ pub mod brightness_tap {
                     std::ptr::null_mut(),
                 );
                 if !tap.is_null() {
-                    let source =
-                        CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                    let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
                     if !source.is_null() {
-                        CFRunLoopAddSource(
-                            CFRunLoopGetCurrent(),
-                            source,
-                            kCFRunLoopDefaultMode,
-                        );
+                        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
                         CGEventTapEnable(tap, true);
                         log::info!("brightness key tap running on main runloop");
                         return;
@@ -892,7 +881,9 @@ fn builtin_gamma_percent() -> u8 {
 
 #[cfg(target_os = "macos")]
 fn accessibility_backlight_level() -> Option<u8> {
-    crate::accessibility_backlight::get()
+    // Cached: the live read is an inter-process accessibility round trip and
+    // this runs on every list and every 250ms sync tick.
+    crate::accessibility_backlight::level_cached()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -946,8 +937,12 @@ fn ddc_id(info: &ddc_hi::DisplayInfo) -> String {
     format!(
         "ddc:{}:{}:{}",
         info.manufacturer_id.as_deref().unwrap_or("?"),
-        info.model_id.map(|m| format!("{m:x}")).unwrap_or_else(|| "?".into()),
-        info.serial.map(|s| s.to_string()).unwrap_or_else(|| "?".into()),
+        info.model_id
+            .map(|m| format!("{m:x}"))
+            .unwrap_or_else(|| "?".into()),
+        info.serial
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "?".into()),
     )
 }
 
@@ -1060,9 +1055,7 @@ mod ddc_worker {
                     let result = displays
                         .iter_mut()
                         .find(|cached| cached.status.id == id)
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::NotFound, "display not found")
-                        })
+                        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "display not found"))
                         .and_then(|cached| {
                             cached
                                 .display
@@ -1080,9 +1073,7 @@ mod ddc_worker {
                     let result = displays
                         .iter_mut()
                         .find(|cached| cached.status.id == id)
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::NotFound, "display not found")
-                        })
+                        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "display not found"))
                         .and_then(|cached| set_cached_power(cached, on));
                     let _ = reply.send(result);
                 }
@@ -1124,8 +1115,7 @@ mod ddc_worker {
                 let is_main = main
                     .map(|(vendor, model)| {
                         let model = model & 0xffff;
-                        display.info.model_id == Some(model as u16)
-                            || vendor == 0 && model == 0
+                        display.info.model_id == Some(model as u16) || vendor == 0 && model == 0
                     })
                     .unwrap_or(false);
                 CachedDisplay {
@@ -1199,11 +1189,7 @@ mod ddc_worker {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(450));
             }
-            match cached
-                .display
-                .handle
-                .set_vcp_feature(VCP_POWER, POWER_ON)
-            {
+            match cached.display.handle.set_vcp_feature(VCP_POWER, POWER_ON) {
                 Ok(()) => any_write_succeeded = true,
                 Err(error) => {
                     log::info!("power-on attempt {} failed: {}", attempt + 1, error);
@@ -1311,8 +1297,7 @@ pub fn list() -> Vec<DisplayStatus> {
             system_level: if backlight_ok {
                 builtin::get()
             } else {
-                accessibility_backlight_level()
-                    .or_else(|| Some(tracked_system_level_percent()))
+                accessibility_backlight_level().or_else(|| Some(tracked_system_level_percent()))
             },
         });
     }
@@ -1360,11 +1345,7 @@ pub fn list_displays() -> Vec<DisplayStatus> {
 }
 
 #[tauri::command]
-pub fn set_display_brightness(
-    app: tauri::AppHandle,
-    id: String,
-    value: i64,
-) -> Result<(), String> {
+pub fn set_display_brightness(app: tauri::AppHandle, id: String, value: i64) -> Result<(), String> {
     if id == BUILTIN_ID {
         // CGS gamma writes only take effect from the main thread's WindowServer
         // connection. The identical call returns success from a worker thread
@@ -1395,6 +1376,7 @@ pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, St
     {
         let actual = crate::accessibility_backlight::set(percent)?;
         brightness_tap::seed_sixteenths(actual as f64 / 100.0);
+        crate::accessibility_backlight::publish_level(actual);
         // Opening Control Center steals focus and hides our popover. Put the
         // user back where the drag started after the local UI transaction.
         if let Some(window) = app.get_webview_window("main") {
@@ -1423,6 +1405,35 @@ pub fn request_accessibility_permission() -> bool {
     }
 }
 
+/// Why the built-in backlight is or is not controllable, so the UI can say it
+/// once instead of macOS re-prompting on every visit to the Tools tab.
+#[derive(serde::Serialize)]
+pub struct AccessibilityStatus {
+    pub trusted: bool,
+    /// Running from a randomized read-only App Translocation copy, where a
+    /// granted Accessibility permission never survives the next launch.
+    pub translocated: bool,
+}
+
+#[tauri::command]
+pub fn accessibility_status() -> AccessibilityStatus {
+    #[cfg(target_os = "macos")]
+    {
+        return AccessibilityStatus {
+            trusted: crate::accessibility_backlight::is_trusted(false),
+            translocated: crate::accessibility_backlight::bundle_is_translocated(),
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Nothing to consent to; the UI must not show a macOS-only notice.
+        AccessibilityStatus {
+            trusted: true,
+            translocated: false,
+        }
+    }
+}
+
 /// Cheap built-in refresh for polling. Once Accessibility permission exists,
 /// the retained Control Center slider is the authoritative live backlight
 /// value, so changes made in Control Center also flow back into SayKnow Kit.
@@ -1434,8 +1445,7 @@ pub fn sync_builtin_brightness() -> Option<BuiltinBrightnessSync> {
     }
     Some(BuiltinBrightnessSync {
         brightness: builtin_total()?,
-        system_level: accessibility_backlight_level()
-            .unwrap_or_else(tracked_system_level_percent),
+        system_level: accessibility_backlight_level().unwrap_or_else(tracked_system_level_percent),
     })
 }
 
@@ -1503,10 +1513,22 @@ mod tests {
             unsafe {
                 extern "C" {
                     fn CGGetDisplayTransferByTable(
-                        d: u32, c: u32, r: *mut f32, g: *mut f32, b: *mut f32, n: *mut u32,
+                        d: u32,
+                        c: u32,
+                        r: *mut f32,
+                        g: *mut f32,
+                        b: *mut f32,
+                        n: *mut u32,
                     ) -> i32;
                 }
-                CGGetDisplayTransferByTable(d, 512, r.as_mut_ptr(), g.as_mut_ptr(), b.as_mut_ptr(), &mut n);
+                CGGetDisplayTransferByTable(
+                    d,
+                    512,
+                    r.as_mut_ptr(),
+                    g.as_mut_ptr(),
+                    b.as_mut_ptr(),
+                    &mut n,
+                );
             }
             r[n as usize / 2]
         };
@@ -1531,7 +1553,10 @@ mod tests {
             base * 0.8
         );
         assert!(m80 > m40, "80% not brighter than 40%");
-        assert!((m100 - base).abs() < 0.02, "100% did not restore: {m100} vs {base}");
+        assert!(
+            (m100 - base).abs() < 0.02,
+            "100% did not restore: {m100} vs {base}"
+        );
     }
 
     /// Live enumeration through the exact list() path; CI-safe (empty on
@@ -1578,7 +1603,11 @@ mod tests {
             .into_iter()
             .find(|display| display.id == id)
             .expect("powered-off display card was lost");
-        assert_eq!(off.power, Some(false), "display did not report cached off state");
+        assert_eq!(
+            off.power,
+            Some(false),
+            "display did not report cached off state"
+        );
 
         ddc_worker::set_power(&id, true).expect("DDC wake sequence failed");
         std::thread::sleep(std::time::Duration::from_secs(3));

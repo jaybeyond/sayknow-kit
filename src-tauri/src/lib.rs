@@ -1567,6 +1567,7 @@ pub fn run() {
             display::set_display_brightness,
             display::set_builtin_backlight,
             display::request_accessibility_permission,
+            display::accessibility_status,
             display::set_display_power,
             display::sync_builtin_brightness,
             agent_usage::agent_usage,
