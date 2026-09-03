@@ -705,7 +705,7 @@ jobs:
           xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
           ```
 
-          CPU temperature is shown only when the operating system exposes a verified, unprivileged CPU-package sensor. Unsupported systems display “Unavailable” instead of estimating a value.
+          SoC die temperature is shown on macOS (Apple Silicon) through unprivileged AppleVendor sensors. Windows and any system without a trustworthy sensor display “Unavailable” instead of estimating a value.
           NOTES
           gh release create "$TAG" release-assets/* \
             --repo "${{ github.repository }}" \

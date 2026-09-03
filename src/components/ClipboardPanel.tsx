@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -53,6 +54,7 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState("")
+  const [pendingClear, setPendingClear] = useState<"unpinned" | "all" | null>(null)
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const filtered = useMemo(() => {
@@ -144,27 +146,13 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem
-                onSelect={() => {
-                  // Defer confirm to next tick so Radix can finish closing the
-                  // menu first — running confirm() synchronously inside onSelect
-                  // blocks the menu close and causes the dialog to never gain
-                  // focus properly in the Tauri webview.
-                  setTimeout(() => {
-                    if (confirm(t("clipboard.confirmClear"))) void clear()
-                  }, 0)
-                }}
-              >
+              <DropdownMenuItem onSelect={() => setPendingClear("unpinned")}>
                 {t("clipboard.clearUnpinned")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
-                onSelect={() => {
-                  setTimeout(() => {
-                    if (confirm(t("clipboard.confirmWipe"))) void wipe()
-                  }, 0)
-                }}
+                onSelect={() => setPendingClear("all")}
               >
                 {t("clipboard.clearAll")}
               </DropdownMenuItem>
@@ -375,6 +363,21 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
           </div>
         </>
       )}
+
+      <ConfirmDialog
+        open={pendingClear !== null}
+        message={pendingClear === "all" ? t("clipboard.confirmWipe") : t("clipboard.confirmClear")}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        destructive
+        onCancel={() => setPendingClear(null)}
+        onConfirm={() => {
+          const action = pendingClear
+          setPendingClear(null)
+          if (action === "all") void wipe()
+          else if (action === "unpinned") void clear()
+        }}
+      />
     </div>
   )
 }

@@ -1,6 +1,8 @@
 mod agent_usage;
 #[cfg(target_os = "macos")]
 mod accessibility_backlight;
+#[cfg(target_os = "macos")]
+mod thermal_macos;
 mod display;
 mod clipboard;
 

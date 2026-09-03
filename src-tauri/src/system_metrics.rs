@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 const COLLECTION_TIMEOUT: Duration = Duration::from_secs(2);
 const RESTART_REQUIRED_AFTER: Duration = Duration::from_secs(30);
 const NO_PACKAGE_SENSOR: &str = "no_verified_package_sensor";
+const SOC_DIE_PROVENANCE: &str = "apple_soc_die_max";
 static COALESCED_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static COLLECTION_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
 
@@ -56,9 +57,9 @@ pub enum ResourceStatus {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TemperatureStatus {
-    // This is part of the versioned DTO even though v0.2.4 has no adapter that
-    // meets the required unprivileged CPU-package evidence threshold.
-    #[allow(dead_code)]
+    // Populated on macOS by the unprivileged AppleVendor die-sensor adapter.
+    // Platforms without a trustworthy adapter never construct this variant.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Available {
         celsius: f32,
         sampled_at_ms: u64,
@@ -431,12 +432,30 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
         cpu,
         memory,
         storage,
-        // Generic component labels do not prove CPU-package identity on the
-        // supported platforms, so v0.2.4 deliberately exposes no adapter.
-        cpu_package_temperature: TemperatureStatus::Unavailable {
-            reason: NO_PACKAGE_SENSOR.to_string(),
-        },
+        cpu_package_temperature: temperature_status(sampled_at_ms),
     })
+}
+
+/// macOS reads the SoC die sensors through the unprivileged AppleVendor HID
+/// temperature page. Every other platform, and every macOS machine where the
+/// adapter cannot produce a trustworthy reading, stays explicitly unavailable.
+fn temperature_status(sampled_at_ms: u64) -> TemperatureStatus {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(celsius) = crate::thermal_macos::read_die_celsius() {
+            return TemperatureStatus::Available {
+                celsius,
+                sampled_at_ms,
+                provenance: SOC_DIE_PROVENANCE.to_string(),
+                adapter_id: crate::thermal_macos::ADAPTER_ID.to_string(),
+            };
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = sampled_at_ms;
+    TemperatureStatus::Unavailable {
+        reason: NO_PACKAGE_SENSOR.to_string(),
+    }
 }
 
 fn complete_attempt(state: &Arc<Mutex<ServiceState>>, generation: u64, result: &CollectionResult) {
@@ -618,10 +637,22 @@ mod tests {
         assert!(matches!(second.cpu, CpuStatus::Available { .. }));
         assert!(matches!(second.memory, ResourceStatus::Available { .. }));
         assert!(matches!(second.storage, ResourceStatus::Available { .. }));
-        assert!(matches!(
-            second.cpu_package_temperature,
-            TemperatureStatus::Unavailable { .. }
-        ));
+        match second.cpu_package_temperature {
+            TemperatureStatus::Available {
+                celsius,
+                ref provenance,
+                ref adapter_id,
+                ..
+            } => {
+                assert_eq!(provenance, SOC_DIE_PROVENANCE);
+                assert!(!adapter_id.is_empty());
+                assert!((5.0..=125.0).contains(&celsius));
+                assert!(cfg!(target_os = "macos"), "only macOS has a die adapter");
+            }
+            TemperatureStatus::Unavailable { ref reason } => {
+                assert_eq!(reason, NO_PACKAGE_SENSOR);
+            }
+        }
     }
 
     #[test]

@@ -19,7 +19,6 @@ type Strings = Record<string, string>
 
 export const UI_STRINGS: Record<UILocale, Strings> = {
   ko: {
-    "tab.usage": "사용량",
     "tab.tools": "도구",
     "tools.heading": "도구",
     "tools.refresh": "다시 불러오기",
@@ -27,7 +26,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "메모리",
     "tools.metrics.storage": "저장 공간",
-    "tools.metrics.temperature": "CPU 온도",
+    "tools.metrics.temperature": "SoC 다이 온도",
     "tools.metrics.warming": "준비 중",
     "tools.metrics.unavailable": "사용할 수 없음",
     "tools.metrics.error": "오류",
@@ -297,7 +296,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   en: {
-    "tab.usage": "Usage",
     "tab.tools": "Tools",
     "tools.heading": "Tools",
     "tools.refresh": "Rescan",
@@ -305,7 +303,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "Memory",
     "tools.metrics.storage": "Storage",
-    "tools.metrics.temperature": "CPU temperature",
+    "tools.metrics.temperature": "SoC die temperature",
     "tools.metrics.warming": "Warming up",
     "tools.metrics.unavailable": "Unavailable",
     "tools.metrics.error": "Error",
@@ -575,7 +573,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   ja: {
-    "tab.usage": "使用量",
     "tab.tools": "ツール",
     "tools.heading": "ツール",
     "tools.refresh": "再スキャン",
@@ -583,7 +580,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "メモリ",
     "tools.metrics.storage": "ストレージ",
-    "tools.metrics.temperature": "CPU温度",
+    "tools.metrics.temperature": "SoCダイ温度",
     "tools.metrics.warming": "準備中",
     "tools.metrics.unavailable": "利用不可",
     "tools.metrics.error": "エラー",
@@ -855,7 +852,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   zh: {
-    "tab.usage": "用量",
     "tab.tools": "工具",
     "tools.heading": "工具",
     "tools.refresh": "重新扫描",
@@ -863,7 +859,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "内存",
     "tools.metrics.storage": "存储空间",
-    "tools.metrics.temperature": "CPU 温度",
+    "tools.metrics.temperature": "SoC 芯片温度",
     "tools.metrics.warming": "准备中",
     "tools.metrics.unavailable": "不可用",
     "tools.metrics.error": "错误",
@@ -1135,7 +1131,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   es: {
-    "tab.usage": "Uso",
     "tab.tools": "Herramientas",
     "tools.heading": "Herramientas",
     "tools.refresh": "Reescanear",
@@ -1143,7 +1138,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "Memoria",
     "tools.metrics.storage": "Almacenamiento",
-    "tools.metrics.temperature": "Temperatura de CPU",
+    "tools.metrics.temperature": "Temperatura del SoC",
     "tools.metrics.warming": "Preparando",
     "tools.metrics.unavailable": "No disponible",
     "tools.metrics.error": "Error",
@@ -1415,7 +1410,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   fr: {
-    "tab.usage": "Usage",
     "tab.tools": "Outils",
     "tools.heading": "Outils",
     "tools.refresh": "Rescanner",
@@ -1423,7 +1417,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "Mémoire",
     "tools.metrics.storage": "Stockage",
-    "tools.metrics.temperature": "Température du CPU",
+    "tools.metrics.temperature": "Température du SoC",
     "tools.metrics.warming": "Préparation",
     "tools.metrics.unavailable": "Indisponible",
     "tools.metrics.error": "Erreur",
@@ -1695,7 +1689,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   de: {
-    "tab.usage": "Verbrauch",
     "tab.tools": "Werkzeuge",
     "tools.heading": "Werkzeuge",
     "tools.refresh": "Neu scannen",
@@ -1703,7 +1696,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "Arbeitsspeicher",
     "tools.metrics.storage": "Speicher",
-    "tools.metrics.temperature": "CPU-Temperatur",
+    "tools.metrics.temperature": "SoC-Temperatur",
     "tools.metrics.warming": "Wird vorbereitet",
     "tools.metrics.unavailable": "Nicht verfügbar",
     "tools.metrics.error": "Fehler",
@@ -1975,7 +1968,6 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
   },
 
   vi: {
-    "tab.usage": "Mức dùng",
     "tab.tools": "Công cụ",
     "tools.heading": "Công cụ",
     "tools.refresh": "Quét lại",
@@ -1983,7 +1975,7 @@ export const UI_STRINGS: Record<UILocale, Strings> = {
     "tools.metrics.cpu": "CPU",
     "tools.metrics.memory": "Bộ nhớ",
     "tools.metrics.storage": "Lưu trữ",
-    "tools.metrics.temperature": "Nhiệt độ CPU",
+    "tools.metrics.temperature": "Nhiệt độ SoC",
     "tools.metrics.warming": "Đang khởi động",
     "tools.metrics.unavailable": "Không khả dụng",
     "tools.metrics.error": "Lỗi",

@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -62,6 +63,7 @@ export function ChatPanel({ settings, update }: Props) {
   const [draft, setDraft] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -120,7 +122,7 @@ export function ChatPanel({ settings, update }: Props) {
 
   function handleDeleteCurrent() {
     if (!current) return
-    if (confirm(t("chat.confirmDelete"))) deleteConversation(current.id)
+    setPendingDeleteId(current.id)
   }
 
   return (
@@ -136,9 +138,7 @@ export function ChatPanel({ settings, update }: Props) {
           currentId={current?.id ?? null}
           onSwitch={switchTo}
           onNew={newConversation}
-          onDelete={(id) => {
-            if (confirm(t("chat.confirmDelete"))) deleteConversation(id)
-          }}
+          onDelete={(id) => setPendingDeleteId(id)}
         />
         <button
           type="button"
@@ -332,6 +332,20 @@ export function ChatPanel({ settings, update }: Props) {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        message={t("chat.confirmDelete")}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        destructive
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          const id = pendingDeleteId
+          setPendingDeleteId(null)
+          if (id) deleteConversation(id)
+        }}
+      />
     </div>
   )
 }

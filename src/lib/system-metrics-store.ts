@@ -7,8 +7,9 @@ export type CpuMetric =
 export type ResourceMetric =
   | { state: "available"; total_bytes: number; used_bytes: number; available_bytes: number; sampled_at_ms: number }
   | { state: "unavailable"; reason: string }
+export type TemperatureProvenance = "verified_cpu_package" | "apple_soc_die_max"
 export type TemperatureMetric =
-  | { state: "available"; celsius: number; sampled_at_ms: number; provenance: "verified_cpu_package"; adapter_id: string }
+  | { state: "available"; celsius: number; sampled_at_ms: number; provenance: TemperatureProvenance; adapter_id: string }
   | { state: "unavailable"; reason: string }
 export type MetricsSnapshot = {
   schema_version: 1
@@ -119,6 +120,12 @@ function decodeResource(value: unknown, name: string): ResourceMetric {
   }
 }
 
+const TEMPERATURE_PROVENANCE: readonly TemperatureProvenance[] = ["verified_cpu_package", "apple_soc_die_max"]
+
+function isTemperatureProvenance(value: unknown): value is TemperatureProvenance {
+  return typeof value === "string" && (TEMPERATURE_PROVENANCE as readonly string[]).includes(value)
+}
+
 function decodeTemperature(value: unknown): TemperatureMetric {
   if (!isRecord(value) || typeof value.state !== "string") throw new Error("invalid temperature metric")
   if (value.state === "unavailable") return reasonMetric(value, "unavailable")
@@ -129,7 +136,7 @@ function decodeTemperature(value: unknown): TemperatureMetric {
     value.celsius < -273.15 ||
     value.celsius > 200 ||
     !safeCount(value.sampled_at_ms) ||
-    value.provenance !== "verified_cpu_package" ||
+    !isTemperatureProvenance(value.provenance) ||
     typeof value.adapter_id !== "string" ||
     !value.adapter_id
   ) {
@@ -139,7 +146,7 @@ function decodeTemperature(value: unknown): TemperatureMetric {
     state: "available",
     celsius: value.celsius,
     sampled_at_ms: value.sampled_at_ms,
-    provenance: "verified_cpu_package",
+    provenance: value.provenance,
     adapter_id: value.adapter_id,
   }
 }

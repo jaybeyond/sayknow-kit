@@ -27,8 +27,8 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 ## 主要功能
 
 - 🌞 **工具标签页（macOS 专属显示功能）** — 外接屏幕使用 DDC/CI，支持的 Mac 内建面板在可用时使用 IOKit 背光控制亮度。外接 DDC 功能因硬件而异。在较新的受支持 Mac 上，如果无法直接访问 IOKit，则通过 macOS 控制中心辅助功能自动化操作；两种内建显示路径均仅适用于 macOS。
-- 📊 **系统状态** — 显示系统 CPU、内存和系统磁盘。v0.2.9 没有经过验证的温度适配器，因此 CPU 封装温度显示为不可用
-- 📊 **用量标签页** — 直接读取 Claude Code、Codex、SayKnow CLI 的本地会话日志。显示 5 小时计费区块(剩余时间与消耗速率),以及 CLI 记录的 5 小时 / 每周真实使用率和重置时间。已重置的窗口加删除线标记,不当作当前值展示。无需联网,也不需要额外登录
+- 📊 **系统状态** — 显示系统 CPU、内存和系统磁盘；在 macOS（Apple Silicon）上还会显示无需提权即可读取的 SoC 芯片温度。Windows 或无法读取可信传感器时显示为不可用
+- 📊 **用量（位于工具标签页）** — 直接读取 Claude Code、Codex、SayKnow CLI 的本地会话日志。显示 5 小时计费区块(剩余时间与消耗速率),以及 CLI 记录的 5 小时 / 每周真实使用率和重置时间。已重置的窗口加删除线标记,不当作当前值展示。无需联网,也不需要额外登录
 - 📋 **剪贴板历史标签页** — 后台采集复制内容。正文与备注可一并搜索,支持置顶、发送到翻译、两级清理。空值、OTP 形式字符串与 PEM 密钥块不予保存
 - 💬 **聊天标签** — 同窗口轻量 Q&A,多对话侧栏,每条消息支持 重新生成 / 编辑 / 复制 / 停止
 - 🤖 **多提供商** — OpenRouter / OCP / 自定义 OpenAI 兼容端点
@@ -60,13 +60,13 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 
 ## 安装
 
-### v0.2.9 官方安装程序（推荐）
+### v0.2.10 官方安装程序（推荐）
 
 仅从[官方 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)下载，并使用 `SHA256SUMS.txt` 校验。
 
-**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.2.9_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.2.9 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。在 Finder 中右键应用 → **打开** → 再次**打开**。
+**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.2.10_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.2.10 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。在 Finder 中右键应用 → **打开** → 再次**打开**。
 
-**Windows（x64）：** 下载 `SayKnow-Kit_0.2.9_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.2.9_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
+**Windows（x64）：** 下载 `SayKnow-Kit_0.2.10_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.2.10_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
 
 ### 卸载
 
@@ -114,7 +114,7 @@ OpenRouter API 密钥涉及计费，SayKnow Kit 不以明文存储，使用操�
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.2.9 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
+安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.2.10 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
 
 ## 许可
 

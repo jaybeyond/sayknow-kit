@@ -129,6 +129,26 @@ describe("system metrics decoder", () => {
     expect(label).toBeTruthy()
     expect(() => decodeMetricsSnapshot(payload)).toThrow()
   })
+
+  it("accepts the macOS SoC die adapter as a known provenance", () => {
+    const decoded = decodeMetricsSnapshot({
+      ...snapshot,
+      cpu_package_temperature: {
+        state: "available",
+        celsius: 45.88,
+        sampled_at_ms: 1_000,
+        provenance: "apple_soc_die_max",
+        adapter_id: "macos.iohid.applevendor.die.v1",
+      },
+    })
+    expect(decoded.cpu_package_temperature).toEqual({
+      state: "available",
+      celsius: 45.88,
+      sampled_at_ms: 1_000,
+      provenance: "apple_soc_die_max",
+      adapter_id: "macos.iohid.applevendor.die.v1",
+    })
+  })
 })
 
 describe("system metrics lifecycle", () => {

@@ -7,6 +7,7 @@ import {
   Sun,
   Wrench,
 } from "lucide-react"
+import { UsagePanel } from "@/components/UsagePanel"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import type { Settings } from "@/hooks/useSettings"
@@ -241,6 +242,8 @@ export function ToolsPanel({ settings, active }: Props) {
             {t("tools.brightness.ddcNote")}
           </p>
         )}
+
+        <UsagePanel settings={settings} active={active} />
       </div>
     </div>
   )

@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils"
 
 type Props = {
   settings: Settings
-  /** Only the visible tab scans; the scan is disk-heavy. */
+  /** Only scan while the hosting tab is visible; the scan is disk-heavy. */
   active: boolean
 }
 
@@ -71,86 +71,90 @@ export function UsagePanel({ settings, active }: Props) {
     }
   }, [agents, scannedAt, locale, t])
 
-  if (!supported) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-xs text-muted-foreground">
-        {t("usage.desktopOnly")}
-      </div>
-    )
-  }
+  // The Tools panel already gates on the desktop runtime; nothing to add here.
+  if (!supported) return null
 
+  const refreshButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-6 px-2 text-[11px]"
+      onClick={() => void refresh(true)}
+      disabled={loading}
+      title={t("usage.refresh")}
+    >
+      <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+    </Button>
+  )
+
+  const body = (
+    <>
+      {/* This app's own API spend — separate from the CLI agents below. */}
+      <section className="rounded-lg border bg-muted/30 p-2.5">
+        <div className="mb-1.5 text-[11px] font-medium">{t("usage.appOwn")}</div>
+        <div className="grid grid-cols-2 gap-2">
+          <Stat
+            label={t("usage.window.today")}
+            value={formatAppTokens(
+              appUsage.today.promptTokens + appUsage.today.completionTokens,
+            )}
+            sub={`${appUsage.today.calls} · ${formatCost(appUsage.today.costUsd)}`}
+          />
+          <Stat
+            label={t("usage.window.month")}
+            value={formatAppTokens(
+              appUsage.month.promptTokens + appUsage.month.completionTokens,
+            )}
+            sub={`${appUsage.month.calls} · ${formatCost(appUsage.month.costUsd)}`}
+          />
+        </div>
+      </section>
+
+      {(deepl || deeplError) && (
+        <DeeplCard usage={deepl} error={deeplError} t={t} />
+      )}
+
+      {agents.map((a) => (
+        <AgentCard
+          key={a.id}
+          agent={a}
+          t={t}
+          nowMs={scannedAt ?? 0}
+          lastActive={lastActive.get(a.id) ?? null}
+        />
+      ))}
+
+      {agents.length === 0 && loading && (
+        <div className="py-8 text-center text-xs text-muted-foreground">
+          {t("usage.scanning")}
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+          {error}
+        </div>
+      )}
+
+      <p className="px-0.5 pt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+        {t("usage.sourceNote")}
+      </p>
+    </>
+  )
+
+  // The Tools panel owns the scroll container and the outer padding, so only
+  // the heading row and the cards belong here.
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium">
+    <section aria-label={t("usage.heading")} className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-medium">
           <Gauge className="h-3.5 w-3.5" />
           {t("usage.heading")}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-[11px]"
-          onClick={() => void refresh(true)}
-          disabled={loading}
-          title={t("usage.refresh")}
-        >
-          <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-        </Button>
+        {refreshButton}
       </div>
-
-      <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
-        {/* This app's own API spend — separate from the CLI agents below. */}
-        <section className="rounded-lg border bg-muted/30 p-2.5">
-          <div className="mb-1.5 text-[11px] font-medium">{t("usage.appOwn")}</div>
-          <div className="grid grid-cols-2 gap-2">
-            <Stat
-              label={t("usage.window.today")}
-              value={formatAppTokens(
-                appUsage.today.promptTokens + appUsage.today.completionTokens,
-              )}
-              sub={`${appUsage.today.calls} · ${formatCost(appUsage.today.costUsd)}`}
-            />
-            <Stat
-              label={t("usage.window.month")}
-              value={formatAppTokens(
-                appUsage.month.promptTokens + appUsage.month.completionTokens,
-              )}
-              sub={`${appUsage.month.calls} · ${formatCost(appUsage.month.costUsd)}`}
-            />
-          </div>
-        </section>
-
-        {(deepl || deeplError) && (
-          <DeeplCard usage={deepl} error={deeplError} t={t} />
-        )}
-
-        {agents.map((a) => (
-          <AgentCard
-            key={a.id}
-            agent={a}
-            t={t}
-            nowMs={scannedAt ?? 0}
-            lastActive={lastActive.get(a.id) ?? null}
-          />
-        ))}
-
-        {agents.length === 0 && loading && (
-          <div className="py-8 text-center text-xs text-muted-foreground">
-            {t("usage.scanning")}
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
-            {error}
-          </div>
-        )}
-
-        <p className="px-0.5 pt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-          {t("usage.sourceNote")}
-        </p>
-      </div>
-    </div>
+      {body}
+    </section>
   )
 }
 

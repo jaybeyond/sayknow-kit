@@ -1,7 +1,6 @@
 import { useState } from "react"
 import {
   Clipboard as ClipboardIcon,
-  Gauge,
   Languages as TranslateIcon,
   Maximize2,
   MessageSquare,
@@ -18,7 +17,6 @@ import type { HistoryEntry } from "@/lib/history"
 import { TranslatePanel, type TranslateInjection } from "./TranslatePanel"
 import { ChatPanel } from "./ChatPanel"
 import { ClipboardPanel } from "./ClipboardPanel"
-import { UsagePanel } from "./UsagePanel"
 import { ToolsPanel } from "./ToolsPanel"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
@@ -26,7 +24,7 @@ import { useT } from "@/i18n"
 import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 
-type Tab = "translate" | "chat" | "clipboard" | "usage" | "tools"
+type Tab = "translate" | "chat" | "clipboard" | "tools"
 const TAB_KEY = "active-tab"
 
 type Props = {
@@ -39,9 +37,12 @@ type Props = {
 
 export function TabbedPanel(props: Props) {
   const { t } = useT(props.settings.uiLocale)
-  const [tab, setTab] = useState<Tab>(
-    () => (storage.get<Tab>(TAB_KEY) ?? "translate") as Tab,
-  )
+  const [tab, setTab] = useState<Tab>(() => {
+    // "usage" was a tab of its own until it moved under Tools; a stored value
+    // from that build must not select a panel that no longer exists.
+    const stored = storage.get<string>(TAB_KEY)
+    return stored === "usage" ? "tools" : ((stored ?? "translate") as Tab)
+  })
   // What the clipboard tab or the history menu wants the translate tab to pick
   // up. nonce changes every dispatch so an identical payload still lands.
   const [pendingTranslateInput, setPendingTranslateInput] =
@@ -100,12 +101,6 @@ export function TabbedPanel(props: Props) {
           icon={ClipboardIcon}
           label={t("tab.clipboard")}
           onClick={() => selectTab("clipboard")}
-        />
-        <TabButton
-          active={tab === "usage"}
-          icon={Gauge}
-          label={t("tab.usage")}
-          onClick={() => selectTab("usage")}
         />
 
         <TabButton
@@ -192,8 +187,6 @@ export function TabbedPanel(props: Props) {
             settings={props.settings}
             onSendToTranslate={sendToTranslate}
           />
-        ) : tab === "usage" ? (
-          <UsagePanel settings={props.settings} active={tab === "usage"} />
         ) : (
           <ToolsPanel settings={props.settings} active={tab === "tools"} />
         )}

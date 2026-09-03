@@ -72,6 +72,11 @@ vi.mock("@/lib/system-metrics-store", () => ({
   formatBytes: (bytes: number) => `${bytes} B`,
   formatPercent: (percent: number) => `${Math.round(percent)}%`,
 }))
+vi.mock("@/components/UsagePanel", () => ({
+  UsagePanel: ({ active }: { active: boolean }) => (
+    <section aria-label="Usage" data-active={String(active)} />
+  ),
+}))
 
 import { ToolsPanel } from "./ToolsPanel"
 
@@ -99,5 +104,19 @@ describe("ToolsPanel system metrics", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }))
     expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
     expect(mocks.scanDisplays).toHaveBeenCalledTimes(1)
+  })
+
+  it("hosts usage below the brightness section and forwards visibility", () => {
+    const { container } = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    const usage = screen.getByRole("region", { name: "Usage" })
+    expect(usage.dataset.active).toBe("true")
+
+    const brightness = screen.getByText("Brightness").closest("section")
+    expect(brightness).not.toBeNull()
+    expect(
+      brightness!.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(container.querySelector('[aria-label="Usage"]')).toBe(usage)
   })
 })
