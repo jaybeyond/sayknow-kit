@@ -122,3 +122,11 @@ export async function requestAccessibility(): Promise<void> {
     await refreshAccessibility()
   }
 }
+
+/** Restart so a fresh process picks up a just-granted Accessibility permission.
+ *  macOS decides trust when the process starts; the running one stays denied. */
+export async function relaunchApp(): Promise<void> {
+  if (!isTauri()) return
+  const { invoke } = await import("@tauri-apps/api/core")
+  await invoke("relaunch_app")
+}

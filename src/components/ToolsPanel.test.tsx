@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   syncBuiltin: vi.fn(() => Promise.resolve()),
   refreshAccessibility: vi.fn(() => Promise.resolve()),
   requestAccessibility: vi.fn(() => Promise.resolve()),
+  relaunchApp: vi.fn(() => Promise.resolve()),
   toolsState: {
     displays: [] as Array<Record<string, unknown>>,
     error: null,
@@ -66,6 +67,7 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axBody": "Allow SayKnow Kit in Accessibility",
       "tools.brightness.axTranslocated": "Move SayKnow Kit to Applications",
       "tools.brightness.axGrant": "Request permission",
+      "tools.brightness.axRestart": "Restart the app",
     })[key] ?? key,
   }),
 }))
@@ -76,6 +78,7 @@ vi.mock("@/lib/tools-store", () => ({
   syncBuiltin: mocks.syncBuiltin,
   refreshAccessibility: mocks.refreshAccessibility,
   requestAccessibility: mocks.requestAccessibility,
+  relaunchApp: mocks.relaunchApp,
 }))
 vi.mock("@/lib/system-metrics-store", () => ({
   getSnapshot: () => mocks.metricsState,
@@ -170,6 +173,30 @@ describe("ToolsPanel accessibility notice", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Request permission" }))
     expect(mocks.requestAccessibility).toHaveBeenCalledOnce()
+  })
+
+  it("offers a restart, because macOS only grants trust to a new process", () => {
+    mocks.toolsState.displays = [builtinOnGamma]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Restart the app" }))
+    expect(mocks.relaunchApp).toHaveBeenCalledOnce()
+  })
+
+  it("keeps re-reading trust while the notice is up", async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.toolsState.displays = [builtinOnGamma]
+      mocks.toolsState.accessibility = { trusted: false, translocated: false }
+      render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      const initial = mocks.refreshAccessibility.mock.calls.length
+
+      await vi.advanceTimersByTimeAsync(4100)
+      expect(mocks.refreshAccessibility.mock.calls.length).toBeGreaterThan(initial)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("tells a translocated copy to move instead of offering a futile prompt", () => {

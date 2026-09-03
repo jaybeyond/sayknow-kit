@@ -64,14 +64,14 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 
 1. Tải DMG macOS aarch64 từ [bản phát hành GitHub chính thức](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Mở DMG, kéo SayKnow Kit.app vào `/Applications`.
-3. Ứng dụng v0.2.11 chỉ có chữ ký **ad hoc**, không có Developer ID hay notarization; cảnh báo Gatekeeper là điều bình thường.
-4. macOS 13 trở lên không còn chấp nhận cách chuột phải: mở một lần rồi vào **Cài đặt hệ thống → Quyền riêng tư và bảo mật → Vẫn mở**. Hoặc chạy `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Nếu mở thẳng từ DMG, macOS chạy ứng dụng từ một bản sao chỉ đọc ngẫu nhiên, nơi quyền trợ năng không bao giờ được lưu.
+3. Ứng dụng v0.2.12 chỉ có chữ ký **ad hoc**, không có Developer ID hay notarization; cảnh báo Gatekeeper là điều bình thường.
+4. macOS 13 trở lên không còn chấp nhận cách chuột phải: mở một lần rồi vào **Cài đặt hệ thống → Quyền riêng tư và bảo mật → Vẫn mở**. Hoặc chạy `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Nếu mở thẳng từ DMG, macOS chạy ứng dụng từ một bản sao chỉ đọc ngẫu nhiên, nơi quyền trợ năng không bao giờ được lưu. Nếu macOS vẫn đòi quyền trợ năng dù đã cấp, mục đã lưu không còn khớp chữ ký ad hoc mới: chạy `tccutil reset Accessibility com.sayknow.app` rồi khởi động lại ứng dụng.
 5. Kiểm tra `SHA256SUMS.txt` được phát hành cùng phiên bản trước khi mở.
 
 ### Windows — EXE hoặc MSI
 
 1. Chỉ tải bộ cài NSIS `.exe` hoặc bộ cài MSI `.msi` x64 từ GitHub Release chính thức.
-2. Windows SmartScreen có thể cảnh báo vì v0.2.11 chưa được ký; điều này bình thường. Không có Authenticode.
+2. Windows SmartScreen có thể cảnh báo vì v0.2.12 chưa được ký; điều này bình thường. Không có Authenticode.
 3. Kiểm tra `SHA256SUMS.txt`, sau đó chạy trình cài đặt.
 4. Gỡ cài đặt qua **Cài đặt → Ứng dụng → Ứng dụng đã cài đặt → SayKnow Kit → Gỡ cài đặt**.
 
@@ -119,7 +119,7 @@ OpenRouter API key là thông tin tính phí và chỉ được lưu trong kho b
 - macOS **Keychain** và Windows **Credential Manager**
 - Không lưu plaintext và không dẫn xuất từ mật khẩu đăng nhập
 - Chỉ tải từ GitHub Releases chính thức và kiểm tra `SHA256SUMS.txt`
-- Ứng dụng macOS v0.2.11 dùng chữ ký ad hoc, không có Developer ID hay notarization; trình cài Windows không có chữ ký Authenticode. Cảnh báo Gatekeeper và SmartScreen là điều bình thường.
+- Ứng dụng macOS v0.2.12 dùng chữ ký ad hoc, không có Developer ID hay notarization; trình cài Windows không có chữ ký Authenticode. Cảnh báo Gatekeeper và SmartScreen là điều bình thường.
 
 ## Giấy phép
 

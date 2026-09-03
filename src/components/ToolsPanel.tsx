@@ -17,6 +17,7 @@ import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
   refreshAccessibility,
+  relaunchApp,
   requestAccessibility,
   scanDisplays,
   subscribe,
@@ -89,6 +90,16 @@ export function ToolsPanel({ settings, active }: Props) {
     if (!active) return
     void refreshAccessibility()
   }, [active])
+
+  // While the notice is up the user is in System Settings toggling the switch.
+  // Poll so the panel reacts the moment macOS grants trust, instead of looking
+  // like it is still demanding permission that was already given.
+  const awaitingTrust = active && accessibility !== null && !accessibility.trusted
+  useEffect(() => {
+    if (!awaitingTrust) return
+    const timer = setInterval(() => void refreshAccessibility(), 2000)
+    return () => clearInterval(timer)
+  }, [awaitingTrust])
 
   // Rescan every time the popover opens: monitors connect, wake, or lock
   // their DDC while the app runs, and a list scanned once at tab-activation
@@ -273,14 +284,27 @@ function AccessibilityNotice({
           : t("tools.brightness.axBody")}
       </p>
       {!state.translocated && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-1.5 h-6 px-2 text-[10px]"
-          onClick={() => void requestAccessibility()}
-        >
-          {t("tools.brightness.axGrant")}
-        </Button>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 px-2 text-[10px]"
+            onClick={() => void requestAccessibility()}
+          >
+            {t("tools.brightness.axGrant")}
+          </Button>
+          {/* macOS decides trust at process start: an app that was denied when
+              it launched stays denied until it restarts, however many times the
+              switch is toggled. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[10px]"
+            onClick={() => void relaunchApp()}
+          >
+            {t("tools.brightness.axRestart")}
+          </Button>
+        </div>
       )}
     </div>
   )

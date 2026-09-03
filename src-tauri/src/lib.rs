@@ -1477,6 +1477,14 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Relaunch ourselves. macOS hands an Accessibility grant to a *new* process:
+/// an app that was untrusted at launch keeps failing the check until it
+/// restarts, which is exactly the "I allowed it and it still asks" loop.
+#[tauri::command]
+fn relaunch_app(app: AppHandle) {
+    app.restart();
+}
+
 #[tauri::command]
 fn open_settings(app: AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window("settings") {
@@ -1568,6 +1576,7 @@ pub fn run() {
             display::set_builtin_backlight,
             display::request_accessibility_permission,
             display::accessibility_status,
+            relaunch_app,
             display::set_display_power,
             display::sync_builtin_brightness,
             agent_usage::agent_usage,
