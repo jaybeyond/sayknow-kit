@@ -1413,16 +1413,33 @@ pub struct AccessibilityStatus {
     /// Running from a randomized read-only App Translocation copy, where a
     /// granted Accessibility permission never survives the next launch.
     pub translocated: bool,
+    /// Ad-hoc signed build: macOS pins the grant to this binary's hash, so an
+    /// update leaves a stale entry that still reads as enabled but is denied.
+    pub adhoc: bool,
 }
 
 #[tauri::command]
 pub fn accessibility_status() -> AccessibilityStatus {
     #[cfg(target_os = "macos")]
     {
-        return AccessibilityStatus {
+        let status = AccessibilityStatus {
             trusted: crate::accessibility_backlight::is_trusted(false),
             translocated: crate::accessibility_backlight::bundle_is_translocated(),
+            adhoc: crate::accessibility_backlight::is_adhoc_signed(),
         };
+        // One line per launch, so an "I allowed it and it still asks" report is
+        // answered from the log instead of guesswork.
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
+            log::info!(
+                "accessibility: trusted={} translocated={} adhoc={} exe={:?}",
+                status.trusted,
+                status.translocated,
+                status.adhoc,
+                std::env::current_exe().ok(),
+            );
+        });
+        return status;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1430,6 +1447,7 @@ pub fn accessibility_status() -> AccessibilityStatus {
         AccessibilityStatus {
             trusted: true,
             translocated: false,
+            adhoc: false,
         }
     }
 }

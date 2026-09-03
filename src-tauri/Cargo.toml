@@ -1,6 +1,6 @@
 [package]
 name = "sayknow"
-version = "0.2.12"
+version = "0.2.13"
 description = "SayKnow Kit — menu bar AI kit for translation, chat, and clipboard"
 authors = ["SayKnow"]
 license = ""

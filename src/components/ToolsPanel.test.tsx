@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
     displays: [] as Array<Record<string, unknown>>,
     error: null,
     loaded: true,
-    accessibility: null as { trusted: boolean; translocated: boolean } | null,
+    accessibility: null as { trusted: boolean; translocated: boolean; adhoc: boolean } | null,
   },
   metricsState: {
     status: "stale_with_error" as const,
@@ -68,6 +68,7 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axTranslocated": "Move SayKnow Kit to Applications",
       "tools.brightness.axGrant": "Request permission",
       "tools.brightness.axRestart": "Restart the app",
+      "tools.brightness.axAdhoc": "Ad-hoc build: reset the entry",
     })[key] ?? key,
   }),
 }))
@@ -165,7 +166,7 @@ describe("ToolsPanel accessibility notice", () => {
 
   it("reads permission state instead of prompting on every visit", async () => {
     mocks.toolsState.displays = [builtinOnGamma]
-    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     await waitFor(() => expect(mocks.refreshAccessibility).toHaveBeenCalled())
@@ -177,7 +178,7 @@ describe("ToolsPanel accessibility notice", () => {
 
   it("offers a restart, because macOS only grants trust to a new process", () => {
     mocks.toolsState.displays = [builtinOnGamma]
-    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     fireEvent.click(screen.getByRole("button", { name: "Restart the app" }))
@@ -188,7 +189,7 @@ describe("ToolsPanel accessibility notice", () => {
     vi.useFakeTimers()
     try {
       mocks.toolsState.displays = [builtinOnGamma]
-      mocks.toolsState.accessibility = { trusted: false, translocated: false }
+      mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
       render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
       const initial = mocks.refreshAccessibility.mock.calls.length
 
@@ -199,9 +200,22 @@ describe("ToolsPanel accessibility notice", () => {
     }
   })
 
+  it("explains a stale grant when the build is ad-hoc signed", () => {
+    mocks.toolsState.displays = [builtinOnGamma]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: true }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByText("Ad-hoc build: reset the entry")).toBeTruthy()
+    cleanup()
+
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(screen.queryByText("Ad-hoc build: reset the entry")).toBeNull()
+  })
+
   it("tells a translocated copy to move instead of offering a futile prompt", () => {
     mocks.toolsState.displays = [builtinOnGamma]
-    mocks.toolsState.accessibility = { trusted: false, translocated: true }
+    mocks.toolsState.accessibility = { trusted: false, translocated: true, adhoc: true }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     expect(screen.getByText("Move SayKnow Kit to Applications")).toBeTruthy()
@@ -210,7 +224,7 @@ describe("ToolsPanel accessibility notice", () => {
 
   it("stays silent once the built-in backlight is actually controllable", () => {
     mocks.toolsState.displays = [{ ...builtinOnGamma, method: "backlight" }]
-    mocks.toolsState.accessibility = { trusted: false, translocated: false }
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     expect(screen.queryByText("Accessibility permission required")).toBeNull()

@@ -283,6 +283,13 @@ function AccessibilityNotice({
           ? t("tools.brightness.axTranslocated")
           : t("tools.brightness.axBody")}
       </p>
+      {/* An ad-hoc build pins the grant to this exact binary, so the entry the
+          user already switched on belongs to the previous version. */}
+      {!state.translocated && state.adhoc && (
+        <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+          {t("tools.brightness.axAdhoc")}
+        </p>
+      )}
       {!state.translocated && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <Button

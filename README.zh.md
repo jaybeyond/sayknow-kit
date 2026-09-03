@@ -60,11 +60,11 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 
 ## 安装
 
-### v0.2.12 官方安装程序（推荐）
+### v0.2.13 官方安装程序（推荐）
 
 仅从[官方 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)下载，并使用 `SHA256SUMS.txt` 校验。
 
-**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.2.12_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.2.12 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。macOS 13 及以上版本不再接受右键绕过：先运行一次,然后前往**系统设置 → 隐私与安全性 → 仍要打开**。也可以自行清除隔离属性:
+**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.2.13_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.2.13 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。macOS 13 及以上版本不再接受右键绕过：先运行一次,然后前往**系统设置 → 隐私与安全性 → 仍要打开**。也可以自行清除隔离属性:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -78,7 +78,7 @@ tccutil reset Accessibility com.sayknow.app
 
 请务必先移动到 `/Applications`。若直接从 DMG 或下载文件夹启动,macOS 会在随机的只读位置运行应用,内置屏幕亮度所需的辅助功能权限将无法保存。
 
-**Windows（x64）：** 下载 `SayKnow-Kit_0.2.12_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.2.12_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
+**Windows（x64）：** 下载 `SayKnow-Kit_0.2.13_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.2.13_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
 
 ### 卸载
 
@@ -126,7 +126,7 @@ OpenRouter API 密钥涉及计费，SayKnow Kit 不以明文存储，使用操�
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.2.12 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
+安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.2.13 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
 
 ## 许可
 

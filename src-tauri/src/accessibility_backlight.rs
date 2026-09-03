@@ -86,6 +86,17 @@ extern "C" {
     fn CFNumberGetValue(number: CfTypeRef, number_type: isize, value: *mut c_void) -> bool;
 }
 
+#[link(name = "Security", kind = "framework")]
+extern "C" {
+    fn SecCodeCopySelf(flags: u32, code: *mut CfTypeRef) -> i32;
+    fn SecCodeCopySigningInformation(
+        code: CfTypeRef,
+        flags: u32,
+        information: *mut CfTypeRef,
+    ) -> i32;
+    fn CFDictionaryGetValue(dictionary: CfTypeRef, key: CfTypeRef) -> CfTypeRef;
+}
+
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventSourceCreate(state: i32) -> CgEventSource;
@@ -277,6 +288,41 @@ pub fn bundle_is_translocated() -> bool {
 fn path_is_translocated(path: &std::path::Path) -> bool {
     path.components()
         .any(|component| component.as_os_str() == "AppTranslocation")
+}
+
+/// Bit 1 of `kSecCodeInfoFlags`: the bundle carries an ad-hoc signature.
+const CS_ADHOC: i64 = 0x0000_0002;
+const CF_NUMBER_SINT64: isize = 4;
+
+/// True when we are running an ad-hoc signed bundle. It matters because macOS
+/// then pins the stored Accessibility grant to this exact binary's cdhash, so
+/// every update silently invalidates it while the switch still reads as on.
+pub fn is_adhoc_signed() -> bool {
+    unsafe {
+        let mut code: CfTypeRef = ptr::null();
+        if SecCodeCopySelf(0, &mut code) != 0 || code.is_null() {
+            return false;
+        }
+        let code = OwnedCf(code);
+        let mut information: CfTypeRef = ptr::null();
+        if SecCodeCopySigningInformation(code.0, 0, &mut information) != 0 || information.is_null()
+        {
+            return false;
+        }
+        let information = OwnedCf(information);
+        let Some(key) = cf_string("flags") else {
+            return false;
+        };
+        let value = CFDictionaryGetValue(information.0, key.0 as CfTypeRef);
+        if value.is_null() {
+            return false;
+        }
+        let mut flags: i64 = 0;
+        if !CFNumberGetValue(value, CF_NUMBER_SINT64, &mut flags as *mut _ as *mut c_void) {
+            return false;
+        }
+        flags & CS_ADHOC != 0
+    }
 }
 
 unsafe fn post_event(event: CgEvent) {

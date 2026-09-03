@@ -21,6 +21,9 @@ export type AccessibilityState = {
   /** Quarantined copy running from a randomized read-only path: macOS throws
    *  the granted permission away on the next launch, so consent cannot fix it. */
   translocated: boolean
+  /** Ad-hoc signed build: the grant is pinned to this binary's hash, so an
+   *  update leaves a stale entry that still shows as enabled but is denied. */
+  adhoc: boolean
 }
 
 export type ToolsState = {
