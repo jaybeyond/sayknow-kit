@@ -299,8 +299,12 @@ mod iokit_backlight {
     /// Whether the classic path can actually drive this panel. False on the
     /// new backlight architecture; the UI then shows the panel without a
     /// working slider instead of pretending.
+    ///
+    /// Cached: the answer is a property of the machine, and the probe walks the
+    /// IOKit registry — which the 250ms brightness poll used to redo every tick.
     pub fn controllable() -> bool {
-        find_backlight_service().is_some()
+        static CONTROLLABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CONTROLLABLE.get_or_init(|| find_backlight_service().is_some())
     }
 }
 

@@ -479,7 +479,10 @@ pub fn get() -> Option<u8> {
 }
 
 /// How often the sampler thread is allowed to touch Control Center's AX tree.
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(700);
+/// Control Center is the only writer of this value besides us, so a couple of
+/// seconds of latency is invisible while a sub-second loop is not: each miss
+/// walks another process's whole window tree over synchronous IPC.
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(2000);
 /// A sample older than this is stale: report nothing rather than a stale level.
 const SAMPLE_TTL: Duration = Duration::from_secs(4);
 /// The sampler idles once the UI stops asking, so a hidden window costs nothing.
@@ -519,22 +522,72 @@ fn ensure_sampler() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    thread::spawn(|| loop {
-        thread::sleep(SAMPLE_INTERVAL);
-        let wanted = DEMAND
-            .lock()
-            .ok()
-            .and_then(|demand| *demand)
-            .map(|at| at.elapsed() < DEMAND_TTL)
-            .unwrap_or(false);
-        if !wanted || !is_trusted(false) {
-            continue;
-        }
-        let value = get();
-        if let Ok(mut sample) = SAMPLE.lock() {
-            *sample = value.map(|percent| (percent, Instant::now()));
+    thread::spawn(|| {
+        // The slider element stays valid while ControlCenter lives, so the tree
+        // walk is a cold path: the hot path reads one attribute off this handle.
+        // The pointers never leave this thread.
+        let mut retained: Option<(i32, AxElement, AxElement)> = None;
+        loop {
+            thread::sleep(SAMPLE_INTERVAL);
+            let wanted = DEMAND
+                .lock()
+                .ok()
+                .and_then(|demand| *demand)
+                .map(|at| at.elapsed() < DEMAND_TTL)
+                .unwrap_or(false);
+            if !wanted || !is_trusted(false) {
+                continue;
+            }
+            let started = Instant::now();
+            let value = sample_level(&mut retained);
+            let elapsed = started.elapsed();
+            if elapsed > Duration::from_millis(200) {
+                log::info!(
+                    "control center backlight read took {}ms",
+                    elapsed.as_millis()
+                );
+            }
+            if let Ok(mut sample) = SAMPLE.lock() {
+                *sample = value.map(|percent| (percent, Instant::now()));
+            }
         }
     });
+}
+
+/// Read the level, reusing the retained app/slider pair when it still answers.
+/// A dead handle (ControlCenter restarted, or the window was rebuilt) drops the
+/// cache and forces one fresh lookup.
+fn sample_level(retained: &mut Option<(i32, AxElement, AxElement)>) -> Option<u8> {
+    unsafe {
+        let pid = control_center_pid()?;
+        if let Some((cached_pid, app, slider)) = *retained {
+            if cached_pid == pid {
+                if let Some(value) = value_number(slider) {
+                    return Some((value * 100.0).round().clamp(0.0, 100.0) as u8);
+                }
+            }
+            CFRelease(slider as CfTypeRef);
+            CFRelease(app as CfTypeRef);
+            *retained = None;
+        }
+
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let Some(slider) = builtin_slider(app) else {
+            CFRelease(app as CfTypeRef);
+            return None;
+        };
+        let value = value_number(slider).map(|v| (v * 100.0).round().clamp(0.0, 100.0) as u8);
+        if value.is_some() {
+            *retained = Some((pid, app, slider));
+        } else {
+            CFRelease(slider as CfTypeRef);
+            CFRelease(app as CfTypeRef);
+        }
+        value
+    }
 }
 pub fn set(percent: u8) -> Result<u8, String> {
     if !is_trusted(true) {
