@@ -1575,6 +1575,7 @@ pub fn run() {
             display::set_display_brightness,
             display::set_builtin_backlight,
             display::request_accessibility_permission,
+            display::reset_accessibility_permission,
             display::accessibility_status,
             relaunch_app,
             display::set_display_power,

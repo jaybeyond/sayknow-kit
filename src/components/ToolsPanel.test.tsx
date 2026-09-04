@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   refreshAccessibility: vi.fn(() => Promise.resolve()),
   requestAccessibility: vi.fn(() => Promise.resolve()),
   relaunchApp: vi.fn(() => Promise.resolve()),
+  resetAccessibility: vi.fn(() => Promise.resolve()),
   toolsState: {
     displays: [] as Array<Record<string, unknown>>,
     error: null,
@@ -69,6 +70,7 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axGrant": "Request permission",
       "tools.brightness.axRestart": "Restart the app",
       "tools.brightness.axAdhoc": "Ad-hoc build: reset the entry",
+      "tools.brightness.axReset": "Reset and ask again",
     })[key] ?? key,
   }),
 }))
@@ -80,6 +82,7 @@ vi.mock("@/lib/tools-store", () => ({
   refreshAccessibility: mocks.refreshAccessibility,
   requestAccessibility: mocks.requestAccessibility,
   relaunchApp: mocks.relaunchApp,
+  resetAccessibility: mocks.resetAccessibility,
 }))
 vi.mock("@/lib/system-metrics-store", () => ({
   getSnapshot: () => mocks.metricsState,
@@ -211,6 +214,21 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
     expect(screen.queryByText("Ad-hoc build: reset the entry")).toBeNull()
+  })
+
+  it("clears the stale entry in-app so no terminal is needed", () => {
+    mocks.toolsState.displays = [builtinOnGamma]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: true }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset and ask again" }))
+    expect(mocks.resetAccessibility).toHaveBeenCalledOnce()
+    cleanup()
+
+    // A certificate-signed build keeps its grant, so the reset is not offered.
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(screen.queryByRole("button", { name: "Reset and ask again" })).toBeNull()
   })
 
   it("tells a translocated copy to move instead of offering a futile prompt", () => {

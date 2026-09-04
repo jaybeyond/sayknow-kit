@@ -19,6 +19,7 @@ import {
   refreshAccessibility,
   relaunchApp,
   requestAccessibility,
+  resetAccessibility,
   scanDisplays,
   subscribe,
   syncBuiltin,
@@ -300,6 +301,18 @@ function AccessibilityNotice({
           >
             {t("tools.brightness.axGrant")}
           </Button>
+          {/* A stale entry cannot be repaired by asking again: the row has to
+              go first, and doing it here spares the user a terminal. */}
+          {state.adhoc && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[10px]"
+              onClick={() => void resetAccessibility()}
+            >
+              {t("tools.brightness.axReset")}
+            </Button>
+          )}
           {/* macOS decides trust at process start: an app that was denied when
               it launched stays denied until it restarts, however many times the
               switch is toggled. */}

@@ -126,6 +126,19 @@ export async function requestAccessibility(): Promise<void> {
   }
 }
 
+/** Remove our stale TCC entry and ask again in one step. The user should not
+ *  need a terminal to recover from an ad-hoc update invalidating the grant. */
+export async function resetAccessibility(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    const trusted = await invoke<boolean>("reset_accessibility_permission")
+    if (trusted) await scanDisplays(true)
+  } finally {
+    await refreshAccessibility()
+  }
+}
+
 /** Restart so a fresh process picks up a just-granted Accessibility permission.
  *  macOS decides trust when the process starts; the running one stays denied. */
 export async function relaunchApp(): Promise<void> {

@@ -64,14 +64,14 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 
 1. Descarga el DMG macOS aarch64 de la [versión oficial en GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Abre el DMG y arrastra SayKnow Kit.app a `/Applications`.
-3. La aplicación v0.2.13 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
+3. La aplicación v0.2.14 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
 4. macOS 13+ ya no acepta el atajo del clic derecho: ábrela una vez y luego usa **Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente**. O ejecuta `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Si la abres desde el DMG, macOS la ejecuta desde una copia temporal de solo lectura donde el permiso de accesibilidad nunca se guarda. Si macOS sigue pidiendo accesibilidad tras concederla, la entrada guardada ya no coincide con la firma ad hoc actualizada: ejecuta `tccutil reset Accessibility com.sayknow.app` y reinicia la app.
 5. Verifica el archivo `SHA256SUMS.txt` publicado junto a la versión antes de abrirlo.
 
 ### Windows — EXE o MSI
 
 1. Descarga el instalador NSIS `.exe` o el instalador MSI `.msi` x64 de la versión oficial en GitHub Releases.
-2. Windows SmartScreen puede mostrar una advertencia porque v0.2.13 no está firmado; es normal. No hay Authenticode.
+2. Windows SmartScreen puede mostrar una advertencia porque v0.2.14 no está firmado; es normal. No hay Authenticode.
 3. Verifica `SHA256SUMS.txt` antes de ejecutar el instalador y sigue el asistente.
 4. Para desinstalar, usa **Configuración → Aplicaciones → Aplicaciones instaladas → SayKnow Kit → Desinstalar**.
 
@@ -119,7 +119,7 @@ La clave API es una credencial facturable y se guarda únicamente en el almacena
 - macOS **Keychain** y Windows **Credential Manager**
 - Nunca se almacena en texto plano ni se deriva del inicio de sesión
 - Descarga solo desde GitHub Releases oficial y verifica `SHA256SUMS.txt`
-- La aplicación macOS v0.2.13 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
+- La aplicación macOS v0.2.14 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
 
 ## Licencia
 

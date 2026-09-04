@@ -87,11 +87,11 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 
 ## 설치
 
-### v0.2.13 공식 설치 프로그램 (권장)
+### v0.2.14 공식 설치 프로그램 (권장)
 
 [공식 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)에서만 다운로드하고 `SHA256SUMS.txt`로 확인하세요.
 
-**macOS (Apple Silicon):** `SayKnow-Kit_0.2.13_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.2.13 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. macOS 13 이상에서는 우클릭 우회가 통하지 않습니다. 앱을 한 번 실행한 뒤 **시스템 설정 → 개인정보 보호와 보안 → 그래도 열기**를 누르세요. 또는 격리 속성을 직접 제거해도 됩니다:
+**macOS (Apple Silicon):** `SayKnow-Kit_0.2.14_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.2.14 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. macOS 13 이상에서는 우클릭 우회가 통하지 않습니다. 앱을 한 번 실행한 뒤 **시스템 설정 → 개인정보 보호와 보안 → 그래도 열기**를 누르세요. 또는 격리 속성을 직접 제거해도 됩니다:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -105,7 +105,7 @@ tccutil reset Accessibility com.sayknow.app
 
 반드시 먼저 `/Applications`로 옮기세요. DMG나 다운로드 폴더에서 바로 실행하면 macOS가 임의의 읽기 전용 위치에서 앱을 실행해, 내장 화면 밝기에 필요한 손쉬운 사용 권한이 저장되지 않습니다.
 
-**Windows (x64):** `SayKnow-Kit_0.2.13_x64-setup.exe`(NSIS) 또는 `SayKnow-Kit_0.2.13_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
+**Windows (x64):** `SayKnow-Kit_0.2.14_x64-setup.exe`(NSIS) 또는 `SayKnow-Kit_0.2.14_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
 
 ### 제거
 
@@ -175,7 +175,7 @@ OpenRouter API 키는 **청구되는 자격증명**이라 평문으로 저장하
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.2.13 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
+설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.2.14 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
 
 ## 개발 환경
 

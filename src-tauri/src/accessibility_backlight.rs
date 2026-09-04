@@ -290,6 +290,29 @@ fn path_is_translocated(path: &std::path::Path) -> bool {
         .any(|component| component.as_os_str() == "AppTranslocation")
 }
 
+/// Drop our own stale Accessibility entry so macOS can store a fresh one.
+///
+/// An ad-hoc build's grant is pinned to the previous binary's cdhash, and the
+/// dead row keeps the switch looking enabled while every check is denied. Only
+/// removing the row fixes it, and `tccutil` is the supported way to do that for
+/// one's own bundle id — no elevation, no helper, fixed arguments.
+pub fn reset_grant() -> Result<(), String> {
+    let output = std::process::Command::new("/usr/bin/tccutil")
+        .args(["reset", "Accessibility", "com.sayknow.app"])
+        .output()
+        .map_err(|error| format!("tccutil could not be run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tccutil exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // The entry is gone, so one more consent dialog is now useful again.
+    PROMPTED.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Bit 1 of `kSecCodeInfoFlags`: the bundle carries an ad-hoc signature.
 const CS_ADHOC: i64 = 0x0000_0002;
 const CF_NUMBER_SINT64: isize = 4;

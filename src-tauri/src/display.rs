@@ -1405,6 +1405,21 @@ pub fn request_accessibility_permission() -> bool {
     }
 }
 
+/// Clear our stale Accessibility entry and immediately ask again, so the fix
+/// does not require the user to open a terminal.
+#[tauri::command]
+pub fn reset_accessibility_permission() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::accessibility_backlight::reset_grant()?;
+        return Ok(crate::accessibility_backlight::is_trusted(true));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Accessibility permission is macOS-only".into())
+    }
+}
+
 /// Why the built-in backlight is or is not controllable, so the UI can say it
 /// once instead of macOS re-prompting on every visit to the Tools tab.
 #[derive(serde::Serialize)]
