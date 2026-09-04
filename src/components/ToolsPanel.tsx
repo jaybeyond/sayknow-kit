@@ -102,20 +102,20 @@ export function ToolsPanel({ settings, active }: Props) {
     return () => clearInterval(timer)
   }, [awaitingTrust])
 
-  // Rescan every time the popover opens: monitors connect, wake, or lock
-  // their DDC while the app runs, and a list scanned once at tab-activation
-  // goes stale — an external that came back showed as nothing at all.
+  // Rescan when the popover opens: monitors connect, wake, or lock their DDC
+  // while the app runs. The backend serves a scan from the last few seconds, so
+  // this costs nothing when the panel was just open.
   useEffect(() => {
     if (!active || !isTauri()) return
     let alive = true
     let unlisten: (() => void) | null = null
     void import("@tauri-apps/api/event").then(async ({ listen }) => {
-      const stop = await listen("sayknow:open", () => void scanDisplays(true))
+      const stop = await listen("sayknow:open", () => void scanDisplays())
       if (alive) unlisten = stop
       else stop()
     })
     .catch(() => {
-      if (alive) void scanDisplays(true)
+      if (alive) void scanDisplays()
     })
     return () => {
       alive = false

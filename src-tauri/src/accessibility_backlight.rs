@@ -321,6 +321,13 @@ const CF_NUMBER_SINT64: isize = 4;
 /// then pins the stored Accessibility grant to this exact binary's cdhash, so
 /// every update silently invalidates it while the switch still reads as on.
 pub fn is_adhoc_signed() -> bool {
+    // The signature cannot change while we run, and the 2s trust poll would
+    // otherwise re-read it on every tick.
+    static ADHOC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ADHOC.get_or_init(read_adhoc_flag)
+}
+
+fn read_adhoc_flag() -> bool {
     unsafe {
         let mut code: CfTypeRef = ptr::null();
         if SecCodeCopySelf(0, &mut code) != 0 || code.is_null() {

@@ -91,7 +91,9 @@ export async function scanDisplays(force = false): Promise<void> {
   inFlight = true
   try {
     const { invoke } = await import("@tauri-apps/api/core")
-    const displays = await invoke<DisplayRow[]>("list_displays")
+    // Only an explicit refresh pays for a full DDC round trip; everything else
+    // accepts the backend's recent scan so opening the panel stays instant.
+    const displays = await invoke<DisplayRow[]>("list_displays", { force })
     set({ displays, error: null, loaded: true })
   } catch (e) {
     set({ error: String(e), loaded: true })

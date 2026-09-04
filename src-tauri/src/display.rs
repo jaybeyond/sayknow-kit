@@ -1012,7 +1012,13 @@ mod ddc_worker {
     }
 
     enum Request {
-        List(mpsc::Sender<Vec<DisplayStatus>>),
+        List {
+            reply: mpsc::Sender<Vec<DisplayStatus>>,
+            /// Reuse the previous scan when it is younger than this. A DDC read
+            /// costs tens to hundreds of milliseconds per monitor, so rescanning
+            /// on every popover open is what made opening the panel feel slow.
+            max_age: Option<std::time::Duration>,
+        },
         Brightness {
             id: String,
             value: u8,
@@ -1037,12 +1043,29 @@ mod ddc_worker {
         })
     }
 
+    /// A scan is reusable only when the caller allows an age and we actually
+    /// have a previous scan that is younger than it. `None` always rescans.
+    pub(super) fn cache_is_fresh(
+        max_age: Option<std::time::Duration>,
+        scanned_at: Option<std::time::Instant>,
+    ) -> bool {
+        match (max_age, scanned_at) {
+            (Some(max_age), Some(at)) => at.elapsed() < max_age,
+            _ => false,
+        }
+    }
+
     fn run(rx: mpsc::Receiver<Request>) {
         let mut displays = Vec::new();
+        let mut scanned_at: Option<std::time::Instant> = None;
         while let Ok(request) = rx.recv() {
             match request {
-                Request::List(reply) => {
-                    refresh(&mut displays);
+                Request::List { reply, max_age } => {
+                    let fresh = cache_is_fresh(max_age, scanned_at);
+                    if !fresh {
+                        refresh(&mut displays);
+                        scanned_at = Some(std::time::Instant::now());
+                    }
                     let _ = reply.send(
                         displays
                             .iter()
@@ -1226,9 +1249,9 @@ mod ddc_worker {
         }
     }
 
-    pub fn list() -> Vec<DisplayStatus> {
+    pub fn list(max_age: Option<std::time::Duration>) -> Vec<DisplayStatus> {
         let (reply, response) = mpsc::channel();
-        if sender().send(Request::List(reply)).is_err() {
+        if sender().send(Request::List { reply, max_age }).is_err() {
             return Vec::new();
         }
         response
@@ -1265,7 +1288,9 @@ mod ddc_worker {
     }
 }
 
-pub fn list() -> Vec<DisplayStatus> {
+/// `max_age` reuses the previous DDC scan when it is that fresh; `None` forces
+/// a rescan. Opening the popover must not pay for a full DDC round trip.
+pub fn list(max_age: Option<std::time::Duration>) -> Vec<DisplayStatus> {
     let mut out = Vec::new();
 
     if builtin::exists() {
@@ -1302,7 +1327,7 @@ pub fn list() -> Vec<DisplayStatus> {
         });
     }
 
-    out.extend(ddc_worker::list());
+    out.extend(ddc_worker::list(max_age));
 
     out
 }
@@ -1339,9 +1364,23 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
 
 // ─────────── Tauri commands ───────────
 
+/// `force` is the explicit refresh button and post-power-toggle rescan; every
+/// other caller accepts a scan from the last few seconds.
 #[tauri::command]
-pub fn list_displays() -> Vec<DisplayStatus> {
-    list()
+pub fn list_displays(force: Option<bool>) -> Vec<DisplayStatus> {
+    let max_age = (!force.unwrap_or(false)).then(|| std::time::Duration::from_secs(5));
+    let started = std::time::Instant::now();
+    let displays = list(max_age);
+    let elapsed = started.elapsed();
+    if elapsed > std::time::Duration::from_millis(300) {
+        log::info!(
+            "list_displays took {}ms (force={}, displays={})",
+            elapsed.as_millis(),
+            force.unwrap_or(false),
+            displays.len(),
+        );
+    }
+    displays
 }
 
 #[tauri::command]
@@ -1492,6 +1531,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_forced_scan_never_reuses_the_cache() {
+        use std::time::{Duration, Instant};
+        // The refresh button and the post-power-toggle rescan must hit the wire.
+        assert!(!ddc_worker::cache_is_fresh(None, Some(Instant::now())));
+        // Nothing scanned yet: there is nothing to reuse.
+        assert!(!ddc_worker::cache_is_fresh(
+            Some(Duration::from_secs(5)),
+            None
+        ));
+    }
+
+    #[test]
+    fn a_recent_scan_is_reused_and_an_old_one_is_not() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        assert!(ddc_worker::cache_is_fresh(
+            Some(Duration::from_secs(5)),
+            Some(now)
+        ));
+        let stale = now
+            .checked_sub(Duration::from_secs(6))
+            .expect("clock is far enough from the epoch");
+        assert!(!ddc_worker::cache_is_fresh(
+            Some(Duration::from_secs(5)),
+            Some(stale)
+        ));
+    }
+
+    #[test]
     fn percent_clamps_to_ddc_range() {
         assert_eq!(clamp_percent(-5), 0);
         assert_eq!(clamp_percent(0), 0);
@@ -1600,7 +1668,7 @@ mod tests {
         if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
             return;
         }
-        for d in list() {
+        for d in list(None) {
             eprintln!(
                 "{} kind={} main={} bright={:?} power={:?} ctrl={} method={}",
                 d.id, d.kind, d.is_main, d.brightness, d.power, d.controllable, d.method
@@ -1616,7 +1684,7 @@ mod tests {
         if std::env::var("SAYKNOW_LIVE_DDC_POWER").ok().as_deref() != Some("1") {
             return;
         }
-        let external = ddc_worker::list()
+        let external = ddc_worker::list(None)
             .into_iter()
             .find(|display| display.kind == "external")
             .expect("no external DDC display");
@@ -1632,7 +1700,7 @@ mod tests {
 
         ddc_worker::set_power(&id, false).expect("DDC power off failed");
         std::thread::sleep(std::time::Duration::from_secs(2));
-        let off = ddc_worker::list()
+        let off = ddc_worker::list(None)
             .into_iter()
             .find(|display| display.id == id)
             .expect("powered-off display card was lost");
@@ -1644,7 +1712,7 @@ mod tests {
 
         ddc_worker::set_power(&id, true).expect("DDC wake sequence failed");
         std::thread::sleep(std::time::Duration::from_secs(3));
-        let on = ddc_worker::list()
+        let on = ddc_worker::list(None)
             .into_iter()
             .find(|display| display.id == id)
             .expect("woken display card was lost");
