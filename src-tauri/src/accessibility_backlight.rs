@@ -478,17 +478,45 @@ pub fn get() -> Option<u8> {
     }
 }
 
-/// How often the sampler thread is allowed to touch Control Center's AX tree.
-/// Control Center is the only writer of this value besides us, so a couple of
-/// seconds of latency is invisible while a sub-second loop is not: each miss
-/// walks another process's whole window tree over synchronous IPC.
+/// Base cadence for the sampler thread. Control Center is the only other writer
+/// of this value, so a couple of seconds of latency is invisible.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(2000);
-/// A sample older than this is stale: report nothing rather than a stale level.
+/// A read slower than this means this machine's Control Center tree is
+/// expensive to touch, so back off instead of hammering it.
+const SLOW_READ: Duration = Duration::from_millis(300);
+/// A read faster than this is cheap enough to return to the base cadence.
+const FAST_READ: Duration = Duration::from_millis(120);
+/// Never poll slower than this; past here the value is effectively on demand.
+const MAX_INTERVAL: Duration = Duration::from_secs(30);
+/// A sample older than twice the current cadence (never less than this) is
+/// stale: report nothing rather than a level that may have moved.
 const SAMPLE_TTL: Duration = Duration::from_secs(4);
 /// The sampler idles once the UI stops asking, so a hidden window costs nothing.
 const DEMAND_TTL: Duration = Duration::from_secs(3);
 
+/// Next cadence after a read of `elapsed`: double it while reads are slow, halve
+/// it back toward the base once they are cheap again. A machine where reading
+/// Control Center costs a second must not spend its life doing that.
+fn next_interval(current: Duration, elapsed: Duration) -> Duration {
+    if elapsed > SLOW_READ {
+        return (current * 2).min(MAX_INTERVAL);
+    }
+    if elapsed < FAST_READ {
+        return (current / 2).max(SAMPLE_INTERVAL);
+    }
+    current
+}
+
 static SAMPLE: Mutex<Option<(u8, Instant)>> = Mutex::new(None);
+/// The sampler's current cadence, so staleness follows the backoff instead of
+/// declaring every sample dead on a machine that had to slow down.
+static INTERVAL_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(SAMPLE_INTERVAL.as_millis() as u64);
+
+fn sample_ttl() -> Duration {
+    let interval = Duration::from_millis(INTERVAL_MS.load(Ordering::Relaxed));
+    (interval * 2).max(SAMPLE_TTL)
+}
 static DEMAND: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Non-blocking live backlight for the 250ms UI poll.
@@ -503,8 +531,9 @@ pub fn level_cached() -> Option<u8> {
         *demand = Some(Instant::now());
     }
     ensure_sampler();
+    let ttl = sample_ttl();
     match *SAMPLE.lock().ok()? {
-        Some((value, at)) if at.elapsed() < SAMPLE_TTL => Some(value),
+        Some((value, at)) if at.elapsed() < ttl => Some(value),
         _ => None,
     }
 }
@@ -527,8 +556,9 @@ fn ensure_sampler() {
         // walk is a cold path: the hot path reads one attribute off this handle.
         // The pointers never leave this thread.
         let mut retained: Option<(i32, AxElement, AxElement)> = None;
+        let mut interval = SAMPLE_INTERVAL;
         loop {
-            thread::sleep(SAMPLE_INTERVAL);
+            thread::sleep(interval);
             let wanted = DEMAND
                 .lock()
                 .ok()
@@ -541,10 +571,14 @@ fn ensure_sampler() {
             let started = Instant::now();
             let value = sample_level(&mut retained);
             let elapsed = started.elapsed();
-            if elapsed > Duration::from_millis(200) {
+            let previous = interval;
+            interval = next_interval(interval, elapsed);
+            INTERVAL_MS.store(interval.as_millis() as u64, Ordering::Relaxed);
+            if interval != previous {
                 log::info!(
-                    "control center backlight read took {}ms",
-                    elapsed.as_millis()
+                    "control center backlight read took {}ms; polling every {}ms",
+                    elapsed.as_millis(),
+                    interval.as_millis(),
                 );
             }
             if let Ok(mut sample) = SAMPLE.lock() {
@@ -688,6 +722,29 @@ mod tests {
         assert!(!path_is_translocated(Path::new(
             "/Users/jay/AppTranslocationNotes/SayKnow Kit.app/Contents/MacOS/sayknow"
         )));
+    }
+
+    #[test]
+    fn a_slow_machine_backs_off_and_a_fast_one_returns_to_the_base_cadence() {
+        // Reading Control Center costs a second here: stop hammering it.
+        let mut interval = SAMPLE_INTERVAL;
+        for _ in 0..10 {
+            interval = next_interval(interval, Duration::from_millis(900));
+        }
+        assert_eq!(interval, MAX_INTERVAL);
+
+        // It got cheap again (ControlCenter settled): come back down, but never
+        // below the base cadence.
+        for _ in 0..10 {
+            interval = next_interval(interval, Duration::from_millis(10));
+        }
+        assert_eq!(interval, SAMPLE_INTERVAL);
+
+        // In between, hold steady instead of oscillating.
+        assert_eq!(
+            next_interval(SAMPLE_INTERVAL, Duration::from_millis(200)),
+            SAMPLE_INTERVAL
+        );
     }
 
     // One test owns the shared sample slot: split tests would race each other.

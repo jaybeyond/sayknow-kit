@@ -60,11 +60,11 @@ SayKnow Kit は **macOS のメニューバーまたはWindowsのシステムト�
 
 ## インストール
 
-### v0.2.16 公式インストーラー（推奨）
+### v0.2.17 公式インストーラー（推奨）
 
 [公式GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases) からのみダウンロードし、`SHA256SUMS.txt` で検証してください。
 
-**macOS（Apple Silicon）:** `SayKnow-Kit_0.2.16_aarch64.dmg` を開き、アプリを `/Applications` へドラッグします。v0.2.16アプリは**アドホック署名のみ**で、Developer IDもnotarizationもないため、Gatekeeperの警告は想定内です。macOS 13 以降では右クリックの回避策は使えません。一度起動してから **システム設定 → プライバシーとセキュリティ → このまま開く** を選びます。または隔離属性を自分で外します:
+**macOS（Apple Silicon）:** `SayKnow-Kit_0.2.17_aarch64.dmg` を開き、アプリを `/Applications` へドラッグします。v0.2.17アプリは**アドホック署名のみ**で、Developer IDもnotarizationもないため、Gatekeeperの警告は想定内です。macOS 13 以降では右クリックの回避策は使えません。一度起動してから **システム設定 → プライバシーとセキュリティ → このまま開く** を選びます。または隔離属性を自分で外します:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -78,7 +78,7 @@ tccutil reset Accessibility com.sayknow.app
 
 必ず先に `/Applications` へ移動してください。DMG やダウンロードフォルダから直接起動すると、macOS はランダムな読み取り専用の場所でアプリを実行し、内蔵ディスプレイの明るさに必要なアクセシビリティ権限が保存されません。
 
-**Windows（x64）:** `SayKnow-Kit_0.2.16_x64-setup.exe`（NSIS）または `SayKnow-Kit_0.2.16_x64_en-US.msi` を実行します。インストーラーは**未署名**で、SmartScreenの警告は想定内です。公式Releaseと`SHA256SUMS.txt`を確認した後に「詳細情報 → 実行」を選択してください。
+**Windows（x64）:** `SayKnow-Kit_0.2.17_x64-setup.exe`（NSIS）または `SayKnow-Kit_0.2.17_x64_en-US.msi` を実行します。インストーラーは**未署名**で、SmartScreenの警告は想定内です。公式Releaseと`SHA256SUMS.txt`を確認した後に「詳細情報 → 実行」を選択してください。
 
 ### アンインストール
 
@@ -126,7 +126,7 @@ OpenRouter API キーは課金が発生する認証情報のため、平文で�
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-インストーラーは公式GitHub Releaseからのみ取得し、`SHA256SUMS.txt`を検証してください。v0.2.16のmacOSアプリはDeveloper ID・notarizationなしのアドホック署名で、WindowsインストーラーはAuthenticodeなしの未署名です。GatekeeperとSmartScreenの警告は想定内です。
+インストーラーは公式GitHub Releaseからのみ取得し、`SHA256SUMS.txt`を検証してください。v0.2.17のmacOSアプリはDeveloper ID・notarizationなしのアドホック署名で、WindowsインストーラーはAuthenticodeなしの未署名です。GatekeeperとSmartScreenの警告は想定内です。
 
 ## ライセンス
 
