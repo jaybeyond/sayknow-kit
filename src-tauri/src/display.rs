@@ -1017,8 +1017,8 @@ fn classify_external(
 ) -> (bool, &'static str, Option<u8>) {
     match (ddc_level, gamma_level) {
         (Some(level), _) => (true, "ddc", Some(level)),
-        (None, Some(_)) => (true, "ddc", None),
-        (None, None) => (true, "ddc", None),
+        (None, Some(level)) => (true, "gamma", Some(level)),
+        (None, None) => (false, "none", None),
     }
 }
 
