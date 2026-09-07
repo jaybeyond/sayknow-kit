@@ -394,7 +394,7 @@ fn named_entry(account: &str) -> Result<Entry, String> {
     Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_secret(account: String) -> Result<Option<String>, String> {
     match named_entry(&account)?.get_password() {
         Ok(v) => Ok(Some(v)),
@@ -403,14 +403,14 @@ fn get_secret(account: String) -> Result<Option<String>, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_secret(account: String, key: String) -> Result<(), String> {
     named_entry(&account)?
         .set_password(&key)
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_secret(account: String) -> Result<(), String> {
     match named_entry(&account)?.delete_credential() {
         Ok(_) => Ok(()),
@@ -419,7 +419,7 @@ fn delete_secret(account: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_api_key() -> Result<Option<String>, String> {
     match entry()?.get_password() {
         Ok(v) => Ok(Some(v)),
@@ -428,12 +428,12 @@ fn get_api_key() -> Result<Option<String>, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_api_key(key: String) -> Result<(), String> {
     entry()?.set_password(&key).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_api_key() -> Result<(), String> {
     match entry()?.delete_credential() {
         Ok(_) => Ok(()),
@@ -488,7 +488,7 @@ pub struct ClaudeCliInfo {
     pub version: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_claude_cli() -> Result<Option<ClaudeCliInfo>, String> {
     let Some(path) = find_claude() else { return Ok(None) };
     // Sanity-check by asking for version. Some installs print the version on
@@ -525,7 +525,7 @@ pub struct ClaudeChatResult {
 /// Calls `claude --print` with the user's prompt and returns its stdout.
 /// `messages` follows OpenAI chat shape — we serialize the conversation into
 /// a single prompt string and pull `system` out into `--append-system-prompt`.
-#[tauri::command]
+#[tauri::command(async)]
 fn claude_chat(
     messages: Vec<ClaudeMessage>,
     model: Option<String>,
@@ -1084,13 +1084,13 @@ fn install_claude_cli_inner(app: &AppHandle, node_bin_dir: &Path) -> Result<(), 
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn install_node_runtime(app: AppHandle) -> Result<String, String> {
     let p = install_node_runtime_inner(&app)?;
     Ok(p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_ocp_env(base_url: Option<String>) -> OcpEnv {
     let priv_node = private_node_bin_dir().ok().and_then(|d| {
         let p = d.join("node");
@@ -1249,7 +1249,7 @@ fn start_ocp_direct(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn install_ocp() -> Result<String, String> {
     // Kept for backward compatibility — delegates to the same install flow
     // ensure_ocp uses. Returns the directory we installed into.
@@ -1264,7 +1264,7 @@ fn install_ocp() -> Result<String, String> {
 ///
 /// The child is parked in AppState.ocp (Drop kills it), so OCP cleanly stops
 /// when SayKnow Kit quits.
-#[tauri::command]
+#[tauri::command(async)]
 fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     eprintln!("[sayknow] start_ocp invoked");
     let _ = app.emit("ocp:log", "▶ Starting OCP setup…");
@@ -1383,7 +1383,7 @@ fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), St
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut guard = state.ocp.lock().map_err(|e| e.to_string())?;
     guard.0 = None; // Drop kills it
@@ -1398,7 +1398,7 @@ fn stop_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), Str
 /// so a later sign-in just needs to re-bootstrap the same plist (fast,
 /// no git/npm steps needed). For a full wipe the user can call
 /// `uninstall_ocp` explicitly.
-#[tauri::command]
+#[tauri::command(async)]
 fn disconnect_ocp(app: AppHandle) -> Result<(), String> {
     let _ = app.emit("ocp:log", "Stopping OCP daemon…");
 
@@ -1412,7 +1412,7 @@ fn disconnect_ocp(app: AppHandle) -> Result<(), String> {
 /// Full wipe: stop the daemon, remove its launchd plist (so it stops auto-
 /// starting on login), and rm-rf the cloned repo. The user-facing
 /// "uninstall OCP" button calls this; ordinary sign-out does not.
-#[tauri::command]
+#[tauri::command(async)]
 fn uninstall_ocp(app: AppHandle) -> Result<(), String> {
     let home = match std::env::var("HOME") {
         Ok(h) => h,

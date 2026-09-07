@@ -1294,6 +1294,42 @@ mod ddc_worker {
 
 /// `max_age` reuses the previous DDC scan when it is that fresh; `None` forces
 /// a rescan. Opening the popover must not pay for a full DDC round trip.
+/// True when the caller is on the macOS main thread — the UI thread. A Tauri
+/// command without `(async)` runs there, so any blocking work inside one
+/// freezes the window: that is what made granting Accessibility permission look
+/// like the app had stopped opening.
+#[cfg(target_os = "macos")]
+pub fn on_main_thread() -> bool {
+    extern "C" {
+        fn pthread_main_np() -> i32;
+    }
+    unsafe { pthread_main_np() == 1 }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn on_main_thread() -> bool {
+    false
+}
+
+/// Report a command that was slow, or that ran somewhere it must never run.
+/// Silent on the healthy path, so it can stay in the shipped build.
+fn probe(tag: &str, started: std::time::Instant) {
+    let elapsed = started.elapsed();
+    let on_main = on_main_thread();
+    if on_main || elapsed > std::time::Duration::from_millis(150) {
+        log::info!(
+            "command {} took {}ms{}",
+            tag,
+            elapsed.as_millis(),
+            if on_main {
+                " ON THE MAIN THREAD (this blocks the UI)"
+            } else {
+                ""
+            },
+        );
+    }
+}
+
 pub fn list(max_age: Option<std::time::Duration>) -> Vec<DisplayStatus> {
     let mut out = Vec::new();
 
@@ -1370,24 +1406,16 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
 
 /// `force` is the explicit refresh button and post-power-toggle rescan; every
 /// other caller accepts a scan from the last few seconds.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_displays(force: Option<bool>) -> Vec<DisplayStatus> {
     let max_age = (!force.unwrap_or(false)).then(|| std::time::Duration::from_secs(5));
     let started = std::time::Instant::now();
     let displays = list(max_age);
-    let elapsed = started.elapsed();
-    if elapsed > std::time::Duration::from_millis(300) {
-        log::info!(
-            "list_displays took {}ms (force={}, displays={})",
-            elapsed.as_millis(),
-            force.unwrap_or(false),
-            displays.len(),
-        );
-    }
+    probe("list_displays", started);
     displays
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_display_brightness(app: tauri::AppHandle, id: String, value: i64) -> Result<(), String> {
     if id == BUILTIN_ID {
         // CGS gamma writes only take effect from the main thread's WindowServer
@@ -1412,12 +1440,14 @@ pub fn set_display_brightness(app: tauri::AppHandle, id: String, value: i64) -> 
 /// Set the real built-in backlight through macOS Control Center's local
 /// Accessibility UI. This is separate from `set_display_brightness`, which
 /// remains the second-stage gamma dimmer.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, String> {
+    let _probe_started = std::time::Instant::now();
     let percent = clamp_percent(value);
     #[cfg(target_os = "macos")]
     {
         let actual = crate::accessibility_backlight::set(percent)?;
+        probe("set_builtin_backlight", _probe_started);
         brightness_tap::seed_sixteenths(actual as f64 / 100.0);
         crate::accessibility_backlight::publish_level(actual);
         // Opening Control Center steals focus and hides our popover. Put the
@@ -1436,11 +1466,14 @@ pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, St
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn request_accessibility_permission() -> bool {
+    let _probe_started = std::time::Instant::now();
     #[cfg(target_os = "macos")]
     {
-        return crate::accessibility_backlight::is_trusted(true);
+        let trusted = crate::accessibility_backlight::is_trusted(true);
+        probe("request_accessibility_permission", _probe_started);
+        return trusted;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1450,7 +1483,7 @@ pub fn request_accessibility_permission() -> bool {
 
 /// Clear our stale Accessibility entry and immediately ask again, so the fix
 /// does not require the user to open a terminal.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reset_accessibility_permission() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     {
@@ -1476,15 +1509,17 @@ pub struct AccessibilityStatus {
     pub adhoc: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn accessibility_status() -> AccessibilityStatus {
     #[cfg(target_os = "macos")]
     {
+        let _probe_started = std::time::Instant::now();
         let status = AccessibilityStatus {
             trusted: crate::accessibility_backlight::is_trusted(false),
             translocated: crate::accessibility_backlight::bundle_is_translocated(),
             adhoc: crate::accessibility_backlight::is_adhoc_signed(),
         };
+        probe("accessibility_status", _probe_started);
         // One line per launch, so an "I allowed it and it still asks" report is
         // answered from the log instead of guesswork.
         static LOGGED: std::sync::Once = std::sync::Once::new();
@@ -1513,19 +1548,22 @@ pub fn accessibility_status() -> AccessibilityStatus {
 /// Cheap built-in refresh for polling. Once Accessibility permission exists,
 /// the retained Control Center slider is the authoritative live backlight
 /// value, so changes made in Control Center also flow back into SayKnow Kit.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_builtin_brightness() -> Option<BuiltinBrightnessSync> {
+    let started = std::time::Instant::now();
     #[cfg(target_os = "macos")]
     if brightness_tap::unseeded() {
         seed_system_level();
     }
-    Some(BuiltinBrightnessSync {
+    let out = Some(BuiltinBrightnessSync {
         brightness: builtin_total()?,
         system_level: accessibility_backlight_level().unwrap_or_else(tracked_system_level_percent),
-    })
+    });
+    probe("sync_builtin_brightness", started);
+    out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_display_power(id: String, on: bool) -> Result<(), String> {
     set_power(&id, on).map_err(|e| e.to_string())
 }
@@ -1533,6 +1571,38 @@ pub fn set_display_power(id: String, on: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `#[tauri::command]` without `(async)` runs on the macOS main thread,
+    /// so every blocking call inside one freezes the window. These commands all
+    /// block — on DDC round trips, on Control Center accessibility automation,
+    /// or on TCC — and dropping the marker is how the app stopped opening once
+    /// Accessibility permission was granted.
+    #[test]
+    fn every_blocking_display_command_runs_off_the_main_thread() {
+        let source = include_str!("display.rs");
+        for name in [
+            "list_displays",
+            "set_display_brightness",
+            "set_builtin_backlight",
+            "request_accessibility_permission",
+            "reset_accessibility_permission",
+            "accessibility_status",
+            "sync_builtin_brightness",
+            "set_display_power",
+        ] {
+            let at = source
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} is gone; update this test"));
+            let attribute = source[..at]
+                .rsplit("#[tauri::command")
+                .next()
+                .expect("a command attribute above the function");
+            assert!(
+                attribute.starts_with("(async)"),
+                "{name} must be #[tauri::command(async)] or it blocks the UI thread"
+            );
+        }
+    }
 
     #[test]
     fn a_forced_scan_never_reuses_the_cache() {
