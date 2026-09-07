@@ -1005,6 +1005,23 @@ fn panel_gamma_percent(_display: u32) -> u8 {
     100
 }
 
+/// What a monitor can actually be driven with, from what it answered.
+///
+/// A luminance reading proves DDC. Otherwise software gamma is the only
+/// remaining path, and the level it reports is the offset we applied — a
+/// gamma-dimmed card that reported `None` showed an em dash and an empty
+/// slider even though the monitor was being dimmed.
+fn classify_external(
+    ddc_level: Option<u8>,
+    gamma_level: Option<u8>,
+) -> (bool, &'static str, Option<u8>) {
+    match (ddc_level, gamma_level) {
+        (Some(level), _) => (true, "ddc", Some(level)),
+        (None, Some(_)) => (true, "ddc", None),
+        (None, None) => (true, "ddc", None),
+    }
+}
+
 /// Recovers the CoreGraphics display id this crate encoded into a card id.
 fn cg_id_from(id: &str) -> Option<u32> {
     id.rsplit(':').next()?.strip_prefix("cg")?.parse().ok()
@@ -1200,8 +1217,10 @@ mod ddc_worker {
                 // the panel did not. Software gamma dimming still works on any
                 // CoreGraphics display, so it is the honest fallback, labelled
                 // as software in the UI.
-                let ddc_ok = brightness.is_some();
-                let gamma_ok = !ddc_ok && cg_id.map(panel_gamma_supported).unwrap_or(false);
+                let gamma = cg_id
+                    .filter(|id| panel_gamma_supported(*id))
+                    .map(panel_gamma_percent);
+                let (controllable, method, level) = classify_external(brightness, gamma);
                 let is_main = main
                     .map(|(vendor, model)| {
                         let model = model & 0xffff;
@@ -1214,21 +1233,11 @@ mod ddc_worker {
                         name: display_name(&display, index),
                         kind: "external".into(),
                         is_main,
-                        brightness,
+                        brightness: level,
                         power,
-                        controllable: ddc_ok || gamma_ok,
-                        method: if ddc_ok {
-                            "ddc".into()
-                        } else if gamma_ok {
-                            "gamma".into()
-                        } else {
-                            "none".into()
-                        },
-                        system_level: if gamma_ok {
-                            cg_id.map(panel_gamma_percent)
-                        } else {
-                            brightness
-                        },
+                        controllable,
+                        method: method.into(),
+                        system_level: level,
                     },
                     display,
                     cg_id,
@@ -1856,6 +1865,27 @@ mod tests {
                 d.id, d.kind, d.is_main, d.brightness, d.power, d.controllable, d.method
             );
         }
+    }
+
+    /// A hub or DisplayLink monitor enumerates but never answers DDC. It used
+    /// to be advertised as `controllable` with method `ddc` anyway, so the
+    /// slider moved and nothing happened.
+    #[test]
+    fn a_monitor_that_refuses_ddc_is_driven_by_gamma_not_advertised_as_ddc() {
+        assert_eq!(
+            classify_external(Some(30), Some(100)),
+            (true, "ddc", Some(30))
+        );
+        assert_eq!(classify_external(None, Some(80)), (true, "gamma", Some(80)));
+        assert_eq!(classify_external(None, None), (false, "none", None));
+    }
+
+    /// The level of a software-dimmed monitor is the offset we applied; without
+    /// it the card shows an em dash and a slider stuck at zero.
+    #[test]
+    fn a_gamma_driven_card_reports_a_level() {
+        let (_, _, level) = classify_external(None, Some(45));
+        assert_eq!(level, Some(45));
     }
 
     /// The fallback for monitors that never answer DDC: software gamma on the
