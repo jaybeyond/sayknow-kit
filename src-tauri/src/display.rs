@@ -968,6 +968,43 @@ fn ddc_cg_id(display: &ddc_hi::Display) -> Option<u32> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+fn ddc_cg_id(_display: &ddc_hi::Display) -> Option<u32> {
+    None
+}
+
+/// Software gamma dimming is a macOS CoreGraphics facility; on other platforms
+/// a monitor that refuses DDC simply has no second path.
+#[cfg(target_os = "macos")]
+fn panel_gamma_supported(display: u32) -> bool {
+    gamma_dim::supported(display)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_gamma_supported(_display: u32) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn panel_gamma_set(display: u32, percent: u8) -> bool {
+    gamma_dim::set_absolute(display, percent)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_gamma_set(_display: u32, _percent: u8) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn panel_gamma_percent(display: u32) -> u8 {
+    gamma_dim::get_percent(display)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_gamma_percent(_display: u32) -> u8 {
+    100
+}
+
 /// Recovers the CoreGraphics display id this crate encoded into a card id.
 fn cg_id_from(id: &str) -> Option<u32> {
     id.rsplit(':').next()?.strip_prefix("cg")?.parse().ok()
@@ -1164,7 +1201,7 @@ mod ddc_worker {
                 // CoreGraphics display, so it is the honest fallback, labelled
                 // as software in the UI.
                 let ddc_ok = brightness.is_some();
-                let gamma_ok = !ddc_ok && cg_id.map(gamma_dim::supported).unwrap_or(false);
+                let gamma_ok = !ddc_ok && cg_id.map(panel_gamma_supported).unwrap_or(false);
                 let is_main = main
                     .map(|(vendor, model)| {
                         let model = model & 0xffff;
@@ -1188,7 +1225,7 @@ mod ddc_worker {
                             "none".into()
                         },
                         system_level: if gamma_ok {
-                            cg_id.map(gamma_dim::get_percent)
+                            cg_id.map(panel_gamma_percent)
                         } else {
                             brightness
                         },
@@ -1244,10 +1281,10 @@ mod ddc_worker {
         let method = match &ddc {
             Ok(()) => "ddc",
             Err(error) => {
-                let Some(cg_id) = cached.cg_id.filter(|id| gamma_dim::supported(*id)) else {
+                let Some(cg_id) = cached.cg_id.filter(|id| panel_gamma_supported(*id)) else {
                     return Err(ddc_error(error.to_string()));
                 };
-                if !gamma_dim::set_absolute(cg_id, value) {
+                if !panel_gamma_set(cg_id, value) {
                     return Err(ddc_error(error.to_string()));
                 }
                 log::info!(
