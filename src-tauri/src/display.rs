@@ -363,6 +363,7 @@ mod core_graphics {
 
 #[cfg(target_os = "macos")]
 mod gamma_dim {
+    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
     type CgDirectDisplayId = u32;
@@ -394,7 +395,6 @@ mod gamma_dim {
     const CAPACITY: u32 = 512;
 
     struct Original {
-        display: CgDirectDisplayId,
         red: Vec<f32>,
         green: Vec<f32>,
         blue: Vec<f32>,
@@ -438,10 +438,13 @@ mod gamma_dim {
         }
     }
 
-    /// Original table captured before our first modification, plus the last
-    /// factor we applied (1.0 = untouched).
-    static ORIGINAL: Mutex<Option<Original>> = Mutex::new(None);
-    static LAST: Mutex<f64> = Mutex::new(1.0);
+    /// Per-display original tables captured before our first modification, plus
+    /// the last factor applied to each (1.0 = untouched). This is keyed by
+    /// display because the gamma path is also the fallback for external
+    /// monitors that do not answer DDC; a single global slot would let one
+    /// panel's original table be restored onto another.
+    static ORIGINAL: Mutex<BTreeMap<CgDirectDisplayId, Original>> = Mutex::new(BTreeMap::new());
+    static LAST: Mutex<BTreeMap<CgDirectDisplayId, f64>> = Mutex::new(BTreeMap::new());
 
     pub fn supported(display: CgDirectDisplayId) -> bool {
         read_table(display).is_some()
@@ -459,13 +462,13 @@ mod gamma_dim {
     /// is a separate base layer the user adjusts with F1/F2. Pressing a key
     /// resets gamma to 1.0, so the slider always lands at 100% after a key
     /// press — no ceiling below 100%.
-    pub fn total_percent() -> Option<u8> {
-        let g = *LAST.lock().unwrap();
-        Some((g * 100.0).round().clamp(0.0, 100.0) as u8)
+    pub fn total_percent(display: CgDirectDisplayId) -> Option<u8> {
+        Some(get_percent(display))
     }
 
-    pub fn get_percent() -> u8 {
-        (*LAST.lock().unwrap() * 100.0).round().clamp(0.0, 100.0) as u8
+    pub fn get_percent(display: CgDirectDisplayId) -> u8 {
+        let factor = LAST.lock().unwrap().get(&display).copied().unwrap_or(1.0);
+        (factor * 100.0).round().clamp(0.0, 100.0) as u8
     }
 
     /// Scale the CAPTURED ORIGINAL by the factor — never the live table.
@@ -487,26 +490,18 @@ mod gamma_dim {
     }
 
     fn set_gamma_offset(display: CgDirectDisplayId, factor: f64) -> bool {
-        // First touch: whatever is running now (Night Shift, True Tone)
-        // becomes the base we scale and later restore.
-        {
-            let mut orig = ORIGINAL.lock().unwrap();
-            if orig.is_none() {
-                let Some((r, g, b)) = read_table(display) else {
+        let (r, g, b) = {
+            // First touch of this panel: whatever is running now (Night Shift,
+            // True Tone) becomes the base we scale and later restore.
+            let mut originals = ORIGINAL.lock().unwrap();
+            if !originals.contains_key(&display) {
+                let Some((red, green, blue)) = read_table(display) else {
                     return false;
                 };
-                *orig = Some(Original {
-                    display,
-                    red: r,
-                    green: g,
-                    blue: b,
-                });
+                originals.insert(display, Original { red, green, blue });
             }
-        }
-        let factor = factor as f32;
-        let (r, g, b) = {
-            let orig = ORIGINAL.lock().unwrap();
-            let o = orig.as_ref().unwrap();
+            let o = &originals[&display];
+            let factor = factor as f32;
             (
                 scale_table(&o.red, factor),
                 scale_table(&o.green, factor),
@@ -515,48 +510,46 @@ mod gamma_dim {
         };
         let ok = write_table(display, &r, &g, &b);
         if ok {
-            *LAST.lock().unwrap() = factor as f64;
+            LAST.lock().unwrap().insert(display, factor);
         }
         ok
     }
 
-    /// Put the captured original back. Called on app exit so the panel is
-    /// never left dimmed with no obvious way back.
+    /// Scale a captured table by a factor, clamped to the legal 0.0-1.0 range.
     pub(super) fn scale_table(src: &[f32], factor: f32) -> Vec<f32> {
         src.iter().map(|v| (v * factor).clamp(0.0, 1.0)).collect()
     }
 
-    /// Reset the gamma offset to 1.0 (system brightness keys take over).
-    /// Keeps the captured original for future drags — no drop needed.
-    pub fn reset_offset() {
-        let orig = ORIGINAL.lock().unwrap();
-        if let Some(o) = orig.as_ref() {
-            let d = o.display;
-            let r = o.red.clone();
-            let g = o.green.clone();
-            let b = o.blue.clone();
-            drop(orig);
-            log::info!(
-                "reset_offset: write_table disp={} len={} first={:.4}",
-                d,
-                r.len(),
-                r[0]
-            );
-            let ok = write_table(d, &r, &g, &b);
-            log::info!("reset_offset: write_table ok={}", ok);
-            if ok {
-                *LAST.lock().unwrap() = 1.0;
-            }
-        } else {
+    /// Reset one panel's gamma offset to 1.0 (system brightness keys take
+    /// over). Keeps the captured original for future drags — no drop needed.
+    pub fn reset_offset(display: CgDirectDisplayId) {
+        let originals = ORIGINAL.lock().unwrap();
+        let Some(o) = originals.get(&display) else {
             log::info!("reset_offset: no original captured — nothing to reset");
+            return;
+        };
+        let (r, g, b) = (o.red.clone(), o.green.clone(), o.blue.clone());
+        drop(originals);
+        log::info!(
+            "reset_offset: write_table disp={} len={} first={:.4}",
+            display,
+            r.len(),
+            r[0]
+        );
+        let ok = write_table(display, &r, &g, &b);
+        log::info!("reset_offset: write_table ok={}", ok);
+        if ok {
+            LAST.lock().unwrap().insert(display, 1.0);
         }
     }
 
+    /// Put every captured original back. Called on app exit so no panel is
+    /// left dimmed with no obvious way back.
     pub fn restore() {
-        let orig = ORIGINAL.lock().unwrap().take();
-        if let Some(o) = orig {
-            if write_table(o.display, &o.red, &o.green, &o.blue) {
-                *LAST.lock().unwrap() = 1.0;
+        let originals = std::mem::take(&mut *ORIGINAL.lock().unwrap());
+        for (display, o) in originals {
+            if write_table(display, &o.red, &o.green, &o.blue) {
+                LAST.lock().unwrap().insert(display, 1.0);
             }
         }
     }
@@ -571,9 +564,14 @@ mod gamma_dim {
 // session event tap observes them fine (verified with a synthetic event),
 // and each press steps our tracked system level by one macOS division.
 
+/// A brightness key changes the built-in panel's own backlight, so only the
+/// built-in offset is dropped; an external monitor dimmed in software must
+/// keep its offset.
 #[cfg(target_os = "macos")]
 fn reset_gamma_offset() {
-    gamma_dim::reset_offset();
+    if let Some(display) = cg_builtin_id() {
+        gamma_dim::reset_offset(display);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -738,12 +736,12 @@ pub mod brightness_tap {
         KEY_STEPS.fetch_add(delta, Ordering::Relaxed);
     }
 
-    /// Create the tap ON the main runloop — the only place event taps are
-    /// reliably created. A bare secondary thread's creation fails outright,
-    /// and Tauri's setup() runs before the event loop services anything, so
-    /// attempts are paced: main thread creates, a helper thread only sleeps
-    /// and re-schedules the next attempt on main. Once created, the main
-    /// runloop services the tap for the app's lifetime.
+    // Create the tap ON the main runloop — the only place event taps are
+    // reliably created. A bare secondary thread's creation fails outright,
+    // and Tauri's setup() runs before the event loop services anything, so
+    // attempts are paced: main thread creates, a helper thread only sleeps
+    // and re-schedules the next attempt on main. Once created, the main
+    // runloop services the tap for the app's lifetime.
     // dispatch functions live in libSystem (linked by default on macOS).
     // dispatch_get_main_queue is a macro for the _dispatch_main_q global —
     // dlsym("dispatch_get_main_queue") returns NULL while the underlying
@@ -758,12 +756,12 @@ pub mod brightness_tap {
     /// gamma reset can safely happen in response to a brightness key.
     extern "C" fn do_gamma_reset(_ctx: *mut ()) {
         log::info!("do_gamma_reset: calling reset_offset");
-        super::gamma_dim::reset_offset();
+        super::reset_gamma_offset();
         log::info!("do_gamma_reset: done");
     }
 
     pub fn start(app: &tauri::AppHandle) {
-        use std::sync::atomic::{AtomicU32, Ordering as O2};
+        use std::sync::atomic::AtomicU32;
         static ATTEMPTS: AtomicU32 = AtomicU32::new(0);
         attempt(app);
         fn attempt(app: &tauri::AppHandle) {
@@ -865,7 +863,7 @@ fn builtin_total() -> Option<u8> {
         // Real backlight under our control: the native value is the total.
         return builtin::get();
     }
-    gamma_dim::total_percent()
+    gamma_dim::total_percent(cg_builtin_id()?)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -875,7 +873,7 @@ fn builtin_total() -> Option<u8> {
 
 #[cfg(target_os = "macos")]
 fn builtin_gamma_percent() -> u8 {
-    gamma_dim::get_percent()
+    cg_builtin_id().map(gamma_dim::get_percent).unwrap_or(100)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -936,10 +934,15 @@ fn builtin_is_main() -> bool {
 
 // ─────────── externals (DDC/CI via ddc-hi) ───────────
 
-/// Stable id derived from EDID identity, not enumeration order.
-fn ddc_id(info: &ddc_hi::DisplayInfo) -> String {
-    format!(
-        "ddc:{}:{}:{}",
+/// macOS leaves the EDID identity fields empty for most external monitors:
+/// `IODisplayEDIDOriginal` is absent on the USB-C/DisplayPort path, so ddc-hi
+/// falls back to a name-only `DisplayInfo` and every monitor would share the id
+/// `ddc:?:?:?`. Two of them then collide, every write lands on the first one,
+/// and the second monitor's slider looks broken. The CoreGraphics display id is
+/// unique per attached panel, so it is what keeps the card id unique.
+fn ddc_id(info: &ddc_hi::DisplayInfo, cg_id: Option<u32>) -> String {
+    let identity = format!(
+        "{}:{}:{}",
         info.manufacturer_id.as_deref().unwrap_or("?"),
         info.model_id
             .map(|m| format!("{m:x}"))
@@ -947,7 +950,27 @@ fn ddc_id(info: &ddc_hi::DisplayInfo) -> String {
         info.serial
             .map(|s| s.to_string())
             .unwrap_or_else(|| "?".into()),
-    )
+    );
+    match cg_id {
+        Some(cg) => format!("ddc:{identity}:cg{cg}"),
+        None => format!("ddc:{identity}"),
+    }
+}
+
+/// The CoreGraphics display id behind a ddc-hi handle. Also what the gamma
+/// fallback needs in order to address a single panel.
+#[cfg(target_os = "macos")]
+fn ddc_cg_id(display: &ddc_hi::Display) -> Option<u32> {
+    match &display.handle {
+        ddc_hi::Handle::MacOS(monitor) => Some(monitor.handle().id),
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Recovers the CoreGraphics display id this crate encoded into a card id.
+fn cg_id_from(id: &str) -> Option<u32> {
+    id.rsplit(':').next()?.strip_prefix("cg")?.parse().ok()
 }
 
 fn display_name(d: &ddc_hi::Display, index: usize) -> String {
@@ -1012,6 +1035,9 @@ mod ddc_worker {
     struct CachedDisplay {
         display: ddc_hi::Display,
         status: DisplayStatus,
+        /// CoreGraphics id of the same panel: the address the software gamma
+        /// fallback needs when the monitor does not answer DDC.
+        cg_id: Option<u32>,
         keep_when_missing: bool,
     }
 
@@ -1083,16 +1109,7 @@ mod ddc_worker {
                         .iter_mut()
                         .find(|cached| cached.status.id == id)
                         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "display not found"))
-                        .and_then(|cached| {
-                            cached
-                                .display
-                                .handle
-                                .set_vcp_feature(VCP_LUMINANCE, value as u16)
-                                .map_err(ddc_error)?;
-                            cached.status.brightness = Some(value);
-                            cached.status.system_level = Some(value);
-                            Ok(())
-                        });
+                        .and_then(|cached| set_cached_brightness(cached, value));
                     let _ = reply.send(result);
                 }
                 Request::Power { id, on, reply } => {
@@ -1138,7 +1155,16 @@ mod ddc_worker {
                     .get_vcp_feature(VCP_POWER)
                     .ok()
                     .map(|v| v.value() != POWER_OFF);
-                let id = ddc_id(&display.info);
+                let cg_id = ddc_cg_id(&display);
+                let id = ddc_id(&display.info, cg_id);
+                // A monitor that answers a luminance read speaks DDC. One that
+                // does not is common on USB-C hubs and DisplayLink, and used to
+                // be advertised as controllable anyway: the slider moved and
+                // the panel did not. Software gamma dimming still works on any
+                // CoreGraphics display, so it is the honest fallback, labelled
+                // as software in the UI.
+                let ddc_ok = brightness.is_some();
+                let gamma_ok = !ddc_ok && cg_id.map(gamma_dim::supported).unwrap_or(false);
                 let is_main = main
                     .map(|(vendor, model)| {
                         let model = model & 0xffff;
@@ -1153,11 +1179,22 @@ mod ddc_worker {
                         is_main,
                         brightness,
                         power,
-                        controllable: true,
-                        method: "ddc".into(),
-                        system_level: brightness,
+                        controllable: ddc_ok || gamma_ok,
+                        method: if ddc_ok {
+                            "ddc".into()
+                        } else if gamma_ok {
+                            "gamma".into()
+                        } else {
+                            "none".into()
+                        },
+                        system_level: if gamma_ok {
+                            cg_id.map(gamma_dim::get_percent)
+                        } else {
+                            brightness
+                        },
                     },
                     display,
+                    cg_id,
                     keep_when_missing: false,
                 }
             })
@@ -1192,6 +1229,40 @@ mod ddc_worker {
         }
         merged.extend(previous.into_iter().filter(|old| old.keep_when_missing));
         *displays = merged;
+    }
+
+    /// DDC first, software gamma second. A monitor on a USB-C hub often
+    /// enumerates but never answers DDC, and before this the write failed and
+    /// the slider silently did nothing; dimming its gamma table is the only
+    /// remaining way to actually change what the user sees.
+    fn set_cached_brightness(cached: &mut CachedDisplay, value: u8) -> io::Result<()> {
+        let ddc = cached
+            .display
+            .handle
+            .set_vcp_feature(VCP_LUMINANCE, value as u16)
+            .map_err(ddc_error);
+        let method = match &ddc {
+            Ok(()) => "ddc",
+            Err(error) => {
+                let Some(cg_id) = cached.cg_id.filter(|id| gamma_dim::supported(*id)) else {
+                    return Err(ddc_error(error.to_string()));
+                };
+                if !gamma_dim::set_absolute(cg_id, value) {
+                    return Err(ddc_error(error.to_string()));
+                }
+                log::info!(
+                    "display {} refused DDC ({}); dimmed in software instead",
+                    cached.status.id,
+                    error
+                );
+                "gamma"
+            }
+        };
+        cached.status.method = method.into();
+        cached.status.controllable = true;
+        cached.status.brightness = Some(value);
+        cached.status.system_level = Some(value);
+        Ok(())
     }
 
     fn set_cached_power(cached: &mut CachedDisplay, on: bool) -> io::Result<()> {
@@ -1750,6 +1821,36 @@ mod tests {
         }
     }
 
+    /// The fallback for monitors that never answer DDC: software gamma on the
+    /// external panel itself. Opt-in only — it visibly dims the monitor.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn live_external_gamma_fallback() {
+        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
+            return;
+        }
+        let Some(external) = ddc_worker::list(None)
+            .into_iter()
+            .find(|display| display.kind == "external")
+        else {
+            return;
+        };
+        let cg = cg_id_from(&external.id).expect("external card carries no CoreGraphics id");
+        assert!(
+            gamma_dim::supported(cg),
+            "gamma fallback unavailable on external display {cg}"
+        );
+        assert!(gamma_dim::set_absolute(cg, 50), "gamma dim rejected");
+        assert_eq!(gamma_dim::get_percent(cg), 50);
+        // The built-in must keep its own offset: one global slot used to mean
+        // dimming one panel rewrote the other panel's captured original.
+        if let Some(builtin) = cg_builtin_id() {
+            assert_eq!(gamma_dim::get_percent(builtin), 100);
+        }
+        gamma_dim::reset_offset(cg);
+        assert_eq!(gamma_dim::get_percent(cg), 100);
+    }
+
     /// Physical OFF→ON cycle through the same retained worker handle used by
     /// the app. Opt-in only: this visibly blanks the external monitor.
     #[test]
@@ -1794,12 +1895,31 @@ mod tests {
         std::mem::forget(restore);
     }
 
+    /// macOS gives most external monitors no EDID identity at all, so two
+    /// monitors used to share the id `ddc:?:?:?`. Every write then landed on
+    /// whichever one enumerated first and the other slider looked dead.
+    #[test]
+    fn anonymous_monitors_still_get_distinct_ids() {
+        let anonymous = || ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "ARZOPA".into());
+        let first = ddc_id(&anonymous(), Some(3));
+        let second = ddc_id(&anonymous(), Some(7));
+        assert_ne!(first, second, "two EDID-less monitors collided: {first}");
+        assert_eq!(cg_id_from(&first), Some(3));
+        assert_eq!(cg_id_from(&second), Some(7));
+    }
+
+    #[test]
+    fn ids_without_a_coregraphics_suffix_yield_no_display() {
+        assert_eq!(cg_id_from("ddc:?:?:?"), None);
+        assert_eq!(cg_id_from(BUILTIN_ID), None);
+    }
+
     #[test]
     fn builtin_id_cannot_collide_with_ddc_ids() {
-        assert!(ddc_id(&ddc_hi::DisplayInfo::new(
-            ddc_hi::Backend::MacOS,
-            "builtin".into()
-        ))
+        assert!(ddc_id(
+            &ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "builtin".into()),
+            Some(1)
+        )
         .starts_with("ddc:"));
         assert_ne!(BUILTIN_ID, "ddc:");
     }

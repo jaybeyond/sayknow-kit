@@ -539,7 +539,7 @@ function DisplayControl({
           </div>
         )}
       </div>
-      {display.method === "gamma" && display.system_level !== null && (
+      {display.kind === "builtin" && display.method === "gamma" && display.system_level !== null && (
         <div className="mt-1.5 flex items-center gap-1.5">
           <span className="shrink-0 text-[9px] text-muted-foreground">
             {t("tools.brightness.backlight")}
@@ -567,10 +567,15 @@ function DisplayControl({
           className="mt-1.5"
         />
       ) : (
-        // Present but not drivable at all (no backlight API, no gamma):
-        // say so instead of a dead slider pretending to work.
+        // Present but not drivable at all: no backlight API and no gamma for
+        // the built-in, no DDC and no gamma for an external. Say which, instead
+        // of showing a dead slider that pretends to work.
         <p className="mt-1.5 rounded bg-muted/60 px-1.5 py-1 text-[10px] leading-snug text-muted-foreground">
-          {t("tools.brightness.builtinUnsupported")}
+          {t(
+            display.kind === "external"
+              ? "tools.brightness.externalUnsupported"
+              : "tools.brightness.builtinUnsupported",
+          )}
         </p>
       )}
 

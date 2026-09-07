@@ -71,6 +71,11 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axRestart": "Restart the app",
       "tools.brightness.axAdhoc": "Ad-hoc build: reset the entry",
       "tools.brightness.axReset": "Reset and ask again",
+      "tools.brightness.softwareDim": "software dim",
+      "tools.brightness.external": "external",
+      "tools.brightness.backlight": "Backlight",
+      "tools.brightness.builtinUnsupported": "This Mac cannot drive the built-in display",
+      "tools.brightness.externalUnsupported": "This monitor answers neither DDC brightness control nor software dimming",
     })[key] ?? key,
   }),
 }))
@@ -146,6 +151,53 @@ describe("ToolsPanel system metrics", () => {
       brightness!.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(container.querySelector('[aria-label="Usage"]')).toBe(usage)
+  })
+})
+
+describe("ToolsPanel external monitor cards", () => {
+  const external = (over: Record<string, unknown>) => ({
+    id: "ddc:?:?:?:cg3",
+    name: "ARZOPA",
+    kind: "external",
+    is_main: false,
+    brightness: 40,
+    power: true,
+    controllable: true,
+    method: "ddc",
+    system_level: 40,
+    ...over,
+  })
+
+  afterEach(() => {
+    mocks.toolsState.displays = []
+  })
+
+  it("says what is wrong with an external the machine cannot drive", () => {
+    mocks.toolsState.displays = [external({ controllable: false, method: "none", brightness: null })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByText(/answers neither DDC brightness control/)).toBeTruthy()
+    expect(screen.queryByText(/cannot drive the built-in display/)).toBeNull()
+  })
+
+  it("does not offer a system backlight row for a software-dimmed external", () => {
+    mocks.toolsState.displays = [external({ method: "gamma" })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByText("software dim")).toBeTruthy()
+    // The backlight row is the built-in's F1/F2 base level; an external has none.
+    expect(screen.queryByLabelText("ARZOPA Backlight")).toBeNull()
+    expect(screen.getByLabelText("ARZOPA software dim")).toBeTruthy()
+  })
+
+  it("keeps two identity-less monitors as two separate cards", () => {
+    mocks.toolsState.displays = [
+      external({ id: "ddc:?:?:?:cg3", name: "ARZOPA" }),
+      external({ id: "ddc:?:?:?:cg7", name: "ARZOPA", brightness: 80 }),
+    ]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getAllByLabelText("ARZOPA Brightness")).toHaveLength(2)
   })
 })
 
