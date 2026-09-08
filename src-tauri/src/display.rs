@@ -25,6 +25,9 @@ const VCP_LUMINANCE: u8 = 0x10;
 const VCP_POWER: u8 = 0xd6;
 const POWER_ON: u16 = 0x01;
 const POWER_OFF: u16 = 0x04;
+/// MCCS defines both 0x04 and 0x05 as off. Monitors implement one, the other,
+/// or both, so trying only 0x04 left whole models with a dead power button.
+const POWER_OFF_HARD: u16 = 0x05;
 
 /// The built-in display's stable id. EDID-based ids are used for externals,
 /// and none of them can start with this prefix.
@@ -1022,7 +1025,27 @@ fn classify_external(
     }
 }
 
+/// Whether a monitor that just missed a luminance read is still a DDC monitor.
+///
+/// A panel that is waking or retraining its link drops a read or two. Demoting
+/// it to software dimming on the first miss relabelled a working monitor as
+/// "software dimmed" and made its slider jump to the gamma level.
+fn ddc_survives_miss(previous_method: &str, misses: u8) -> bool {
+    previous_method == "ddc" && misses <= 1
+}
+
+/// Whether a VCP 0xD6 reading means the panel is actually lit.
+///
+/// Only 0x01 is on: 0x02 standby, 0x03 suspend and 0x04/0x05 off are all dark.
+/// Testing `!= 0x04` reported a monitor in standby — which is where 0x04 puts
+/// most of them — as still on, so the card said ON for a black screen.
+fn ddc_power_is_on(value: u16) -> bool {
+    value == POWER_ON
+}
+
 /// Recovers the CoreGraphics display id this crate encoded into a card id.
+/// Only the tests read it back out; production carries `CachedDisplay::cg_id`.
+#[cfg(test)]
 fn cg_id_from(id: &str) -> Option<u32> {
     id.rsplit(':').next()?.strip_prefix("cg")?.parse().ok()
 }
@@ -1093,6 +1116,11 @@ mod ddc_worker {
         /// fallback needs when the monitor does not answer DDC.
         cg_id: Option<u32>,
         keep_when_missing: bool,
+        /// When this process last told the monitor to turn off. Our own command
+        /// outranks the wire only briefly, while the panel is entering standby.
+        off_at: Option<std::time::Instant>,
+        /// Consecutive luminance reads this monitor has failed to answer.
+        ddc_misses: u8,
     }
 
     enum Request {
@@ -1208,7 +1236,7 @@ mod ddc_worker {
                     .handle
                     .get_vcp_feature(VCP_POWER)
                     .ok()
-                    .map(|v| v.value() != POWER_OFF);
+                    .map(|v| ddc_power_is_on(v.value()));
                 let cg_id = ddc_cg_id(&display);
                 let id = ddc_id(&display.info, cg_id);
                 // A monitor that answers a luminance read speaks DDC. One that
@@ -1242,6 +1270,8 @@ mod ddc_worker {
                     display,
                     cg_id,
                     keep_when_missing: false,
+                    off_at: None,
+                    ddc_misses: 0,
                 }
             })
             .collect::<Vec<_>>();
@@ -1254,12 +1284,16 @@ mod ddc_worker {
                 .position(|old| old.status.id == current.status.id)
             {
                 let old = previous.swap_remove(index);
-                if old.keep_when_missing && old.status.power == Some(false) {
-                    // A VCP 0xD6 read can transiently report ON while the panel
-                    // is entering standby. The explicit OFF command remains
-                    // authoritative until the user sends ON.
+                // A 0xD6 read can still report ON for a moment after the off
+                // command lands, so our own command wins — but only for that
+                // moment. Holding it forever made a monitor switched on at its
+                // own button keep showing as off until the app was restarted.
+                let entering_standby = old
+                    .off_at
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(3));
+                if entering_standby {
                     current.status.power = Some(false);
-                    current.keep_when_missing = true;
+                    current.off_at = old.off_at;
                 } else {
                     if current.status.brightness.is_none() {
                         current.status.brightness = old.status.brightness;
@@ -1268,8 +1302,23 @@ mod ddc_worker {
                     if current.status.power.is_none() {
                         current.status.power = old.status.power;
                     }
-                    current.keep_when_missing = false;
                 }
+                current.ddc_misses = if current.status.method == "ddc" {
+                    0
+                } else {
+                    old.ddc_misses.saturating_add(1)
+                };
+                if current.status.method != "ddc"
+                    && ddc_survives_miss(&old.status.method, old.ddc_misses)
+                {
+                    current.status.method = "ddc".into();
+                    current.status.controllable = true;
+                    current.status.brightness = old.status.brightness;
+                    current.status.system_level = old.status.system_level;
+                }
+                // Keep a sleeping monitor's card and handle: macOS may drop it
+                // from CoreGraphics while it is off.
+                current.keep_when_missing = current.status.power == Some(false);
             }
             merged.push(current);
         }
@@ -1282,11 +1331,21 @@ mod ddc_worker {
     /// the slider silently did nothing; dimming its gamma table is the only
     /// remaining way to actually change what the user sees.
     fn set_cached_brightness(cached: &mut CachedDisplay, value: u8) -> io::Result<()> {
-        let ddc = cached
+        let mut ddc = cached
             .display
             .handle
             .set_vcp_feature(VCP_LUMINANCE, value as u16)
             .map_err(ddc_error);
+        if ddc.is_err() && reopen(cached) {
+            // The handle can die on its own after the monitor sleeps or
+            // retrains its link. A monitor that does speak DDC must not be
+            // quietly demoted to software dimming because of that.
+            ddc = cached
+                .display
+                .handle
+                .set_vcp_feature(VCP_LUMINANCE, value as u16)
+                .map_err(ddc_error);
+        }
         let method = match &ddc {
             Ok(()) => "ddc",
             Err(error) => {
@@ -1311,62 +1370,113 @@ mod ddc_worker {
         Ok(())
     }
 
+    /// Waking a monitor makes it retrain its link, and that invalidates the
+    /// IOAVService handle the wake commands are being sent on: the retained
+    /// handle starts returning `MacOS kernel I/O error: 268435459` mid-sequence
+    /// and stays dead. Re-enumerating is the only way to get a live one, and
+    /// without it every later ON press hit the same corpse — the monitor went
+    /// off and could not be turned back on.
+    fn reopen(cached: &mut CachedDisplay) -> bool {
+        let Some(fresh) = ddc_hi::Display::enumerate()
+            .into_iter()
+            .find(|display| ddc_id(&display.info, ddc_cg_id(display)) == cached.status.id)
+        else {
+            return false;
+        };
+        cached.cg_id = ddc_cg_id(&fresh);
+        cached.display = fresh;
+        true
+    }
+
+    /// Reads the power state, replacing a handle that has gone stale. `None`
+    /// means the monitor did not answer at all.
+    fn read_power(cached: &mut CachedDisplay) -> Option<bool> {
+        if let Ok(value) = cached.display.handle.get_vcp_feature(VCP_POWER) {
+            return Some(ddc_power_is_on(value.value()));
+        }
+        if !reopen(cached) {
+            return None;
+        }
+        cached
+            .display
+            .handle
+            .get_vcp_feature(VCP_POWER)
+            .ok()
+            .map(|value| ddc_power_is_on(value.value()))
+    }
+
     fn set_cached_power(cached: &mut CachedDisplay, on: bool) -> io::Result<()> {
         if !on {
-            cached
-                .display
-                .handle
+            let handle = &mut cached.display.handle;
+            handle
                 .set_vcp_feature(VCP_POWER, POWER_OFF)
+                .or_else(|first| {
+                    handle
+                        .set_vcp_feature(VCP_POWER, POWER_OFF_HARD)
+                        .map_err(|_| first)
+                })
                 .map_err(ddc_error)?;
             cached.status.power = Some(false);
+            cached.off_at = Some(std::time::Instant::now());
             cached.keep_when_missing = true;
             return Ok(());
         }
 
-        // A sleeping monitor may ACK the first command without waking its
-        // panel, or may need the retained IOAVService handle after it vanishes
-        // from CoreGraphics. Send a complete wake sequence instead of treating
-        // the first ACK as proof that the screen is on.
-        let mut any_write_succeeded = false;
+        // Stop as soon as the panel confirms it is lit. Every write sent after
+        // that races the link retraining, and those were the ones killing the
+        // handle this sequence needs.
+        let mut accepted = false;
         let mut last_error = None;
         for attempt in 0..6 {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(450));
             }
             match cached.display.handle.set_vcp_feature(VCP_POWER, POWER_ON) {
-                Ok(()) => any_write_succeeded = true,
+                Ok(()) => accepted = true,
                 Err(error) => {
-                    log::info!("power-on attempt {} failed: {}", attempt + 1, error);
                     last_error = Some(error.to_string());
+                    log::info!("power-on attempt {} failed: {}", attempt + 1, error);
+                    if reopen(cached) {
+                        match cached.display.handle.set_vcp_feature(VCP_POWER, POWER_ON) {
+                            Ok(()) => accepted = true,
+                            Err(error) => last_error = Some(error.to_string()),
+                        }
+                    }
                 }
             }
-            if let Some(brightness) = cached.status.brightness {
-                std::thread::sleep(std::time::Duration::from_millis(80));
-                if cached
-                    .display
-                    .handle
-                    .set_vcp_feature(VCP_LUMINANCE, brightness as u16)
-                    .is_ok()
-                {
-                    any_write_succeeded = true;
-                }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if read_power(cached) == Some(true) {
+                wake_succeeded(cached);
+                return Ok(());
             }
         }
 
-        if any_write_succeeded {
-            cached.status.power = Some(true);
-            // Keep the handle/card until a later enumeration proves the panel
-            // is active again; waking and link retraining are asynchronous.
-            cached.keep_when_missing = true;
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "display did not accept the wake sequence: {}",
-                    last_error.unwrap_or_default()
-                ),
-            ))
+        // A monitor that took the write but never answers 0xD6 is almost
+        // certainly awake: an accepted write means the link is live.
+        if accepted {
+            wake_succeeded(cached);
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "display did not accept the wake sequence: {}",
+                last_error.unwrap_or_default()
+            ),
+        ))
+    }
+
+    fn wake_succeeded(cached: &mut CachedDisplay) {
+        cached.status.power = Some(true);
+        cached.off_at = None;
+        cached.keep_when_missing = false;
+        // Some monitors come back at their own default level, not the one the
+        // card is showing.
+        if let Some(brightness) = cached.status.brightness {
+            let _ = cached
+                .display
+                .handle
+                .set_vcp_feature(VCP_LUMINANCE, brightness as u16);
         }
     }
 
@@ -1959,7 +2069,43 @@ mod tests {
             .find(|display| display.id == id)
             .expect("woken display card was lost");
         assert_eq!(on.power, Some(true), "display did not return to on state");
+        // The wake used to leave a dead handle behind, so the monitor was lit
+        // but nothing could be sent to it any more.
+        ddc_worker::set_brightness(&id, on.brightness.unwrap_or(50))
+            .expect("handle was dead after the wake sequence");
+        let after = ddc_worker::list(None)
+            .into_iter()
+            .find(|display| display.id == id)
+            .expect("display card was lost after the wake");
+        assert_eq!(
+            after.method, "ddc",
+            "monitor was demoted off DDC by the wake"
+        );
         std::mem::forget(restore);
+    }
+
+    /// A monitor that just woke misses a read; before this it was relabelled
+    /// as software dimmed and its slider jumped to the gamma level.
+    #[test]
+    fn a_waking_monitor_is_not_demoted_off_ddc_by_one_missed_read() {
+        assert!(ddc_survives_miss("ddc", 0));
+        assert!(ddc_survives_miss("ddc", 1));
+        assert!(
+            !ddc_survives_miss("ddc", 2),
+            "a monitor that keeps missing is not on DDC"
+        );
+        assert!(!ddc_survives_miss("gamma", 0));
+        assert!(!ddc_survives_miss("none", 0));
+    }
+
+    /// 0x04 puts most monitors into standby, which reads back as 0x02. Testing
+    /// `!= 0x04` therefore called a black screen "on".
+    #[test]
+    fn only_0x01_counts_as_a_lit_panel() {
+        assert!(ddc_power_is_on(0x01));
+        for dark in [0x02, 0x03, 0x04, 0x05] {
+            assert!(!ddc_power_is_on(dark), "0x{dark:02x} is not a lit panel");
+        }
     }
 
     /// macOS gives most external monitors no EDID identity at all, so two

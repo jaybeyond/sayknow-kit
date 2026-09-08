@@ -506,7 +506,9 @@ function DisplayControl({
         <span className="ml-auto tabular-nums text-[10px] text-muted-foreground">
           {display.brightness === null ? "—" : `${v}%`}
         </span>
-        {display.kind === "external" && (
+        {/* Power is DDC-only. A monitor behind a hub that never answers DDC
+            used to get these buttons anyway, and pressing them did nothing. */}
+        {display.kind === "external" && display.method === "ddc" && (
           <div className="flex items-center gap-0.5">
             <Button
               variant="ghost"

@@ -71,6 +71,8 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axRestart": "Restart the app",
       "tools.brightness.axAdhoc": "Ad-hoc build: reset the entry",
       "tools.brightness.axReset": "Reset and ask again",
+      "tools.brightness.powerOn": "Power on",
+      "tools.brightness.powerOff": "Power off",
       "tools.brightness.softwareDim": "software dim",
       "tools.brightness.external": "external",
       "tools.brightness.backlight": "Backlight",
@@ -188,6 +190,24 @@ describe("ToolsPanel external monitor cards", () => {
     // The backlight row is the built-in's F1/F2 base level; an external has none.
     expect(screen.queryByLabelText("ARZOPA Backlight")).toBeNull()
     expect(screen.getByLabelText("ARZOPA software dim")).toBeTruthy()
+  })
+
+  it("hides the power buttons on a monitor that does not speak DDC", () => {
+    mocks.toolsState.displays = [external({ method: "gamma" })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    // Power is a DDC command; there is no software equivalent, so offering the
+    // buttons on a hub monitor was a button that did nothing.
+    expect(screen.queryByTitle("Power on")).toBeNull()
+    expect(screen.queryByTitle("Power off")).toBeNull()
+  })
+
+  it("keeps the power buttons on a monitor that does speak DDC", () => {
+    mocks.toolsState.displays = [external({ method: "ddc" })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByTitle("Power on")).toBeTruthy()
+    expect(screen.getByTitle("Power off")).toBeTruthy()
   })
 
   it("keeps two identity-less monitors as two separate cards", () => {
