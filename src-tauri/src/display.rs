@@ -1135,6 +1135,40 @@ fn ddc_power_is_on(value: u16) -> bool {
 /// rebuilt during that window carried no memory of what the monitor could do.
 /// Keeping the answer here outlives the card, so a blackout costs the user
 /// nothing but a power press that reports why it failed.
+/// Logs everything known about a monitor the first time it is seen.
+///
+/// A monitor that will not switch off is diagnosed from the answers it gave,
+/// and until now none of them were written down: the log recorded a failed
+/// wake without ever recording whether the panel spoke DDC at all, what it
+/// called itself, or which id the rest of this file was addressing it by. On a
+/// machine that is not this one, that is the difference between a fix and a
+/// guess.
+fn announce_once(id: &str, display: &ddc_hi::Display, brightness: Option<u8>, power: Option<bool>) {
+    static ANNOUNCED: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> =
+        std::sync::Mutex::new(None);
+    let Ok(mut guard) = ANNOUNCED.lock() else {
+        return;
+    };
+    if !guard
+        .get_or_insert_with(Default::default)
+        .insert(id.to_owned())
+    {
+        return;
+    }
+    let info = &display.info;
+    log::info!(
+        "display {id}: backend={} model={:?} mfr={:?} serial={:?} edid={} \
+         luminance_read={} power_read={:?}",
+        info.backend,
+        info.model_name,
+        info.manufacturer_id,
+        info.serial,
+        info.edid_data.as_ref().map_or(0, |e| e.len()),
+        brightness.map_or("refused".to_string(), |b| b.to_string()),
+        power,
+    );
+}
+
 fn remember_power_capable(id: &str, answered: bool) -> bool {
     static SEEN: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> =
         std::sync::Mutex::new(None);
@@ -1228,8 +1262,12 @@ mod ddc_worker {
         /// Consecutive luminance reads this monitor has failed to answer.
         ddc_misses: u8,
         /// The 0xD6 values this monitor advertises, read once from its
-        /// capability string. `None` until the first power command; an empty
-        /// list means the monitor would not hand its capabilities over.
+        /// capability string. `None` until the monitor has actually answered
+        /// one: a capability read that *failed* must not be stored, or one
+        /// timeout would permanently convince this process that a monitor
+        /// advertises nothing. An answered but empty list is a real answer and
+        /// is stored — some monitors leave 0xD6 out of a string they otherwise
+        /// serve correctly.
         power_values: Option<Vec<u8>>,
     }
 
@@ -1366,6 +1404,7 @@ mod ddc_worker {
                     })
                     .unwrap_or(false);
                 let power_capable = remember_power_capable(&id, power.is_some());
+                announce_once(&id, &display, brightness, power);
                 CachedDisplay {
                     status: DisplayStatus {
                         id,
@@ -1532,16 +1571,22 @@ mod ddc_worker {
         if let Some(values) = &cached.power_values {
             return values.clone();
         }
-        let values = cached
-            .display
-            .handle
-            .capabilities()
-            .ok()
-            .and_then(|caps| {
-                caps.vcp_features
-                    .get(&VCP_POWER)
-                    .map(|feature| feature.values().copied().collect::<Vec<u8>>())
-            })
+        // A capability string is the least reliable read in DDC: it is long,
+        // multi-packet, and a monitor that answers 0x10 and 0xD6 all day can
+        // still drop it. Failing that read tells us nothing about the monitor,
+        // so it is neither logged as an answer nor remembered as one.
+        let Ok(caps) = cached.display.handle.capabilities() else {
+            log::info!(
+                "{} would not hand over its capability string; \
+                 falling back to the standard off value",
+                cached.status.id
+            );
+            return Vec::new();
+        };
+        let values = caps
+            .vcp_features
+            .get(&VCP_POWER)
+            .map(|feature| feature.values().copied().collect::<Vec<u8>>())
             .unwrap_or_default();
         log::info!(
             "{} advertises 0xD6 values {:02x?}",
@@ -1560,11 +1605,24 @@ mod ddc_worker {
                     "this monitor does not offer an off state over DDC",
                 ));
             };
-            cached
+            // The same dead handle the wake sequence has to survive kills this
+            // write too — a monitor that has slept once hands back
+            // `MacOS kernel I/O error: 268435459` and never recovers on the
+            // retained handle. Brightness and power-on both re-enumerate here;
+            // off was the one path left sending a single shot into a corpse.
+            let mut wrote = cached
                 .display
                 .handle
                 .set_vcp_feature(VCP_POWER, value)
-                .map_err(ddc_error)?;
+                .map_err(ddc_error);
+            if wrote.is_err() && reopen(cached) {
+                wrote = cached
+                    .display
+                    .handle
+                    .set_vcp_feature(VCP_POWER, value)
+                    .map_err(ddc_error);
+            }
+            wrote?;
             cached.status.power = Some(false);
             cached.off_at = Some(std::time::Instant::now());
             cached.keep_when_missing = true;
@@ -2388,6 +2446,53 @@ mod tests {
     #[test]
     fn an_unreadable_capability_string_gets_the_soft_off() {
         assert_eq!(power_off_value(&[]), Some(POWER_OFF));
+    }
+
+    /// A capability read that failed is not an answer. Caching it as one made
+    /// a single timeout convince this process for the rest of its life that a
+    /// monitor advertised nothing — and `list` then copied that verdict
+    /// forward on every rescan. A monitor whose only off value is 0x05 got
+    /// 0x04 forever after, and 0x04 is the one it ignores.
+    #[test]
+    fn a_failed_capability_read_is_not_remembered_as_an_answer() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn power_values(")
+            .expect("power_values still exists")
+            .1
+            .split_once("\n    }")
+            .expect("power_values has an end")
+            .0;
+        let bail = body
+            .find("return Vec::new();")
+            .expect("a failed capability read must leave the cache alone");
+        let store = body
+            .find("cached.power_values = Some(")
+            .expect("a successful read is still cached");
+        assert!(
+            bail < store,
+            "the failure path has to return before anything is written to the cache"
+        );
+    }
+
+    /// Brightness and power-on both re-enumerate when the retained handle is
+    /// dead; power-off was sending one shot and giving up. A monitor that has
+    /// slept once hands back `MacOS kernel I/O error: 268435459` on that
+    /// handle forever, so off simply stopped working until the app restarted.
+    #[test]
+    fn the_off_path_replaces_a_dead_handle_like_every_other_path() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn set_cached_power(")
+            .expect("set_cached_power still exists")
+            .1
+            .split_once("// Stop as soon as the panel confirms it is lit")
+            .expect("the off branch runs before the on branch")
+            .0;
+        assert!(
+            body.contains("reopen(cached)"),
+            "the off branch gave up on a stale handle instead of replacing it"
+        );
     }
 
     /// Advertising 0xD6 without an off value means the feature is read-only on
