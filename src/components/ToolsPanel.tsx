@@ -514,8 +514,12 @@ function DisplayControl({
         {/* Power is DDC 0xD6, read separately from brightness 0x10: a monitor
             can refuse a luminance read and still switch on and off. Gating
             these on `method` took the buttons away from those monitors.
-            `power` is null only when 0xD6 itself never answered. */}
-        {display.kind === "external" && display.power !== null && (
+            Gating them on `power` took them away too, just less often: DDC
+            goes quiet for minutes at a time and `power` is null for all of it,
+            so the buttons blinked out mid-session on a monitor that had been
+            switching on and off all day. `power_capable` is the monitor's
+            answer to "can you do this at all", and that does not flicker. */}
+        {display.kind === "external" && display.power_capable && (
           <div className="flex items-center gap-0.5">
             <Button
               variant="ghost"

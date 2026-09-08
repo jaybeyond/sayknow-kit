@@ -65,6 +65,12 @@ pub struct DisplayStatus {
     pub brightness: Option<u8>,
     /// None when the monitor doesn't report power state over DDC.
     pub power: Option<bool>,
+    /// Whether this monitor has ever answered 0xD6. DDC goes quiet for a minute
+    /// at a time — a cable settles, the panel retrains its link — and `power`
+    /// is `None` for as long as that lasts. Hanging the power buttons on the
+    /// live read made them vanish during those windows, so they hang on this
+    /// instead: it says the monitor *can* do power, which does not flicker.
+    pub power_capable: bool,
     /// False when this display can't be controlled from here at all.
     pub controllable: bool,
     /// How brightness is driven: backlight | ddc | gamma. The UI labels
@@ -1063,6 +1069,29 @@ fn ddc_power_is_on(value: u16) -> bool {
     value == POWER_ON
 }
 
+/// Records that `id` answered 0xD6, and reports whether it ever has.
+///
+/// A monitor's ability to switch itself off is a fact about the hardware; the
+/// read that discovers it is not. DDC on a running desk goes quiet for whole
+/// minutes — this app watched a monitor that had answered `01 04 05` minutes
+/// earlier report nothing at all, then come back on its own — and a card
+/// rebuilt during that window carried no memory of what the monitor could do.
+/// Keeping the answer here outlives the card, so a blackout costs the user
+/// nothing but a power press that reports why it failed.
+fn remember_power_capable(id: &str, answered: bool) -> bool {
+    static SEEN: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> =
+        std::sync::Mutex::new(None);
+    let Ok(mut guard) = SEEN.lock() else {
+        return answered;
+    };
+    let seen = guard.get_or_insert_with(Default::default);
+    if answered {
+        seen.insert(id.to_owned());
+        return true;
+    }
+    seen.contains(id)
+}
+
 /// Recovers the CoreGraphics display id this crate encoded into a card id.
 /// Only the tests read it back out; production carries `CachedDisplay::cg_id`.
 #[cfg(test)]
@@ -1279,6 +1308,7 @@ mod ddc_worker {
                         display.info.model_id == Some(model as u16) || vendor == 0 && model == 0
                     })
                     .unwrap_or(false);
+                let power_capable = remember_power_capable(&id, power.is_some());
                 CachedDisplay {
                     status: DisplayStatus {
                         id,
@@ -1287,6 +1317,7 @@ mod ddc_worker {
                         is_main,
                         brightness: level,
                         power,
+                        power_capable,
                         controllable,
                         method: method.into(),
                         system_level: level,
@@ -1645,6 +1676,10 @@ pub fn list(max_age: Option<std::time::Duration>) -> Vec<DisplayStatus> {
                 None
             },
             power: None,
+            // The built-in panel has no DDC and no power feature; "off" here
+            // would be a backlight at zero, which is a dark screen the user
+            // cannot see to undo.
+            power_capable: false,
             controllable: backlight_ok || gamma_ok,
             method: if backlight_ok {
                 "backlight".into()
@@ -2209,6 +2244,26 @@ mod tests {
         for dark in [0x02, 0x03, 0x04, 0x05] {
             assert!(!ddc_power_is_on(dark), "0x{dark:02x} is not a lit panel");
         }
+    }
+
+    /// A monitor that answered 0xD6 once keeps its power buttons through the
+    /// minutes when DDC answers nothing. The card is rebuilt on every scan and
+    /// a monitor that blinks off the bus loses its previous entry entirely, so
+    /// the memory has to outlive the card — otherwise the buttons vanish from a
+    /// monitor that was switching on and off a minute earlier.
+    #[test]
+    fn a_monitor_that_answered_power_once_is_remembered_through_a_blackout() {
+        let id = "ddc:test:blackout";
+        assert!(!remember_power_capable(id, false), "nothing known yet");
+        assert!(remember_power_capable(id, true), "it just answered");
+        assert!(
+            remember_power_capable(id, false),
+            "a quiet minute is not proof the monitor lost the feature"
+        );
+        assert!(
+            !remember_power_capable("ddc:test:other", false),
+            "one monitor's answer says nothing about another"
+        );
     }
 
     /// The monitor on this desk advertises 0x04 *and* 0x05, and 0x04 is enough

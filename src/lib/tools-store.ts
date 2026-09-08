@@ -11,6 +11,9 @@ export type DisplayRow = {
   is_main: boolean
   brightness: number | null
   power: boolean | null
+  /** Whether this monitor has ever answered 0xD6. `power` goes null whenever
+   *  DDC is having a quiet minute; this does not. */
+  power_capable: boolean
   controllable: boolean
   method: "backlight" | "ddc" | "gamma" | "none"
   system_level: number | null

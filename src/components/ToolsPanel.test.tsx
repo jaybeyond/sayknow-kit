@@ -168,6 +168,7 @@ describe("ToolsPanel external monitor cards", () => {
     is_main: false,
     brightness: 40,
     power: true,
+    power_capable: true,
     controllable: true,
     method: "ddc",
     system_level: 40,
@@ -200,7 +201,9 @@ describe("ToolsPanel external monitor cards", () => {
   })
 
   it("hides the power buttons only when the monitor never answered 0xD6", () => {
-    mocks.toolsState.displays = [external({ method: "none", power: null, controllable: false })]
+    mocks.toolsState.displays = [
+      external({ method: "none", power: null, power_capable: false, controllable: false }),
+    ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     // Power has no software equivalent, so a button here would do nothing.
@@ -213,6 +216,20 @@ describe("ToolsPanel external monitor cards", () => {
     // luminance read still switches off and on, and gating these buttons on
     // the brightness method took the working feature away from it.
     mocks.toolsState.displays = [external({ method: "gamma", power: true })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    expect(screen.getByTitle("Power on")).toBeTruthy()
+    expect(screen.getByTitle("Power off")).toBeTruthy()
+  })
+
+  it("keeps the power buttons through a DDC blackout", () => {
+    // DDC on a live desk goes quiet for minutes at a time. Gating the buttons
+    // on the live `power` read made them disappear mid-session from a monitor
+    // that had been switching on and off all day, and the user reasonably read
+    // that as the app losing the feature.
+    mocks.toolsState.displays = [
+      external({ method: "gamma", power: null, power_capable: true, brightness: null }),
+    ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     expect(screen.getByTitle("Power on")).toBeTruthy()
