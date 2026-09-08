@@ -27,7 +27,27 @@ const POWER_ON: u16 = 0x01;
 const POWER_OFF: u16 = 0x04;
 /// MCCS defines both 0x04 and 0x05 as off. Monitors implement one, the other,
 /// or both, so trying only 0x04 left whole models with a dead power button.
+/// 0x05 is the dangerous one: monitors that implement it literally cut the
+/// scaler, which takes DDC down with it, and then nothing but the button on the
+/// bezel brings the panel back. It is a last resort, never a reflex.
 const POWER_OFF_HARD: u16 = 0x05;
+
+/// The value to send to turn `advertised` off, given the 0xD6 values it claims
+/// on its capability string. `None` when it claims none of them.
+///
+/// The two failures here are not the same size. Withholding 0x05 costs a
+/// monitor its off button; sending it costs the user a walk to the bezel,
+/// because the panels that implement 0x05 take DDC down with the scaler and
+/// nothing this app sends afterwards is heard. So 0x05 goes only to a monitor
+/// that advertises it *instead of* 0x04, where it is the only off there is.
+fn power_off_value(advertised: &[u8]) -> Option<u16> {
+    if advertised.is_empty() || advertised.contains(&(POWER_OFF as u8)) {
+        return Some(POWER_OFF);
+    }
+    advertised
+        .contains(&(POWER_OFF_HARD as u8))
+        .then_some(POWER_OFF_HARD)
+}
 
 /// The built-in display's stable id. EDID-based ids are used for externals,
 /// and none of them can start with this prefix.
@@ -1121,6 +1141,10 @@ mod ddc_worker {
         off_at: Option<std::time::Instant>,
         /// Consecutive luminance reads this monitor has failed to answer.
         ddc_misses: u8,
+        /// The 0xD6 values this monitor advertises, read once from its
+        /// capability string. `None` until the first power command; an empty
+        /// list means the monitor would not hand its capabilities over.
+        power_values: Option<Vec<u8>>,
     }
 
     enum Request {
@@ -1272,6 +1296,7 @@ mod ddc_worker {
                     keep_when_missing: false,
                     off_at: None,
                     ddc_misses: 0,
+                    power_values: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -1319,6 +1344,9 @@ mod ddc_worker {
                 // Keep a sleeping monitor's card and handle: macOS may drop it
                 // from CoreGraphics while it is off.
                 current.keep_when_missing = current.status.power == Some(false);
+                // A monitor's capability string does not change between scans,
+                // and re-reading it costs over a second on some panels.
+                current.power_values = old.power_values;
             }
             merged.push(current);
         }
@@ -1381,6 +1409,10 @@ mod ddc_worker {
             .into_iter()
             .find(|display| ddc_id(&display.info, ddc_cg_id(display)) == cached.status.id)
         else {
+            log::info!(
+                "{} is no longer in DDC enumeration; its handle cannot be replaced",
+                cached.status.id
+            );
             return false;
         };
         cached.cg_id = ddc_cg_id(&fresh);
@@ -1405,16 +1437,45 @@ mod ddc_worker {
             .map(|value| ddc_power_is_on(value.value()))
     }
 
+    /// The 0xD6 values this monitor advertises. Read once and cached: a
+    /// capability string is a long, chatty read that some panels answer in over
+    /// a second, and it must not sit in front of every power press.
+    fn power_values(cached: &mut CachedDisplay) -> Vec<u8> {
+        if let Some(values) = &cached.power_values {
+            return values.clone();
+        }
+        let values = cached
+            .display
+            .handle
+            .capabilities()
+            .ok()
+            .and_then(|caps| {
+                caps.vcp_features
+                    .get(&VCP_POWER)
+                    .map(|feature| feature.values().copied().collect::<Vec<u8>>())
+            })
+            .unwrap_or_default();
+        log::info!(
+            "{} advertises 0xD6 values {:02x?}",
+            cached.status.id,
+            values
+        );
+        cached.power_values = Some(values.clone());
+        values
+    }
+
     fn set_cached_power(cached: &mut CachedDisplay, on: bool) -> io::Result<()> {
         if !on {
-            let handle = &mut cached.display.handle;
-            handle
-                .set_vcp_feature(VCP_POWER, POWER_OFF)
-                .or_else(|first| {
-                    handle
-                        .set_vcp_feature(VCP_POWER, POWER_OFF_HARD)
-                        .map_err(|_| first)
-                })
+            let Some(value) = power_off_value(&power_values(cached)) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "this monitor does not offer an off state over DDC",
+                ));
+            };
+            cached
+                .display
+                .handle
+                .set_vcp_feature(VCP_POWER, value)
                 .map_err(ddc_error)?;
             cached.status.power = Some(false);
             cached.off_at = Some(std::time::Instant::now());
@@ -1457,10 +1518,16 @@ mod ddc_worker {
             wake_succeeded(cached);
             return Ok(());
         }
+        log::info!(
+            "{} refused the whole wake sequence; advertised 0xD6 values were {:02x?}",
+            cached.status.id,
+            cached.power_values.clone().unwrap_or_default()
+        );
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
             format!(
-                "display did not accept the wake sequence: {}",
+                "{} will not wake over DDC — use the button on the monitor ({})",
+                cached.status.name,
                 last_error.unwrap_or_default()
             ),
         ))
@@ -2028,6 +2095,42 @@ mod tests {
         assert_eq!(gamma_dim::get_percent(cg), 100);
     }
 
+    /// The capability read is the only thing standing between a monitor and a
+    /// 0x05 it cannot come back from, so it has to work against real hardware,
+    /// not just against a vector of bytes. Prints what each panel advertises:
+    /// that line is the evidence for any monitor that will not wake.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn live_ddc_advertises_its_power_values() {
+        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
+            return;
+        }
+        for mut display in ddc_hi::Display::enumerate() {
+            let id = ddc_id(&display.info, ddc_cg_id(&display));
+            let values = display
+                .handle
+                .capabilities()
+                .ok()
+                .and_then(|caps| {
+                    caps.vcp_features
+                        .get(&VCP_POWER)
+                        .map(|feature| feature.values().copied().collect::<Vec<u8>>())
+                })
+                .unwrap_or_default();
+            eprintln!(
+                "{id} advertises 0xD6 {values:02x?} -> sends {:02x?}",
+                power_off_value(&values)
+            );
+            if values.contains(&(POWER_OFF as u8)) {
+                assert_eq!(
+                    power_off_value(&values),
+                    Some(POWER_OFF),
+                    "{id} takes the soft off and must never be sent 0x05"
+                );
+            }
+        }
+    }
+
     /// Physical OFF→ON cycle through the same retained worker handle used by
     /// the app. Opt-in only: this visibly blanks the external monitor.
     #[test]
@@ -2106,6 +2209,37 @@ mod tests {
         for dark in [0x02, 0x03, 0x04, 0x05] {
             assert!(!ddc_power_is_on(dark), "0x{dark:02x} is not a lit panel");
         }
+    }
+
+    /// The monitor on this desk advertises 0x04 *and* 0x05, and 0x04 is enough
+    /// to blank it. The old code sent 0x05 the moment a 0x04 write reported an
+    /// error — and a DDC write reports errors it did not really suffer. On the
+    /// panels that implement 0x05 literally, that is a one-way trip: the scaler
+    /// goes and DDC goes with it, so the monitor that went off on a click can
+    /// only be brought back by hand at the bezel.
+    #[test]
+    fn a_monitor_that_takes_the_soft_off_is_never_sent_the_hard_one() {
+        assert_eq!(power_off_value(&[0x01, 0x04]), Some(POWER_OFF));
+        assert_eq!(power_off_value(&[0x01, 0x04, 0x05]), Some(POWER_OFF));
+    }
+
+    /// 0x05 is only ever right where it is the only off the monitor claims.
+    #[test]
+    fn the_hard_off_goes_only_to_a_monitor_with_no_other_off() {
+        assert_eq!(power_off_value(&[0x01, 0x05]), Some(POWER_OFF_HARD));
+    }
+
+    /// No capability string is no information, not permission to guess 0x05.
+    #[test]
+    fn an_unreadable_capability_string_gets_the_soft_off() {
+        assert_eq!(power_off_value(&[]), Some(POWER_OFF));
+    }
+
+    /// Advertising 0xD6 without an off value means the feature is read-only on
+    /// this panel; writing a guess at it is how monitors end up wedged.
+    #[test]
+    fn a_monitor_with_no_off_value_gets_no_write() {
+        assert_eq!(power_off_value(&[0x01]), None);
     }
 
     /// macOS gives most external monitors no EDID identity at all, so two
