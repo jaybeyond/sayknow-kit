@@ -370,6 +370,12 @@ mod core_graphics {
         ) -> i32;
         pub fn CGDisplayIsBuiltin(id: CgDirectDisplayId) -> u32;
         pub fn CGMainDisplayID() -> CgDirectDisplayId;
+        /// EDID vendor/model/serial as CoreGraphics reads them. These describe
+        /// the panel, not the session, and survive the sleep and wake that
+        /// renumbers `CgDirectDisplayId`.
+        pub fn CGDisplayVendorNumber(id: CgDirectDisplayId) -> u32;
+        pub fn CGDisplayModelNumber(id: CgDirectDisplayId) -> u32;
+        pub fn CGDisplaySerialNumber(id: CgDirectDisplayId) -> u32;
     }
 }
 
@@ -963,26 +969,77 @@ fn builtin_is_main() -> bool {
 
 // ─────────── externals (DDC/CI via ddc-hi) ───────────
 
-/// macOS leaves the EDID identity fields empty for most external monitors:
-/// `IODisplayEDIDOriginal` is absent on the USB-C/DisplayPort path, so ddc-hi
-/// falls back to a name-only `DisplayInfo` and every monitor would share the id
-/// `ddc:?:?:?`. Two of them then collide, every write lands on the first one,
-/// and the second monitor's slider looks broken. The CoreGraphics display id is
-/// unique per attached panel, so it is what keeps the card id unique.
+/// The EDID identity CoreGraphics reports for a panel, as `vendor-model-serial`.
+/// `None` when the OS has no EDID for it either; CoreGraphics answers
+/// `0xffffffff` for vendor and model when it does not know, and that value
+/// would otherwise make every unknown monitor look like the same one.
+#[cfg(target_os = "macos")]
+fn cg_panel_identity(cg_id: u32) -> Option<String> {
+    use core_graphics::*;
+    let (vendor, model, serial) = unsafe {
+        (
+            CGDisplayVendorNumber(cg_id),
+            CGDisplayModelNumber(cg_id),
+            CGDisplaySerialNumber(cg_id),
+        )
+    };
+    let known = |v: u32| v != 0 && v != u32::MAX;
+    if !known(vendor) && !known(model) && serial == 0 {
+        return None;
+    }
+    // Not the "cg" prefix: that one already means a CoreGraphics session
+    // number elsewhere in this id, and the two must never be read for one
+    // another.
+    Some(format!("edid{vendor:x}-{model:x}-{serial:x}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn cg_panel_identity(_cg_id: u32) -> Option<String> {
+    None
+}
+
+/// The id the rest of the app uses to address one external monitor.
+///
+/// This must name the *panel*, not the session. It used to end in the
+/// CoreGraphics display id, because macOS leaves ddc-hi's EDID fields empty on
+/// the USB-C/DisplayPort path — every external came back as `ddc:?:?:?` and two
+/// of them collided onto one card. The CoreGraphics id fixed the collision and
+/// introduced a worse bug: that number is a *session* id. macOS renumbers it
+/// when a display sleeps, wakes, or is joined by another one. So the monitor
+/// this app had just put into standby came back under a new id, `reopen` could
+/// not find the id it was holding, and every ON press went to a handle that was
+/// already dead — the monitor turned off and would not turn back on. On a desk
+/// with two externals the same shuffle could point a command at the wrong
+/// panel entirely.
+///
+/// So: EDID first from whoever can read it, and the volatile number only when
+/// nobody can, where a wrong-but-unique id still beats a collision.
 fn ddc_id(info: &ddc_hi::DisplayInfo, cg_id: Option<u32>) -> String {
-    let identity = format!(
-        "{}:{}:{}",
-        info.manufacturer_id.as_deref().unwrap_or("?"),
-        info.model_id
-            .map(|m| format!("{m:x}"))
-            .unwrap_or_else(|| "?".into()),
-        info.serial
+    ddc_id_with(info, cg_id, cg_panel_identity)
+}
+
+/// The body of `ddc_id`, with the CoreGraphics lookup passed in. The tests
+/// cannot call the real one: it answers from whatever monitors happen to be
+/// plugged into the machine running them, so a test that asked for display 3
+/// got this desk's ARZOPA and its result changed with the hardware.
+fn ddc_id_with(
+    info: &ddc_hi::DisplayInfo,
+    cg_id: Option<u32>,
+    panel_identity: impl Fn(u32) -> Option<String>,
+) -> String {
+    if let (Some(manufacturer), Some(model)) = (info.manufacturer_id.as_deref(), info.model_id) {
+        let serial = info
+            .serial
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "?".into()),
-    );
+            .unwrap_or_else(|| "?".into());
+        return format!("ddc:{manufacturer}:{model:x}:{serial}");
+    }
     match cg_id {
-        Some(cg) => format!("ddc:{identity}:cg{cg}"),
-        None => format!("ddc:{identity}"),
+        Some(cg) => match panel_identity(cg) {
+            Some(identity) => format!("ddc:{identity}"),
+            None => format!("ddc:?:?:?:cg{cg}"),
+        },
+        None => "ddc:?:?:?".to_string(),
     }
 }
 
@@ -2266,6 +2323,49 @@ mod tests {
         );
     }
 
+    /// The card id must name the panel, not the session. macOS renumbers a
+    /// CoreGraphics display id when a monitor sleeps, wakes, or is joined by
+    /// another one; an id built on that number changes under a monitor that
+    /// never moved, `reopen` then cannot find the handle it is holding, and the
+    /// wake writes all land on a dead one.
+    #[test]
+    fn a_monitor_with_an_edid_is_not_named_after_its_session_number() {
+        let mut info = ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "0".into());
+        info.manufacturer_id = Some("GSM".into());
+        info.model_id = Some(0x5b9e);
+        info.serial = Some(12345);
+
+        let first = ddc_id_with(&info, Some(3), |_| None);
+        let renumbered = ddc_id_with(&info, Some(7), |_| None);
+        assert_eq!(
+            first, renumbered,
+            "the same panel got two different ids across a renumber"
+        );
+        assert!(
+            !first.contains("cg"),
+            "a session number leaked into the id: {first}"
+        );
+    }
+
+    /// Two panels the OS cannot identify still have to land on separate cards.
+    /// This is the collision the CoreGraphics number was added for, and it is
+    /// the only case it is still allowed to serve.
+    #[test]
+    fn two_unidentifiable_monitors_do_not_collide() {
+        let info = ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "0".into());
+        let known = |cg| Some(format!("edid{cg}"));
+        assert_ne!(
+            ddc_id_with(&info, Some(3), known),
+            ddc_id_with(&info, Some(7), known),
+            "two monitors the OS *can* identify collided"
+        );
+        assert_ne!(
+            ddc_id_with(&info, Some(3), |_| None),
+            ddc_id_with(&info, Some(7), |_| None),
+            "two monitors the OS cannot identify collided"
+        );
+    }
+
     /// The monitor on this desk advertises 0x04 *and* 0x05, and 0x04 is enough
     /// to blank it. The old code sent 0x05 the moment a 0x04 write reported an
     /// error — and a DDC write reports errors it did not really suffer. On the
@@ -2303,8 +2403,8 @@ mod tests {
     #[test]
     fn anonymous_monitors_still_get_distinct_ids() {
         let anonymous = || ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "ARZOPA".into());
-        let first = ddc_id(&anonymous(), Some(3));
-        let second = ddc_id(&anonymous(), Some(7));
+        let first = ddc_id_with(&anonymous(), Some(3), |_| None);
+        let second = ddc_id_with(&anonymous(), Some(7), |_| None);
         assert_ne!(first, second, "two EDID-less monitors collided: {first}");
         assert_eq!(cg_id_from(&first), Some(3));
         assert_eq!(cg_id_from(&second), Some(7));
@@ -2318,9 +2418,10 @@ mod tests {
 
     #[test]
     fn builtin_id_cannot_collide_with_ddc_ids() {
-        assert!(ddc_id(
+        assert!(ddc_id_with(
             &ddc_hi::DisplayInfo::new(ddc_hi::Backend::MacOS, "builtin".into()),
-            Some(1)
+            Some(1),
+            |_| None
         )
         .starts_with("ddc:"));
         assert_ne!(BUILTIN_ID, "ddc:");
