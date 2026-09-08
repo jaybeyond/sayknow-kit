@@ -18,6 +18,7 @@ import {
   getSnapshot,
   refreshAccessibility,
   relaunchApp,
+  reportError,
   requestAccessibility,
   resetAccessibility,
   scanDisplays,
@@ -160,8 +161,12 @@ export function ToolsPanel({ settings, active }: Props) {
       // from CoreGraphics; the Rust DDC worker retains its wake handle.
       setTimeout(() => void scanDisplays(true), on ? 1200 : 2500)
       return true
-    } catch {
-      void scanDisplays(true)
+    } catch (e) {
+      // A refused power command used to vanish here: the toggle sprang back,
+      // the monitor stayed as it was, and nothing said why. The rescan clears
+      // the banner on success, so report after it.
+      await scanDisplays(true)
+      reportError(String(e))
       return false
     }
   }, [])
@@ -506,9 +511,11 @@ function DisplayControl({
         <span className="ml-auto tabular-nums text-[10px] text-muted-foreground">
           {display.brightness === null ? "—" : `${v}%`}
         </span>
-        {/* Power is DDC-only. A monitor behind a hub that never answers DDC
-            used to get these buttons anyway, and pressing them did nothing. */}
-        {display.kind === "external" && display.method === "ddc" && (
+        {/* Power is DDC 0xD6, read separately from brightness 0x10: a monitor
+            can refuse a luminance read and still switch on and off. Gating
+            these on `method` took the buttons away from those monitors.
+            `power` is null only when 0xD6 itself never answered. */}
+        {display.kind === "external" && display.power !== null && (
           <div className="flex items-center gap-0.5">
             <Button
               variant="ghost"

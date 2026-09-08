@@ -86,6 +86,12 @@ export async function syncBuiltin(): Promise<void> {
   }
 }
 
+/** Surface a refused one-off command in the panel's error banner. A rescan
+ *  clears this on its next success, so report after the rescan, not before. */
+export function reportError(message: string) {
+  set({ error: message })
+}
+
 export async function scanDisplays(force = false): Promise<void> {
   if (!isTauri() || (inFlight && !force)) return
   inFlight = true

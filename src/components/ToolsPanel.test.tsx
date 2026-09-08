@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   requestAccessibility: vi.fn(() => Promise.resolve()),
   relaunchApp: vi.fn(() => Promise.resolve()),
   resetAccessibility: vi.fn(() => Promise.resolve()),
+  reportError: vi.fn(),
+  invoke: vi.fn(() => Promise.resolve()),
   toolsState: {
     displays: [] as Array<Record<string, unknown>>,
     error: null,
@@ -90,7 +92,9 @@ vi.mock("@/lib/tools-store", () => ({
   requestAccessibility: mocks.requestAccessibility,
   relaunchApp: mocks.relaunchApp,
   resetAccessibility: mocks.resetAccessibility,
+  reportError: mocks.reportError,
 }))
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }))
 vi.mock("@/lib/system-metrics-store", () => ({
   getSnapshot: () => mocks.metricsState,
   subscribe: () => () => undefined,
@@ -172,6 +176,9 @@ describe("ToolsPanel external monitor cards", () => {
 
   afterEach(() => {
     mocks.toolsState.displays = []
+    mocks.invoke.mockReset()
+    mocks.invoke.mockResolvedValue(undefined)
+    mocks.reportError.mockReset()
   })
 
   it("says what is wrong with an external the machine cannot drive", () => {
@@ -192,22 +199,38 @@ describe("ToolsPanel external monitor cards", () => {
     expect(screen.getByLabelText("ARZOPA software dim")).toBeTruthy()
   })
 
-  it("hides the power buttons on a monitor that does not speak DDC", () => {
-    mocks.toolsState.displays = [external({ method: "gamma" })]
+  it("hides the power buttons only when the monitor never answered 0xD6", () => {
+    mocks.toolsState.displays = [external({ method: "none", power: null, controllable: false })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
-    // Power is a DDC command; there is no software equivalent, so offering the
-    // buttons on a hub monitor was a button that did nothing.
+    // Power has no software equivalent, so a button here would do nothing.
     expect(screen.queryByTitle("Power on")).toBeNull()
     expect(screen.queryByTitle("Power off")).toBeNull()
   })
 
-  it("keeps the power buttons on a monitor that does speak DDC", () => {
-    mocks.toolsState.displays = [external({ method: "ddc" })]
+  it("keeps the power buttons on a monitor that answers power but not brightness", () => {
+    // Power is 0xD6 and brightness is 0x10. A monitor that refuses the
+    // luminance read still switches off and on, and gating these buttons on
+    // the brightness method took the working feature away from it.
+    mocks.toolsState.displays = [external({ method: "gamma", power: true })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     expect(screen.getByTitle("Power on")).toBeTruthy()
     expect(screen.getByTitle("Power off")).toBeTruthy()
+  })
+
+  it("says so when the monitor refuses a power command", async () => {
+    // This used to be swallowed: the toggle sprang back to its old position
+    // and the user was left pressing a button that said nothing.
+    mocks.invoke.mockRejectedValue("MacOS kernel I/O error: 268435459")
+    mocks.toolsState.displays = [external({})]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    fireEvent.click(screen.getByTitle("Power off"))
+
+    await waitFor(() => {
+      expect(mocks.reportError).toHaveBeenCalledWith("MacOS kernel I/O error: 268435459")
+    })
   })
 
   it("keeps two identity-less monitors as two separate cards", () => {
