@@ -75,6 +75,8 @@ vi.mock("@/i18n", () => ({
       "tools.brightness.axReset": "Reset and ask again",
       "tools.brightness.powerOn": "Power on",
       "tools.brightness.powerOff": "Power off",
+      "tools.brightness.all": "All displays",
+      "tools.brightness.allHint": "Applies to every display below at once.",
       "tools.brightness.softwareDim": "software dim",
       "tools.brightness.external": "external",
       "tools.brightness.backlight": "Backlight",
@@ -117,7 +119,7 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver
 
-import { ToolsPanel } from "./ToolsPanel"
+import { ToolsPanel, brightnessCommand } from "./ToolsPanel"
 
 afterEach(() => {
   cleanup()
@@ -200,13 +202,14 @@ describe("ToolsPanel external monitor cards", () => {
     expect(screen.getByLabelText("ARZOPA software dim")).toBeTruthy()
   })
 
-  it("hides the power buttons only when the monitor never answered 0xD6", () => {
+  it("hides the power buttons only when neither path can drive the panel", () => {
     mocks.toolsState.displays = [
       external({ method: "none", power: null, power_capable: false, controllable: false }),
     ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
-    // Power has no software equivalent, so a button here would do nothing.
+    // No DDC answer and no software blackout path means a button here would
+    // do nothing.
     expect(screen.queryByTitle("Power on")).toBeNull()
     expect(screen.queryByTitle("Power off")).toBeNull()
   })
@@ -250,6 +253,23 @@ describe("ToolsPanel external monitor cards", () => {
     })
   })
 
+  it("reuses the cached display list after a power toggle", async () => {
+    mocks.invoke.mockResolvedValue(undefined)
+    mocks.toolsState.displays = [external({})]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+
+    fireEvent.click(screen.getByTitle("Power off"))
+
+    await waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith("set_display_power", {
+        id: "ddc:?:?:?:cg3",
+        on: false,
+      })
+    })
+    expect(mocks.scanDisplays).toHaveBeenCalledWith(false)
+    expect(mocks.scanDisplays).not.toHaveBeenCalledWith(true)
+  })
+
   it("keeps two identity-less monitors as two separate cards", () => {
     mocks.toolsState.displays = [
       external({ id: "ddc:?:?:?:cg3", name: "ARZOPA" }),
@@ -258,6 +278,61 @@ describe("ToolsPanel external monitor cards", () => {
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
     expect(screen.getAllByLabelText("ARZOPA Brightness")).toHaveLength(2)
+  })
+})
+describe("ToolsPanel all-displays slider", () => {
+  const builtin = {
+    id: "builtin",
+    name: "",
+    kind: "builtin" as const,
+    is_main: true,
+    brightness: 50,
+    power: null,
+    power_capable: false,
+    controllable: true,
+    method: "gamma" as const,
+    system_level: 80,
+  }
+  const external = {
+    id: "ddc:lg",
+    name: "LG",
+    kind: "external" as const,
+    is_main: false,
+    brightness: 40,
+    power: true,
+    power_capable: true,
+    controllable: true,
+    method: "ddc" as const,
+    system_level: 40,
+  }
+
+  afterEach(() => {
+    mocks.toolsState.displays = []
+  })
+
+  it("routes a gamma built-in through the real backlight, not the overlay", () => {
+    expect(brightnessCommand(builtin)).toEqual({ command: "set_builtin_backlight" })
+    expect(brightnessCommand(external)).toEqual({
+      command: "set_display_brightness",
+      id: "ddc:lg",
+    })
+  })
+
+  it("uses brightness when the built-in has a real IOKit backlight", () => {
+    expect(brightnessCommand({ ...builtin, method: "backlight" })).toEqual({
+      command: "set_display_brightness",
+      id: "builtin",
+    })
+  })
+
+  it("skips a panel that cannot be driven at all", () => {
+    expect(brightnessCommand({ ...external, controllable: false, method: "none" })).toBeNull()
+  })
+
+  it("offers the all-displays slider when built-in and external are both present", () => {
+    mocks.toolsState.displays = [builtin, external]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(screen.getByLabelText("All displays")).toBeTruthy()
   })
 })
 

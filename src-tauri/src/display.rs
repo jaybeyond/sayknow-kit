@@ -2,9 +2,17 @@
 //
 // Two different mechanisms, because macOS treats them differently:
 //
-// - External displays speak DDC/CI, so brightness (VCP 0x10) and power
-//   (VCP 0xD6, the same code Lunar's BlackOut uses) go through ddc-hi.
-//   That works on macOS and Windows over HDMI/DP/USB-C.
+// - External brightness speaks DDC/CI (VCP 0x10) when the panel answers, with
+//   software gamma as the fallback for hubs and mute panels.
+// - External off/on is Lunar-style disconnect, not DDC sleep and not mirroring.
+//   CGSConfigureDisplayEnabled takes a CGDisplayConfigRef from
+//   CGBeginDisplayConfiguration — passing a connection id SIGSEGVs in
+//   checkCapacity (crashes 023116/023958). Live probe: disable display 4
+//   dropped the active list from 3 to 2, re-enable restored 3. DDC
+//   luminance/contrast go to 0 first when the panel answers. 0xD6 standby
+//   is last-resort only when WindowServer disconnect and gamma both fail.
+//   0x05 is never sent from the Lunar/soft path; the DDC fallback may still
+//   send it when a panel advertises 0x05 *instead of* 0x04.
 // - The built-in panel has no DDC. Classic IOKit is tried first; on new
 //   AppleARMBacklight Macs, real hardware brightness is driven locally through
 //   Control Center's Accessibility UI, with gamma kept as a separate second-
@@ -15,13 +23,15 @@
 // command is fire-and-forget from the UI's point of view.
 
 use ddc_hi::Ddc as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io;
+use std::path::PathBuf;
 use std::sync::{mpsc, OnceLock};
 #[cfg(target_os = "macos")]
 use tauri::Manager as _;
 
 const VCP_LUMINANCE: u8 = 0x10;
+const VCP_CONTRAST: u8 = 0x12;
 const VCP_POWER: u8 = 0xd6;
 const POWER_ON: u16 = 0x01;
 const POWER_OFF: u16 = 0x04;
@@ -31,6 +41,28 @@ const POWER_OFF: u16 = 0x04;
 /// scaler, which takes DDC down with it, and then nothing but the button on the
 /// bezel brings the panel back. It is a last resort, never a reflex.
 const POWER_OFF_HARD: u16 = 0x05;
+/// Prefer a reversible software blackout whenever CoreGraphics can address
+/// the panel. DDC 0x04 standby stays as a last resort for hosts with no
+/// gamma path. 0x05 is never sent from this path.
+fn can_soft_blackout(cg_id: Option<u32>) -> bool {
+    cg_id.is_some_and(panel_gamma_supported)
+}
+
+/// Lunar BlackOut's primary path: disconnect the panel from WindowServer.
+/// Needs a CoreGraphics id and must never target the last remaining screen —
+/// lid-closed clamshell has no built-in, so "not the built-in" is not enough.
+/// Gamma support is not required — that is only the fallback when
+/// `CGSConfigureDisplayEnabled` is missing.
+fn can_lunar_blackout(cg_id: Option<u32>) -> bool {
+    match cg_id {
+        None => false,
+        Some(id) => {
+            cfg!(target_os = "macos")
+                && cg_builtin_id() != Some(id)
+                && active_display_count() > 1
+        }
+    }
+}
 
 /// The value to send to turn `advertised` off, given the 0xD6 values it claims
 /// on its capability string. `None` when it claims none of them.
@@ -65,11 +97,13 @@ pub struct DisplayStatus {
     pub brightness: Option<u8>,
     /// None when the monitor doesn't report power state over DDC.
     pub power: Option<bool>,
-    /// Whether this monitor has ever answered 0xD6. DDC goes quiet for a minute
-    /// at a time — a cable settles, the panel retrains its link — and `power`
-    /// is `None` for as long as that lasts. Hanging the power buttons on the
-    /// live read made them vanish during those windows, so they hang on this
-    /// instead: it says the monitor *can* do power, which does not flicker.
+    /// Whether this monitor can be blanked and restored from here. True when
+    /// it has ever answered 0xD6, when it can be disconnected from
+    /// WindowServer, or when CoreGraphics can still soft-blackout the panel.
+    /// DDC goes quiet for a minute at a time — a cable settles, the
+    /// panel retrains its link — and `power` is `None` for as long as that
+    /// lasts. Hanging the power buttons on the live read made them vanish
+    /// during those windows, so they hang on this instead.
     pub power_capable: bool,
     /// False when this display can't be controlled from here at all.
     pub controllable: bool,
@@ -368,6 +402,12 @@ mod core_graphics {
             displays: *mut CgDirectDisplayId,
             count: *mut u32,
         ) -> i32;
+        pub fn CGGetOnlineDisplayList(
+            max: u32,
+            displays: *mut CgDirectDisplayId,
+            count: *mut u32,
+        ) -> i32;
+        pub fn CGDisplayIsOnline(id: CgDirectDisplayId) -> u32;
         pub fn CGDisplayIsBuiltin(id: CgDirectDisplayId) -> u32;
         pub fn CGMainDisplayID() -> CgDirectDisplayId;
         /// EDID vendor/model/serial as CoreGraphics reads them. These describe
@@ -377,6 +417,140 @@ mod core_graphics {
         pub fn CGDisplayModelNumber(id: CgDirectDisplayId) -> u32;
         pub fn CGDisplaySerialNumber(id: CgDirectDisplayId) -> u32;
     }
+}
+#[cfg(target_os = "macos")]
+mod skylight {
+    use std::ffi::c_void;
+    use std::sync::OnceLock;
+
+    type CgDirectDisplayId = u32;
+    type CgError = i32;
+    type CgsConfigureDisplayEnabled = unsafe extern "C" fn(*mut c_void, u32, bool) -> i32;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct CgRect {
+        pub x: f64,
+        pub y: f64,
+        pub width: f64,
+        pub height: f64,
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGBeginDisplayConfiguration(config: *mut *mut c_void) -> CgError;
+        fn CGCompleteDisplayConfiguration(config: *mut c_void, option: u32) -> CgError;
+        fn CGCancelDisplayConfiguration(config: *mut c_void) -> CgError;
+        fn CGDisplayBounds(display: u32) -> CgRect;
+        fn CGConfigureDisplayOrigin(config: *mut c_void, display: u32, x: i32, y: i32) -> CgError;
+    }
+
+    /// Persist the arrangement so macOS does not reshuffle remaining
+    /// screens, and so ON can put this panel back where it was.
+    const K_CGCONFIGURE_PERMANENTLY: u32 = 2;
+
+    fn configure_fn() -> Option<CgsConfigureDisplayEnabled> {
+        static FN: OnceLock<Option<CgsConfigureDisplayEnabled>> = OnceLock::new();
+        *FN.get_or_init(|| unsafe {
+            extern "C" {
+                fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
+            }
+            const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+            let p = dlsym(RTLD_DEFAULT, b"CGSConfigureDisplayEnabled\0".as_ptr() as *const i8);
+            if p.is_null() {
+                log::info!("CGSConfigureDisplayEnabled is not available on this macOS");
+                return None;
+            }
+            Some(std::mem::transmute(p))
+        })
+    }
+
+    /// First argument is a CGDisplayConfigRef from CGBeginDisplayConfiguration,
+    /// not a CGS connection id. Passing CGSMainConnectionID SIGSEGVs in
+    /// checkCapacity(CGSConfigData*).
+    pub fn bounds(display: u32) -> Option<(i32, i32)> {
+        unsafe {
+            let r = CGDisplayBounds(display);
+            if r.width <= 0.0 || r.height <= 0.0 {
+                return None;
+            }
+            Some((r.x.round() as i32, r.y.round() as i32))
+        }
+    }
+
+    pub fn set_enabled(display: u32, enabled: bool, origin: Option<(i32, i32)>) -> bool {
+        let Some(configure) = configure_fn() else {
+            return false;
+        };
+        unsafe {
+            let mut config: *mut c_void = std::ptr::null_mut();
+            if CGBeginDisplayConfiguration(&mut config) != 0 || config.is_null() {
+                return false;
+            }
+            if configure(config, display, enabled) != 0 {
+                let _ = CGCancelDisplayConfiguration(config);
+                return false;
+            }
+            // Origin cannot share this transaction: enable+origin together
+            // returns a non-zero CGError on this macOS (live probe). Complete
+            // the reconnect first, then place the panel.
+            if CGCompleteDisplayConfiguration(config, K_CGCONFIGURE_PERMANENTLY) != 0 {
+                return false;
+            }
+        }
+        if enabled {
+            if let Some((x, y)) = origin {
+                // Enable+origin in one transaction returns a non-zero CGError
+                // on this macOS (live probe). A beat after Complete is also
+                // required before Origin, otherwise the second transaction
+                // no-ops and the stacked externals swap places.
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                unsafe {
+                    let mut config: *mut c_void = std::ptr::null_mut();
+                    if CGBeginDisplayConfiguration(&mut config) != 0 || config.is_null() {
+                        log::info!(
+                            "display {display}: reconnected but origin restore could not begin"
+                        );
+                        return true;
+                    }
+                    if CGConfigureDisplayOrigin(config, display, x, y) != 0 {
+                        let _ = CGCancelDisplayConfiguration(config);
+                        log::info!(
+                            "display {display}: reconnected but origin ({x},{y}) was refused"
+                        );
+                        return true;
+                    }
+                    if CGCompleteDisplayConfiguration(config, K_CGCONFIGURE_PERMANENTLY) != 0 {
+                        log::info!(
+                            "display {display}: reconnected but origin commit failed"
+                        );
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Disconnect (`enabled = false`) or reconnect (`enabled = true`) a panel
+/// the way Lunar's `DC.dis` / `DC.en` do. Not mirroring, not DDC sleep.
+#[cfg(target_os = "macos")]
+fn set_display_enabled(display: u32, enabled: bool, origin: Option<(i32, i32)>) -> bool {
+    skylight::set_enabled(display, enabled, origin)
+}
+#[cfg(target_os = "macos")]
+fn display_origin(display: u32) -> Option<(i32, i32)> {
+    skylight::bounds(display)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_display_enabled(_display: u32, _enabled: bool, _origin: Option<(i32, i32)>) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+fn display_origin(_display: u32) -> Option<(i32, i32)> {
+    None
 }
 
 // ─────────── built-in fallback: gamma dimming ───────────
@@ -785,6 +959,15 @@ pub mod brightness_tap {
         static _dispatch_main_q: ();
         fn dispatch_async_f(queue: *mut (), context: *mut (), work: extern "C" fn(*mut ()));
     }
+    pub(super) fn dispatch_async_main(context: *mut (), work: extern "C" fn(*mut ())) {
+        unsafe {
+            dispatch_async_f(
+                &_dispatch_main_q as *const () as *mut (),
+                context,
+                work,
+            );
+        }
+    }
 
     /// Runs on the main queue (main runloop) AFTER the tap callback has
     /// returned — no WindowServer re-entrancy. This is the only place the
@@ -939,20 +1122,165 @@ fn tracked_system_level_percent() -> u8 {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn cg_builtin_id() -> Option<u32> {
+fn cg_display_ids(online: bool) -> Vec<u32> {
     use core_graphics::*;
     unsafe {
-        let mut ids = [0u32; 8];
+        let mut ids = [0u32; 32];
         let mut n: u32 = 0;
-        if CGGetActiveDisplayList(8, ids.as_mut_ptr(), &mut n) != 0 {
-            return None;
+        let rc = if online {
+            CGGetOnlineDisplayList(32, ids.as_mut_ptr(), &mut n)
+        } else {
+            CGGetActiveDisplayList(32, ids.as_mut_ptr(), &mut n)
+        };
+        if rc != 0 {
+            return Vec::new();
         }
-        ids[..n as usize]
-            .iter()
-            .copied()
-            .find(|id| CGDisplayIsBuiltin(*id) != 0)
+        ids[..n as usize].to_vec()
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn cg_display_ids(_online: bool) -> Vec<u32> {
+    Vec::new()
+}
+
+fn active_display_count() -> usize {
+    cg_display_ids(false).len()
+}
+
+/// Re-find a panel after WindowServer disconnect. The session id stored at
+/// OFF is often gone from the active list; identity (EDID) survives.
+fn resolve_cg_id(preferred: Option<u32>, identity: Option<&str>) -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::*;
+        let online = cg_display_ids(true);
+        if let Some(id) = preferred {
+            if online.iter().any(|online_id| *online_id == id)
+                || unsafe { CGDisplayIsOnline(id) != 0 }
+            {
+                return Some(id);
+            }
+        }
+        if let Some(wanted) = identity.filter(|s| !s.is_empty()) {
+            if let Some(id) = online
+                .into_iter()
+                .find(|id| cg_panel_identity(*id).as_deref() == Some(wanted))
+            {
+                return Some(id);
+            }
+        }
+        preferred
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = identity;
+        preferred
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct DisconnectedRecord {
+    identity: String,
+    origin: Option<(i32, i32)>,
+    last_cg_id: u32,
+}
+
+fn disconnected_store_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let dir = PathBuf::from(home).join("Library/Application Support/com.sayknow.app");
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join("disconnected-displays.json"))
+}
+
+fn load_disconnected_records() -> Vec<DisconnectedRecord> {
+    let Some(path) = disconnected_store_path() else {
+        return Vec::new();
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+fn save_disconnected_records(records: &[DisconnectedRecord]) {
+    let Some(path) = disconnected_store_path() else {
+        return;
+    };
+    if records.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    if let Ok(bytes) = serde_json::to_vec(records) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
+fn remember_disconnected(identity: String, origin: Option<(i32, i32)>, last_cg_id: u32) {
+    if identity.is_empty() {
+        return;
+    }
+    let mut records = load_disconnected_records();
+    records.retain(|r| r.identity != identity);
+    records.push(DisconnectedRecord {
+        identity,
+        origin,
+        last_cg_id,
+    });
+    save_disconnected_records(&records);
+}
+
+fn forget_disconnected(identity: &str) {
+    if identity.is_empty() {
+        return;
+    }
+    let mut records = load_disconnected_records();
+    let before = records.len();
+    records.retain(|r| r.identity != identity);
+    if records.len() != before {
+        save_disconnected_records(&records);
+    }
+}
+
+/// CGS disable outlives the process. Re-enable anything we left disconnected
+/// so a quit or crash does not leave the desk with a missing panel.
+pub fn restore_disconnected_displays() {
+    #[cfg(target_os = "macos")]
+    {
+        let records = load_disconnected_records();
+        if records.is_empty() {
+            return;
+        }
+        let mut remaining = Vec::new();
+        for rec in records {
+            let cg_id = resolve_cg_id(Some(rec.last_cg_id), Some(rec.identity.as_str()))
+                .unwrap_or(rec.last_cg_id);
+            if set_display_enabled(cg_id, true, rec.origin) {
+                log::info!(
+                    "restored disconnected display {} as cg {cg_id}",
+                    rec.identity
+                );
+            } else {
+                remaining.push(rec);
+            }
+        }
+        save_disconnected_records(&remaining);
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn cg_builtin_id() -> Option<u32> {
+    use core_graphics::*;
+    cg_display_ids(false)
+        .into_iter()
+        .find(|id| unsafe { CGDisplayIsBuiltin(*id) != 0 })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn cg_builtin_id() -> Option<u32> {
+    None
+}
+
 
 #[cfg(target_os = "macos")]
 fn builtin_is_main() -> bool {
@@ -1216,6 +1544,13 @@ fn display_name(d: &ddc_hi::Display, index: usize) -> String {
                 .clone()
                 .filter(|m| !m.trim().is_empty())
         })
+        .or_else(|| {
+            // ddc-macos often fills `id` (e.g. "P27FBB-RG") while leaving
+            // model_name / manufacturer_id empty. Without this the card was
+            // "Display 1" on a desk that already knew the product name.
+            let id = d.info.id.trim();
+            (!id.is_empty() && id != "?").then(|| id.to_string())
+        })
         .map(mfr_model)
         .unwrap_or_else(|| format!("Display {}", index + 1))
 }
@@ -1269,6 +1604,29 @@ mod ddc_worker {
         /// is stored — some monitors leave 0xD6 out of a string they otherwise
         /// serve correctly.
         power_values: Option<Vec<u8>>,
+        /// True while this process is holding the panel in a software
+        /// blackout. Survives DDC rescans the way `off_at` does, so a panel
+        /// that still answers 0xD6=ON is not redrawn as lit while blanked.
+        soft_blackout: bool,
+        /// Brightness to restore when leaving a software blackout. Captured
+        /// before the first OFF so ON does not invent a level.
+        pre_blackout_brightness: Option<u8>,
+        /// Contrast to restore with the backlight. Same capture rules.
+        pre_blackout_contrast: Option<u8>,
+        /// True after this panel refused a DDC write/read. Mute hubs hang for
+        /// many seconds on every VCP call; once we know, skip DDC and stay on
+        /// the soft path so list_displays is not starved behind a dead bus.
+        ddc_mute: bool,
+        /// True after this process put the panel into DDC 0x04 standby. ON
+        /// must then wake over 0xD6 before restoring gamma, or the panel
+        /// stays electrically off behind a restored video signal.
+        ddc_standby: bool,
+        /// True while this panel is disconnected via CGSConfigureDisplayEnabled
+        /// (Lunar BlackOut). ON must re-enable it before restoring DDC/gamma.
+        disconnected_off: bool,
+        /// Desktop origin captured before disconnect, restored on ON so the
+        /// remaining arrangement does not reshuffle top/bottom.
+        saved_origin: Option<(i32, i32)>,
     }
 
     enum Request {
@@ -1349,6 +1707,10 @@ mod ddc_worker {
                         .find(|cached| cached.status.id == id)
                         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "display not found"))
                         .and_then(|cached| set_cached_power(cached, on));
+                    // Keep the post-toggle cache. Forcing a full DDC rescan
+                    // here hangs 10s on mute hubs and list_displays returns
+                    // empty — the card vanishes until Refresh.
+                    scanned_at = Some(std::time::Instant::now());
                     let _ = reply.send(result);
                 }
             }
@@ -1375,24 +1737,27 @@ mod ddc_worker {
             .into_iter()
             .enumerate()
             .map(|(index, mut display)| {
-                let brightness = display
-                    .handle
-                    .get_vcp_feature(VCP_LUMINANCE)
-                    .ok()
-                    .map(|v| clamp_percent(v.value() as i64));
-                let power = display
-                    .handle
-                    .get_vcp_feature(VCP_POWER)
-                    .ok()
-                    .map(|v| ddc_power_is_on(v.value()));
                 let cg_id = ddc_cg_id(&display);
                 let id = ddc_id(&display.info, cg_id);
-                // A monitor that answers a luminance read speaks DDC. One that
-                // does not is common on USB-C hubs and DisplayLink, and used to
-                // be advertised as controllable anyway: the slider moved and
-                // the panel did not. Software gamma dimming still works on any
-                // CoreGraphics display, so it is the honest fallback, labelled
-                // as software in the UI.
+                // Mute panels hang VCP reads for seconds. When software gamma
+                // can already drive the card, skip the probe so list_displays
+                // does not time out empty. Without a soft path (Windows, or a
+                // panel CoreGraphics will not name) we still have to ask DDC.
+                let (brightness, power) = if can_soft_blackout(cg_id) {
+                    (None, None)
+                } else {
+                    let brightness = display
+                        .handle
+                        .get_vcp_feature(VCP_LUMINANCE)
+                        .ok()
+                        .map(|v| clamp_percent(v.value() as i64));
+                    let power = display
+                        .handle
+                        .get_vcp_feature(VCP_POWER)
+                        .ok()
+                        .map(|v| ddc_power_is_on(v.value()));
+                    (brightness, power)
+                };
                 let gamma = cg_id
                     .filter(|id| panel_gamma_supported(*id))
                     .map(panel_gamma_percent);
@@ -1403,7 +1768,9 @@ mod ddc_worker {
                         display.info.model_id == Some(model as u16) || vendor == 0 && model == 0
                     })
                     .unwrap_or(false);
-                let power_capable = remember_power_capable(&id, power.is_some());
+                let power_capable = remember_power_capable(&id, power.is_some())
+                    || can_lunar_blackout(cg_id)
+                    || can_soft_blackout(cg_id);
                 announce_once(&id, &display, brightness, power);
                 CachedDisplay {
                     status: DisplayStatus {
@@ -1424,6 +1791,13 @@ mod ddc_worker {
                     off_at: None,
                     ddc_misses: 0,
                     power_values: None,
+                    soft_blackout: false,
+                    pre_blackout_brightness: None,
+                    pre_blackout_contrast: None,
+                    ddc_mute: false,
+                    ddc_standby: false,
+                    disconnected_off: false,
+                    saved_origin: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -1443,9 +1817,35 @@ mod ddc_worker {
                 let entering_standby = old
                     .off_at
                     .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(3));
-                if entering_standby {
+                if old.soft_blackout {
+                    // Software blackout outranks the wire for as long as we
+                    // hold it: the panel is still electrically on, so 0xD6
+                    // keeps saying ON while the card must stay blanked.
+                    current.status.power = Some(false);
+                    current.soft_blackout = true;
+                    current.pre_blackout_brightness = old.pre_blackout_brightness;
+                    current.pre_blackout_contrast = old.pre_blackout_contrast;
+                    current.off_at = old.off_at;
+                    current.ddc_standby = old.ddc_standby;
+                    current.disconnected_off = old.disconnected_off;
+                    current.saved_origin = old.saved_origin;
+                    if old.disconnected_off {
+                        current.status.power = Some(false);
+                    }
+                    if let Some(level) = current
+                        .cg_id
+                        .filter(|id| panel_gamma_supported(*id))
+                        .map(panel_gamma_percent)
+                    {
+                        current.status.brightness = Some(level);
+                        current.status.system_level = Some(level);
+                        current.status.method = "gamma".into();
+                        current.status.controllable = true;
+                    }
+                } else if old.ddc_standby || entering_standby {
                     current.status.power = Some(false);
                     current.off_at = old.off_at;
+                    current.ddc_standby = old.ddc_standby;
                 } else {
                     if current.status.brightness.is_none() {
                         current.status.brightness = old.status.brightness;
@@ -1462,6 +1862,7 @@ mod ddc_worker {
                 };
                 if current.status.method != "ddc"
                     && ddc_survives_miss(&old.status.method, old.ddc_misses)
+                    && !current.soft_blackout
                 {
                     current.status.method = "ddc".into();
                     current.status.controllable = true;
@@ -1470,10 +1871,22 @@ mod ddc_worker {
                 }
                 // Keep a sleeping monitor's card and handle: macOS may drop it
                 // from CoreGraphics while it is off.
-                current.keep_when_missing = current.status.power == Some(false);
+                current.keep_when_missing = current.status.power == Some(false)
+                    || current.ddc_standby
+                    || current.disconnected_off;
                 // A monitor's capability string does not change between scans,
                 // and re-reading it costs over a second on some panels.
                 current.power_values = old.power_values;
+                current.ddc_mute = old.ddc_mute;
+                current.ddc_standby = old.ddc_standby;
+                current.disconnected_off = old.disconnected_off;
+                current.saved_origin = old.saved_origin;
+                if !current.soft_blackout {
+                    current.pre_blackout_brightness = old.pre_blackout_brightness;
+                    current.pre_blackout_contrast = old.pre_blackout_contrast;
+                } else {
+                    current.pre_blackout_contrast = old.pre_blackout_contrast;
+                }
             }
             merged.push(current);
         }
@@ -1486,43 +1899,224 @@ mod ddc_worker {
     /// the slider silently did nothing; dimming its gamma table is the only
     /// remaining way to actually change what the user sees.
     fn set_cached_brightness(cached: &mut CachedDisplay, value: u8) -> io::Result<()> {
-        let mut ddc = cached
-            .display
-            .handle
-            .set_vcp_feature(VCP_LUMINANCE, value as u16)
-            .map_err(ddc_error);
-        if ddc.is_err() && reopen(cached) {
-            // The handle can die on its own after the monitor sleeps or
-            // retrains its link. A monitor that does speak DDC must not be
-            // quietly demoted to software dimming because of that.
-            ddc = cached
+        // Soft-path panels that already refused DDC must not re-enter the
+        // hanging VCP write on every slider tick / wake. That blocked the
+        // single DDC worker for ~10s and made list_displays time out empty —
+        // the card blinked out while the monitor was still online.
+        // Only `ddc_mute` proves the bus is dead. A fresh scan labels soft-path
+        // panels as "gamma" without probing, and that must NOT permanently
+        // disable DDC on a panel that actually speaks it (LG after wake).
+        if cached.ddc_mute && can_soft_blackout(cached.cg_id) {
+            return set_gamma_brightness(cached, value);
+        }
+
+        // Soft-path panels get a timed side-thread probe. The worker itself
+        // must never block for ~10s on a mute bus: list_displays shares this
+        // thread, and a hung write makes every external card disappear.
+        let mut ddc = if can_soft_blackout(cached.cg_id) {
+            try_ddc_set_luminance(&cached.status.id, value, std::time::Duration::from_millis(700))
+        } else {
+            cached
                 .display
                 .handle
                 .set_vcp_feature(VCP_LUMINANCE, value as u16)
-                .map_err(ddc_error);
-        }
-        let method = match &ddc {
-            Ok(()) => "ddc",
-            Err(error) => {
-                let Some(cg_id) = cached.cg_id.filter(|id| panel_gamma_supported(*id)) else {
-                    return Err(ddc_error(error.to_string()));
-                };
-                if !panel_gamma_set(cg_id, value) {
-                    return Err(ddc_error(error.to_string()));
-                }
-                log::info!(
-                    "display {} refused DDC ({}); dimmed in software instead",
-                    cached.status.id,
-                    error
-                );
-                "gamma"
-            }
+                .map_err(ddc_error)
         };
-        cached.status.method = method.into();
+        if ddc.is_err() && !cached.ddc_mute && reopen(cached) {
+            // The handle can die on its own after the monitor sleeps or
+            // retrains its link. A monitor that does speak DDC must not be
+            // quietly demoted to software dimming because of that.
+            ddc = if can_soft_blackout(cached.cg_id) {
+                try_ddc_set_luminance(
+                    &cached.status.id,
+                    value,
+                    std::time::Duration::from_millis(700),
+                )
+            } else {
+                cached
+                    .display
+                    .handle
+                    .set_vcp_feature(VCP_LUMINANCE, value as u16)
+                    .map_err(ddc_error)
+            };
+        }
+        match ddc {
+            Ok(()) => {
+                cached.status.method = "ddc".into();
+                cached.status.controllable = true;
+                cached.status.brightness = Some(value);
+                cached.status.system_level = Some(value);
+                cached.ddc_mute = false;
+                Ok(())
+            }
+            Err(error) => {
+                if can_soft_blackout(cached.cg_id) {
+                    cached.ddc_mute = true;
+                    log::info!(
+                        "display {} refused DDC ({}); dimmed in software instead",
+                        cached.status.id,
+                        error
+                    );
+                    return set_gamma_brightness(cached, value);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn set_gamma_brightness(cached: &mut CachedDisplay, value: u8) -> io::Result<()> {
+        let Some(cg_id) = cached.cg_id.filter(|id| panel_gamma_supported(*id)) else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no software brightness path for this panel",
+            ));
+        };
+        if !panel_gamma_set(cg_id, value) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "software brightness rejected by CoreGraphics",
+            ));
+        }
+        cached.status.method = "gamma".into();
         cached.status.controllable = true;
         cached.status.brightness = Some(value);
         cached.status.system_level = Some(value);
         Ok(())
+    }
+
+    /// Probe a VCP call on a side thread so a mute panel cannot pin the DDC
+    /// worker. Re-enumerates by id; the caller's retained handle is untouched.
+    fn try_ddc_probe<T, F>(id: &str, timeout: std::time::Duration, op: F) -> io::Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut ddc_hi::Display) -> io::Result<T> + Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+        let id = id.to_string();
+        std::thread::Builder::new()
+            .name("sayknow-ddc-probe".into())
+            .spawn(move || {
+                let result = (|| {
+                    let mut display = ddc_hi::Display::enumerate()
+                        .into_iter()
+                        .find(|display| ddc_id(&display.info, ddc_cg_id(display)) == id)
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "display not found for DDC probe",
+                            )
+                        })?;
+                    op(&mut display)
+                })();
+                let _ = tx.send(result);
+            })
+            .map_err(ddc_error)?;
+        match rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "DDC probe timed out",
+            )),
+        }
+    }
+
+    fn try_ddc_set_luminance(
+        id: &str,
+        value: u8,
+        timeout: std::time::Duration,
+    ) -> io::Result<()> {
+        try_ddc_probe(id, timeout, move |display| {
+            display
+                .handle
+                .set_vcp_feature(VCP_LUMINANCE, value as u16)
+                .map_err(ddc_error)
+        })
+    }
+
+    fn try_ddc_get_luminance(id: &str, timeout: std::time::Duration) -> io::Result<u8> {
+        try_ddc_probe(id, timeout, |display| {
+            display
+                .handle
+                .get_vcp_feature(VCP_LUMINANCE)
+                .map(|v| clamp_percent(v.value() as i64))
+                .map_err(ddc_error)
+        })
+    }
+
+    fn try_ddc_set_vcp(
+        id: &str,
+        code: u8,
+        value: u16,
+        timeout: std::time::Duration,
+    ) -> io::Result<()> {
+        try_ddc_probe(id, timeout, move |display| {
+            display
+                .handle
+                .set_vcp_feature(code, value)
+                .map_err(ddc_error)
+        })
+    }
+
+    fn try_ddc_get_vcp(id: &str, code: u8, timeout: std::time::Duration) -> io::Result<u8> {
+        try_ddc_probe(id, timeout, move |display| {
+            display
+                .handle
+                .get_vcp_feature(code)
+                .map(|v| clamp_percent(v.value() as i64))
+                .map_err(ddc_error)
+        })
+    }
+
+    /// The backlight level to restore after a software blackout. Soft-path
+    /// scans skip the hanging VCP read, so the card's `brightness` is often
+    /// the gamma factor (100) even when the panel itself is sitting at 40.
+    /// Asking DDC once, before we write 0, is what keeps ON from jumping
+    /// the backlight to full blast.
+    fn capture_pre_blackout_brightness(cached: &mut CachedDisplay) -> u8 {
+        if let Some(level) = cached.pre_blackout_brightness.filter(|level| *level > 0) {
+            return level;
+        }
+        let live = if cached.ddc_mute {
+            None
+        } else {
+            match try_ddc_get_luminance(
+                &cached.status.id,
+                std::time::Duration::from_millis(700),
+            ) {
+                Ok(level) if level > 0 => Some(level),
+                Ok(_) => None,
+                Err(error) => {
+                    if error.kind() == io::ErrorKind::TimedOut {
+                        cached.ddc_mute = true;
+                    }
+                    None
+                }
+            }
+        };
+        let remembered = live
+            .or_else(|| cached.status.brightness.filter(|level| *level > 0))
+            .unwrap_or(100);
+        cached.pre_blackout_brightness = Some(remembered);
+        remembered
+    }
+
+    fn capture_pre_blackout_contrast(cached: &mut CachedDisplay) {
+        if cached.pre_blackout_contrast.filter(|level| *level > 0).is_some() {
+            return;
+        }
+        if cached.ddc_mute {
+            cached.pre_blackout_contrast = Some(50);
+            return;
+        }
+        let live = match try_ddc_get_vcp(
+            &cached.status.id,
+            VCP_CONTRAST,
+            std::time::Duration::from_millis(700),
+        ) {
+            Ok(level) if level > 0 => Some(level),
+            _ => None,
+        };
+        cached.pre_blackout_contrast = Some(live.unwrap_or(50));
     }
 
     /// Waking a monitor makes it retrain its link, and that invalidates the
@@ -1599,36 +2193,264 @@ mod ddc_worker {
 
     fn set_cached_power(cached: &mut CachedDisplay, on: bool) -> io::Result<()> {
         if !on {
-            let Some(value) = power_off_value(&power_values(cached)) else {
+            return lunar_blackout_off(cached).or_else(|soft_error| {
+                ddc_standby_off(cached).map_err(|ddc_error| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("{soft_error}; {ddc_error}"),
+                    )
+                })
+            });
+        }
+
+        if cached.disconnected_off || cached.soft_blackout {
+            return lunar_blackout_on(cached);
+        }
+        if cached.ddc_standby {
+            return ddc_standby_on(cached);
+        }
+        ddc_standby_on(cached)
+    }
+
+    /// Lunar BlackOut: dim DDC if it answers, then disconnect the panel from
+    /// WindowServer. Not mirroring, not DDC sleep.
+    fn lunar_blackout_off(cached: &mut CachedDisplay) -> io::Result<()> {
+        let Some(cg_id) = cached.cg_id else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no CoreGraphics id for this panel",
+            ));
+        };
+        if !can_lunar_blackout(Some(cg_id)) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "refusing to disconnect the last remaining display",
+            ));
+        }
+        capture_pre_blackout_brightness(cached);
+        capture_pre_blackout_contrast(cached);
+        dim_panel_backlight_best_effort(cached, 0);
+        let _ = set_panel_vcp_best_effort(cached, VCP_CONTRAST, 0);
+        let origin = display_origin(cg_id);
+        if !set_display_enabled(cg_id, false, None) {
+            return soft_blackout_off(cached);
+        }
+        cached.saved_origin = origin;
+        cached.disconnected_off = true;
+        cached.soft_blackout = false;
+        cached.status.power = Some(false);
+        cached.status.brightness = Some(0);
+        cached.status.system_level = Some(0);
+        cached.status.controllable = true;
+        cached.off_at = Some(std::time::Instant::now());
+        cached.keep_when_missing = true;
+        remember_disconnected(
+            cached.cg_id.and_then(cg_panel_identity).unwrap_or_default(),
+            origin,
+            cg_id,
+        );
+        Ok(())
+    }
+
+    fn lunar_blackout_on(cached: &mut CachedDisplay) -> io::Result<()> {
+        if cached.disconnected_off {
+            let identity = cached.cg_id.and_then(cg_panel_identity);
+            let Some(cg_id) = resolve_cg_id(cached.cg_id, identity.as_deref()) else {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "this monitor does not offer an off state over DDC",
+                    "no CoreGraphics id for this panel",
                 ));
             };
-            // The same dead handle the wake sequence has to survive kills this
-            // write too — a monitor that has slept once hands back
-            // `MacOS kernel I/O error: 268435459` and never recovers on the
-            // retained handle. Brightness and power-on both re-enumerate here;
-            // off was the one path left sending a single shot into a corpse.
-            let mut wrote = cached
+            cached.cg_id = Some(cg_id);
+            if !set_display_enabled(cg_id, true, cached.saved_origin) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "failed to reconnect the display",
+                ));
+            }
+            cached.disconnected_off = false;
+            cached.saved_origin = None;
+            forget_disconnected(identity.as_deref().unwrap_or(""));
+        }
+        if cached.soft_blackout {
+            return soft_blackout_on(cached);
+        }
+        cached.status.power = Some(true);
+        cached.off_at = None;
+        // macOS may take a beat to re-enumerate the panel. Keep the card
+        // until the next successful scan sees it, or Refresh is required.
+        cached.keep_when_missing = true;
+        Ok(())
+    }
+
+    fn soft_blackout_off(cached: &mut CachedDisplay) -> io::Result<()> {
+        let Some(cg_id) = cached.cg_id.filter(|id| panel_gamma_supported(*id)) else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no software blackout path for this panel",
+            ));
+        };
+        capture_pre_blackout_brightness(cached);
+        capture_pre_blackout_contrast(cached);
+
+        // Backlight and contrast first. Gamma 0 is only the video signal —
+        // that is what left the Xiaomi glowing. A mute flag from an earlier
+        // brightness drag must not skip this write; the panel may still
+        // take luminance 0 even when it refused a mid-range set.
+        dim_panel_backlight_best_effort(cached, 0);
+        let _ = set_panel_vcp_best_effort(cached, VCP_CONTRAST, 0);
+        if !panel_gamma_set(cg_id, 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "software blackout rejected by CoreGraphics",
+            ));
+        }
+        cached.soft_blackout = true;
+        cached.status.power = Some(false);
+        cached.status.brightness = Some(0);
+        cached.status.system_level = Some(0);
+        cached.status.method = "gamma".into();
+        cached.status.controllable = true;
+        cached.off_at = Some(std::time::Instant::now());
+        cached.keep_when_missing = true;
+        Ok(())
+    }
+
+    fn soft_blackout_on(cached: &mut CachedDisplay) -> io::Result<()> {
+        let Some(cg_id) = cached.cg_id.filter(|id| panel_gamma_supported(*id)) else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no software blackout path for this panel",
+            ));
+        };
+        let restore = cached.pre_blackout_brightness.unwrap_or(100).max(1);
+        let restore_contrast = cached.pre_blackout_contrast.unwrap_or(50).max(1);
+        // Full video signal first. The remembered level is the panel's own
+        // brightness (usually DDC luminance); putting it into the gamma
+        // factor would leave a DDC panel permanently software-dimmed after
+        // every power cycle.
+        if !panel_gamma_set(cg_id, 100) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "software wake rejected by CoreGraphics",
+            ));
+        }
+        let _ = set_panel_vcp_best_effort(cached, VCP_CONTRAST, restore_contrast as u16);
+        let ddc_restored = dim_panel_backlight_best_effort(cached, restore);
+        if !ddc_restored {
+            // Mute panel or refused write: the only remaining lever is the
+            // gamma factor we just cleared, so put the remembered level
+            // there instead of leaving the panel at full blast.
+            if !panel_gamma_set(cg_id, restore) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "software wake rejected by CoreGraphics",
+                ));
+            }
+            cached.status.method = "gamma".into();
+        } else {
+            cached.status.method = "ddc".into();
+        }
+        cached.soft_blackout = false;
+        cached.pre_blackout_brightness = None;
+        cached.pre_blackout_contrast = None;
+        cached.status.power = Some(true);
+        cached.status.brightness = Some(restore);
+        cached.status.system_level = Some(restore);
+        cached.status.controllable = true;
+        cached.off_at = None;
+        cached.keep_when_missing = false;
+        // Do not call set_cached_brightness here: on mute panels that re-enters
+        // a hanging DDC write and blinks the card out.
+        Ok(())
+    }
+
+    /// Best-effort VCP write used by soft blackout. A mute flag from an
+    /// earlier drag must not skip the off-path write: Xiaomi refused a
+    /// mid-range luminance set and then kept glowing because we never
+    /// asked it for 0. Timeout still marks mute so list_displays is not
+    /// starved.
+    fn dim_panel_backlight_best_effort(cached: &mut CachedDisplay, value: u8) -> bool {
+        set_panel_vcp_best_effort(cached, VCP_LUMINANCE, value as u16)
+    }
+
+    fn set_panel_vcp_best_effort(cached: &mut CachedDisplay, code: u8, value: u16) -> bool {
+        // Do not skip on ddc_mute: off must still ask for 0. Bound the retry
+        // so a mute hub cannot starve list_displays for 10s.
+        if cached
+            .display
+            .handle
+            .set_vcp_feature(code, value)
+            .is_ok()
+        {
+            cached.ddc_mute = false;
+            return true;
+        }
+        if reopen(cached)
+            && cached
+                .display
+                .handle
+                .set_vcp_feature(code, value)
+                .is_ok()
+        {
+            cached.ddc_mute = false;
+            return true;
+        }
+        match try_ddc_set_vcp(
+            &cached.status.id,
+            code,
+            value,
+            std::time::Duration::from_millis(400),
+        ) {
+            Ok(()) => {
+                cached.ddc_mute = false;
+                true
+            }
+            Err(error) => {
+                log::info!(
+                    "display {} soft-blackout VCP 0x{code:02X}={value} failed: {}",
+                    cached.status.id,
+                    error
+                );
+                if error.kind() == io::ErrorKind::TimedOut {
+                    cached.ddc_mute = true;
+                }
+                false
+            }
+        }
+    }
+
+    fn ddc_standby_off(cached: &mut CachedDisplay) -> io::Result<()> {
+        let Some(value) = power_off_value(&power_values(cached)) else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this monitor does not offer an off state over DDC",
+            ));
+        };
+        // Last-resort path for hosts without a gamma blackout. Same dead-handle
+        // reopen the wake sequence already needed.
+        let mut wrote = cached
+            .display
+            .handle
+            .set_vcp_feature(VCP_POWER, value)
+            .map_err(ddc_error);
+        if wrote.is_err() && reopen(cached) {
+            wrote = cached
                 .display
                 .handle
                 .set_vcp_feature(VCP_POWER, value)
                 .map_err(ddc_error);
-            if wrote.is_err() && reopen(cached) {
-                wrote = cached
-                    .display
-                    .handle
-                    .set_vcp_feature(VCP_POWER, value)
-                    .map_err(ddc_error);
-            }
-            wrote?;
-            cached.status.power = Some(false);
-            cached.off_at = Some(std::time::Instant::now());
-            cached.keep_when_missing = true;
-            return Ok(());
         }
+        wrote?;
+        cached.soft_blackout = false;
+        cached.ddc_standby = true;
+        cached.status.power = Some(false);
+        cached.off_at = Some(std::time::Instant::now());
+        cached.keep_when_missing = true;
+        Ok(())
+    }
 
+    fn ddc_standby_on(cached: &mut CachedDisplay) -> io::Result<()> {
         // Stop as soon as the panel confirms it is lit. Every write sent after
         // that races the link retraining, and those were the ones killing the
         // handle this sequence needs.
@@ -1680,11 +2502,14 @@ mod ddc_worker {
     }
 
     fn wake_succeeded(cached: &mut CachedDisplay) {
+        cached.ddc_standby = false;
         cached.status.power = Some(true);
         cached.off_at = None;
-        cached.keep_when_missing = false;
-        // Some monitors come back at their own default level, not the one the
-        // card is showing.
+        cached.keep_when_missing = cached.soft_blackout;
+        if cached.soft_blackout {
+            return;
+        }
+        cached.pre_blackout_brightness = None;
         if let Some(brightness) = cached.status.brightness {
             let _ = cached
                 .display
@@ -1840,7 +2665,7 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
         // not ours to trigger from a slider. Externals only, like Lunar.
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "power control is DDC-only; the built-in display has no DDC",
+            "power control is for external displays; the built-in has no off path",
         ));
     }
     ddc_worker::set_power(id, on)
@@ -1848,8 +2673,8 @@ pub fn set_power(id: &str, on: bool) -> io::Result<()> {
 
 // ─────────── Tauri commands ───────────
 
-/// `force` is the explicit refresh button and post-power-toggle rescan; every
-/// other caller accepts a scan from the last few seconds.
+/// `force` is the explicit refresh button. Power toggles reuse the worker
+/// cache (`scanDisplays(false)`) so a mute hub cannot empty the card list.
 #[tauri::command(async)]
 pub fn list_displays(force: Option<bool>) -> Vec<DisplayStatus> {
     let max_age = (!force.unwrap_or(false)).then(|| std::time::Duration::from_secs(5));
@@ -2483,15 +3308,420 @@ mod tests {
     fn the_off_path_replaces_a_dead_handle_like_every_other_path() {
         let source = std::fs::read_to_string(file!()).expect("this file");
         let body = source
-            .split_once("fn set_cached_power(")
-            .expect("set_cached_power still exists")
+            .split_once("fn ddc_standby_off(")
+            .expect("ddc_standby_off still exists")
             .1
-            .split_once("// Stop as soon as the panel confirms it is lit")
-            .expect("the off branch runs before the on branch")
+            .split_once("\n    }")
+            .expect("ddc_standby_off has an end")
             .0;
         assert!(
             body.contains("reopen(cached)"),
-            "the off branch gave up on a stale handle instead of replacing it"
+            "the DDC off branch gave up on a stale handle instead of replacing it"
+        );
+    }
+
+    #[test]
+    fn power_prefers_software_blackout_before_ddc_standby() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn set_cached_power(")
+            .expect("set_cached_power still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_cached_power has an end")
+            .0;
+        let lunar = body
+            .find("lunar_blackout_off")
+            .expect("off must try Lunar-style WindowServer disconnect first");
+        let ddc = body
+            .find("ddc_standby_off")
+            .expect("DDC standby remains the last-resort fallback");
+        assert!(
+            lunar < ddc,
+            "WindowServer disconnect has to run before DDC standby"
+        );
+        assert!(
+            !body.contains("try_ddc_standby_04"),
+            "0x04 on a successful blank put this desk's LG into a sleep DDC cannot reverse"
+        );
+        assert!(
+            body.contains("lunar_blackout_on"),
+            "ON must reconnect the panel before restoring DDC/gamma"
+        );
+    }
+
+    #[test]
+    fn lunar_blackout_disconnects_instead_of_mirroring() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let off = source
+            .split_once("fn lunar_blackout_off(")
+            .expect("lunar_blackout_off still exists")
+            .1
+            .split_once("\n    }")
+            .expect("lunar_blackout_off has an end")
+            .0;
+        assert!(
+            off.contains("set_display_enabled(cg_id, false, None)"),
+            "off must disconnect via CGDisplayConfigRef, not a connection id"
+        );
+        assert!(
+            !off.contains("mirror_display_onto"),
+            "mirroring clones the desktop; that is Lunar's old fallback, not BlackOut"
+        );
+        assert!(
+            off.contains("dim_panel_backlight_best_effort(cached, 0)"),
+            "DDC panels still get luminance 0 before the disconnect"
+        );
+        assert!(
+            !off.contains("VCP_POWER"),
+            "Lunar-style off must not send DDC sleep"
+        );
+        let on = source
+            .split_once("fn lunar_blackout_on(")
+            .expect("lunar_blackout_on still exists")
+            .1
+            .split_once("\n    }")
+            .expect("lunar_blackout_on has an end")
+            .0;
+        assert!(
+            on.contains("set_display_enabled(cg_id, true, cached.saved_origin)"),
+            "ON must re-enable the disconnected panel"
+        );
+        assert!(
+            !on.contains("CG_NULL_DISPLAY"),
+            "ON must not un-mirror; we no longer mirror"
+        );
+        assert!(
+            !on.contains("let _ = set_display_enabled"),
+            "a failed reconnect must surface, not look like the panel came back"
+        );
+        assert!(
+            on.contains("failed to reconnect the display"),
+            "ON must tell the user when CGSConfigureDisplayEnabled refused"
+        );
+    }
+
+    #[test]
+    fn disconnect_api_is_never_called_from_the_ddc_worker_directly() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let set_enabled = source
+            .split_once("pub fn set_enabled(")
+            .expect("skylight::set_enabled still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_enabled has an end")
+            .0;
+        assert!(
+            set_enabled.contains("CGBeginDisplayConfiguration"),
+            "first argument must be a CGDisplayConfigRef, not a connection id"
+        );
+        assert!(
+            !set_enabled.contains("CGSMainConnectionID"),
+            "passing a connection id SIGSEGVs in checkCapacity"
+        );
+        assert!(
+            set_enabled.contains("K_CGCONFIGURE_PERMANENTLY"),
+            "app-only configs let macOS reshuffle remaining screens"
+        );
+        assert!(
+            set_enabled.contains("CGConfigureDisplayOrigin"),
+            "ON must restore the captured origin so stacked monitors stay stacked"
+        );
+        assert!(
+            set_enabled.contains("from_millis(800)"),
+            "origin restore must wait after enable; combining them no-ops on this macOS"
+        );
+    }
+
+    #[test]
+    fn soft_blackout_also_pulls_ddc_luminance_to_zero() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let off = source
+            .split_once("fn soft_blackout_off(")
+            .expect("soft_blackout_off still exists")
+            .1
+            .split_once("\n    }")
+            .expect("soft_blackout_off has an end")
+            .0;
+        assert!(
+            off.contains("dim_panel_backlight_best_effort(cached, 0)"),
+            "soft off must also ask DDC luminance for 0 so the backlight is not left glowing"
+        );
+        assert!(
+            off.contains("set_panel_vcp_best_effort(cached, VCP_CONTRAST, 0)"),
+            "soft off must also pull contrast to 0, not only luminance"
+        );
+        let lum = off
+            .find("dim_panel_backlight_best_effort(cached, 0)")
+            .expect("luminance 0");
+        let gamma = off
+            .find("panel_gamma_set(cg_id, 0)")
+            .expect("gamma 0");
+        assert!(
+            lum < gamma,
+            "backlight must go to 0 before the video signal, or the glow stays"
+        );
+        let helper = source
+            .split_once("fn set_panel_vcp_best_effort(")
+            .expect("set_panel_vcp_best_effort still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_panel_vcp_best_effort has an end")
+            .0;
+        assert!(
+            !helper.contains("if cached.ddc_mute"),
+            "a mute flag from a mid-range drag must not skip the off-path 0 write"
+        );
+        assert!(
+            off.contains("capture_pre_blackout_brightness(cached)"),
+            "soft off must read the live DDC level before writing 0, or ON restores 100"
+        );
+        assert!(
+            !off.contains("if cached.pre_blackout_brightness.is_none()"),
+            "restore level must not be taken from the card field a soft-path scan left at 100"
+        );
+        let on = source
+            .split_once("fn soft_blackout_on(")
+            .expect("soft_blackout_on still exists")
+            .1
+            .split_once("\n    }")
+            .expect("soft_blackout_on has an end")
+            .0;
+        assert!(
+            on.contains("panel_gamma_set(cg_id, 100)"),
+            "soft wake must restore a full video signal before putting brightness back on DDC"
+        );
+        assert!(
+            on.contains("dim_panel_backlight_best_effort(cached, restore)"),
+            "soft wake must restore the remembered luminance over DDC when the panel answers"
+        );
+        assert!(
+            !on.contains("set_cached_brightness("),
+            "soft wake must not re-enter the hanging brightness path"
+        );
+        let helper = source
+            .split_once("fn set_panel_vcp_best_effort(")
+            .expect("set_panel_vcp_best_effort still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_panel_vcp_best_effort has an end")
+            .0;
+        assert!(
+            helper.contains("set_vcp_feature(code, value)"),
+            "luminance 0 must hit the retained handle first, not only the re-enumerate probe"
+        );
+        assert!(
+            !helper.contains("if cached.ddc_mute"),
+            "a mute flag from a mid-range drag must not skip the off-path 0 write"
+        );
+    }
+
+    #[test]
+    fn a_successful_blank_does_not_send_ddc_standby() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn set_cached_power(")
+            .expect("set_cached_power still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_cached_power has an end")
+            .0;
+        assert!(
+            !body.contains("try_ddc_standby_04"),
+            "layered 0x04 is how the LG went dark and would not come back"
+        );
+    }
+
+    #[test]
+    fn soft_blackout_captures_live_ddc_luminance_before_writing_zero() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn capture_pre_blackout_brightness(")
+            .expect("capture_pre_blackout_brightness still exists")
+            .1
+            .split_once("\n    }")
+            .expect("capture_pre_blackout_brightness has an end")
+            .0;
+        assert!(
+            body.contains("if cached.ddc_mute"),
+            "a known-mute panel must not pay for another hanging VCP read"
+        );
+        let mute = body
+            .find("if cached.ddc_mute")
+            .expect("mute skip missing");
+        let live = body
+            .find("try_ddc_get_luminance")
+            .expect("must ask the panel itself, not the gamma-labelled card");
+        let card = body
+            .find("cached.status.brightness")
+            .expect("mute panels still fall back to the card");
+        assert!(
+            mute < live,
+            "mute skip has to come before the hanging VCP read"
+        );
+        assert!(
+            live < card,
+            "a live DDC read has to beat the card, or ON restores the gamma factor"
+        );
+    }
+
+    #[test]
+    fn soft_blackout_is_available_when_coregraphics_can_address_the_panel() {
+        assert!(!can_soft_blackout(None));
+        #[cfg(target_os = "macos")]
+        {
+            // Presence of an id is enough for the gate; unsupported ids fail
+            // later inside the write, not by hiding the button.
+            let _ = can_soft_blackout(Some(1));
+        }
+    }
+    #[test]
+    fn lunar_blackout_is_offered_for_any_external_coregraphics_id() {
+        assert!(!can_lunar_blackout(None));
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            !can_lunar_blackout(Some(4)),
+            "WindowServer disconnect does not exist off macOS"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let builtin = cg_builtin_id();
+            assert!(
+                !can_lunar_blackout(builtin),
+                "disconnecting the built-in would leave the machine with no screen"
+            );
+            let other = builtin.map(|id| id.wrapping_add(1)).unwrap_or(4);
+            if active_display_count() > 1 {
+                assert!(
+                    can_lunar_blackout(Some(other)),
+                    "an external CG id is enough to show the button when another screen remains"
+                );
+            } else {
+                assert!(
+                    !can_lunar_blackout(Some(other)),
+                    "the last remaining screen must never be disconnected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lunar_off_persists_the_disconnect_so_quit_can_restore_it() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let off = source
+            .split_once("fn lunar_blackout_off(")
+            .expect("lunar_blackout_off still exists")
+            .1
+            .split_once("\n    }")
+            .expect("lunar_blackout_off has an end")
+            .0;
+        assert!(
+            off.contains("remember_disconnected("),
+            "OFF must persist the CGS disable so a crash can restore it on next launch"
+        );
+        assert!(
+            off.contains("can_lunar_blackout(Some(cg_id))"),
+            "OFF must refuse the last remaining screen, not only the built-in"
+        );
+        let on = source
+            .split_once("fn lunar_blackout_on(")
+            .expect("lunar_blackout_on still exists")
+            .1
+            .split_once("\n    }")
+            .expect("lunar_blackout_on has an end")
+            .0;
+        assert!(
+            on.contains("resolve_cg_id(cached.cg_id, identity.as_deref())"),
+            "ON must re-resolve the session id; the one stored at OFF is often gone"
+        );
+        assert!(
+            source.contains("pub fn restore_disconnected_displays()"),
+            "quit and next launch must re-enable leftover CGS disables"
+        );
+    }
+
+    #[test]
+    fn listing_treats_windowserver_disconnect_as_power_capable() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("let power_capable = remember_power_capable")
+            .expect("power_capable is still computed in list")
+            .1;
+        let snippet = body.split_once("announce_once").expect("announce follows").0;
+        assert!(
+            snippet.contains("can_lunar_blackout(cg_id)"),
+            "a panel that can be disconnected must keep its power buttons even with no DDC"
+        );
+    }
+    #[test]
+    fn mute_panels_skip_hanging_ddc_writes_after_the_first_refusal() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn set_cached_brightness(")
+            .expect("set_cached_brightness still exists")
+            .1
+            .split_once("\n    }")
+            .expect("set_cached_brightness has an end")
+            .0;
+        assert!(
+            body.contains("cached.ddc_mute && can_soft_blackout"),
+            "a known-mute panel must skip the hanging DDC write"
+        );
+        assert!(
+            !body.contains("cached.status.method == \"gamma\" && can_soft_blackout"),
+            "scan-time gamma labelling must not permanently disable DDC"
+        );
+        let wake = source
+            .split_once("fn soft_blackout_on(")
+            .expect("soft_blackout_on still exists")
+            .1
+            .split_once("\n    }")
+            .expect("soft_blackout_on has an end")
+            .0;
+        assert!(
+            !wake.contains("set_cached_brightness("),
+            "soft wake must not re-enter the hanging brightness path"
+        );
+    }
+    #[test]
+    fn a_soft_path_scan_does_not_block_on_mute_vcp_reads() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn refresh(")
+            .expect("refresh still exists")
+            .1
+            .split_once("\n    }")
+            .expect("refresh has an end")
+            .0;
+        assert!(
+            body.contains("can_soft_blackout(cg_id)"),
+            "refresh must gate the hanging VCP probe behind the soft path"
+        );
+        let soft = body
+            .find("if can_soft_blackout(cg_id)")
+            .expect("soft-path branch missing");
+        let lum = body
+            .find("get_vcp_feature(VCP_LUMINANCE)")
+            .expect("DDC probe must remain for panels without a soft path");
+        assert!(
+            soft < lum,
+            "the soft-path skip has to come before the hanging luminance read"
+        );
+    }
+
+    #[test]
+    fn display_name_falls_back_to_the_backend_id() {
+        let source = std::fs::read_to_string(file!()).expect("this file");
+        let body = source
+            .split_once("fn display_name(")
+            .expect("display_name still exists")
+            .1
+            .split_once("\n}")
+            .expect("display_name has an end")
+            .0;
+        assert!(
+            body.contains("d.info.id.trim()"),
+            "ddc-macos product names live in info.id when model_name is empty"
         );
     }
 

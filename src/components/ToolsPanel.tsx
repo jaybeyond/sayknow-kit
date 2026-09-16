@@ -46,6 +46,26 @@ type Props = {
 }
 
 /**
+ * Which Tauri command actually changes the light on this card. The built-in's
+ * real backlight on a new-backlight Mac is Control Center; brightness there
+ * is only the gamma overlay. "All displays" must follow the same path as
+ * each card's own slider, or the laptop panel stays put while the externals
+ * move.
+ */
+export function brightnessCommand(
+  display: Pick<DisplayRow, "id" | "kind" | "method" | "controllable">,
+):
+  | { command: "set_builtin_backlight" }
+  | { command: "set_display_brightness"; id: string }
+  | null {
+  if (!display.controllable) return null
+  if (display.kind === "builtin" && display.method !== "backlight") {
+    return { command: "set_builtin_backlight" }
+  }
+  return { command: "set_display_brightness", id: display.id }
+}
+
+/**
  * Tools that talk to the machine rather than to a translation provider. The
  * first one is screen brightness: hardware DDC for externals, real built-in
  * backlight through macOS Control Center accessibility, plus a separate gamma
@@ -139,33 +159,50 @@ export function ToolsPanel({ settings, active }: Props) {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
       await invoke<number>("set_builtin_backlight", { value })
-      void scanDisplays(true)
+      // Do not force a DDC rescan on every backlight tick. Mute hubs hang
+      // list_displays for 10s and that is what made the app look crashed.
     } catch {
       // The first attempt opens macOS Accessibility settings. Once SayKnow
       // Kit is allowed, the next drag controls the real backlight.
     }
   }, [])
 
+  // Drive each panel the same way its own slider does.
+  const applyDisplay = useCallback(
+    async (display: DisplayRow, value: number) => {
+      const target = brightnessCommand(display)
+      if (!target) return
+      if (target.command === "set_builtin_backlight") {
+        await applyBacklight(value)
+        return
+      }
+      await apply(target.id, value)
+    },
+    [apply, applyBacklight],
+  )
+
   const applyAll = useCallback(
     async (value: number) => {
-      await Promise.all(displays.map((d) => apply(d.id, value)))
+      await Promise.all(displays.map((d) => applyDisplay(d, value)))
     },
-    [displays, apply],
+    [displays, applyDisplay],
   )
 
   const togglePower = useCallback(async (id: string, on: boolean) => {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
       await invoke("set_display_power", { id, on })
-      // Keep the optimistic card state while a sleeping display disappears
-      // from CoreGraphics; the Rust DDC worker retains its wake handle.
-      setTimeout(() => void scanDisplays(true), on ? 1200 : 2500)
+      // Disconnect drops the panel from CoreGraphics. A forced DDC rescan
+      // then hangs 10s on mute hubs (Xiaomi) and the card vanishes until
+      // Refresh. Reuse the worker cache — keep_when_missing already holds
+      // the disconnected row.
+      await scanDisplays(false)
       return true
     } catch (e) {
       // A refused power command used to vanish here: the toggle sprang back,
       // the monitor stayed as it was, and nothing said why. The rescan clears
       // the banner on success, so report after it.
-      await scanDisplays(true)
+      await scanDisplays(false)
       reportError(String(e))
       return false
     }
@@ -234,7 +271,7 @@ export function ToolsPanel({ settings, active }: Props) {
             <AllSlider
               label={t("tools.brightness.all")}
               onCommit={(v) => void applyAll(v)}
-              disabled={displays.length < 2}
+              disabled={displays.filter((d) => d.controllable).length < 2}
               hint={t("tools.brightness.allHint")}
             />
           )}
@@ -511,14 +548,8 @@ function DisplayControl({
         <span className="ml-auto tabular-nums text-[10px] text-muted-foreground">
           {display.brightness === null ? "—" : `${v}%`}
         </span>
-        {/* Power is DDC 0xD6, read separately from brightness 0x10: a monitor
-            can refuse a luminance read and still switch on and off. Gating
-            these on `method` took the buttons away from those monitors.
-            Gating them on `power` took them away too, just less often: DDC
-            goes quiet for minutes at a time and `power` is null for all of it,
-            so the buttons blinked out mid-session on a monitor that had been
-            switching on and off all day. `power_capable` is the monitor's
-            answer to "can you do this at all", and that does not flicker. */}
+        {/* Lunar-style BlackOut: disconnect from WindowServer. Not mirroring,
+            not DDC sleep. DDC panels also get luminance/contrast 0 first. */}
         {display.kind === "external" && display.power_capable && (
           <div className="flex items-center gap-0.5">
             <Button

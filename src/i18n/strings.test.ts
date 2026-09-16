@@ -35,3 +35,12 @@ describe("system metric translations", () => {
     }
   })
 })
+describe("display power copy", () => {
+  it("describes WindowServer disconnect, not DDC standby, in every locale", () => {
+    for (const locale of UI_LOCALES) {
+      const note = UI_STRINGS[locale]["tools.brightness.ddcNote"]
+      expect(note, `${locale}:tools.brightness.ddcNote`).toBeTruthy()
+      expect(note.toLowerCase()).toContain("lunar")
+    }
+  })
+})

@@ -58,7 +58,7 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ### Tools
 - 🌞 **Screen brightness (macOS-specific)** — hardware-level control for connected displays: DDC/CI for externals (HDMI/DisplayPort/USB-C), IOKit backlight for built-in Mac panels where available. On newer supported Macs where direct IOKit access is unavailable, it uses Control Center accessibility automation. External DDC capabilities vary by hardware; both built-in paths are macOS-only.
-- 🔌 **Display power (macOS-specific)** — turn an external monitor off and back on (DDC standby); charging, audio and USB keep working
+- 🔌 **Display power (macOS-specific)** — Lunar-style BlackOut: disconnect the external from WindowServer so macOS stops driving it (USB/charging stay alive). Not mirroring. DDC panels also get backlight and contrast pulled to 0 first. DDC standby is not used; some panels take it into a sleep this app cannot reverse.
 - 🎚️ **One slider for all** — move every display at once, or adjust each on its own
 - 🔍 **Honest readouts** — a monitor that won't report brightness over DDC still adjusts; it just shows —
 - 📊 **System status** — system CPU, memory, and system disk, plus SoC die temperature on macOS (Apple Silicon) read through unprivileged AppleVendor sensors; shown as unavailable on Windows or whenever no trustworthy sensor is present
