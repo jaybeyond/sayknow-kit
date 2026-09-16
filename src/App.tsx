@@ -48,9 +48,11 @@ function MainRoot() {
   }, [t, loaded])
 
   useEffect(() => {
+    let playedAt = 0
     function play() {
       const el = contentRef.current
       if (!el) return
+      playedAt = Date.now()
       el.classList.remove("appear")
       void el.offsetWidth
       el.classList.add("appear")
@@ -60,12 +62,32 @@ function MainRoot() {
       // `appear` class or the content snaps back to opacity:0 leaving the
       // user with a blank popover.
       if (pinnedRef.current) return
+      // A window that never became key can emit blur right after we were
+      // told to show. Stripping `appear` there is what leaves the popover
+      // as an empty shell, so ignore a blur that lands on the heels of a
+      // show.
+      if (Date.now() - playedAt < 600) return
       contentRef.current?.classList.remove("appear")
     }
     play()
+    // The native side is the only reliable signal that the popover is being
+    // shown. A borderless window in an Accessory app does not reliably become
+    // key, so the DOM `focus` event may never arrive — `appear` then stays
+    // off and the user is left with the shell and nothing inside it: the
+    // black box. `sayknow:open` fires on every show, focus or not.
+    let unlistenOpen: (() => void) | undefined
+    if (isTauri()) {
+      void import("@tauri-apps/api/event")
+        .then(({ listen }) => listen("sayknow:open", () => play()))
+        .then((un) => {
+          unlistenOpen = un
+        })
+        .catch(() => {})
+    }
     window.addEventListener("focus", play)
     window.addEventListener("blur", reset)
     return () => {
+      unlistenOpen?.()
       window.removeEventListener("focus", play)
       window.removeEventListener("blur", reset)
     }
