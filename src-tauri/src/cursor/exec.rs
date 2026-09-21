@@ -815,8 +815,7 @@ pub struct CommandOutput {
 }
 
 fn shell_command(command: &str, working_directory: &str) -> Command {
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(command);
+    let mut cmd = platform_shell_command(command);
     if !working_directory.is_empty() && std::path::Path::new(working_directory).is_dir() {
         cmd.current_dir(working_directory);
     }
@@ -825,6 +824,20 @@ fn shell_command(command: &str, working_directory: &str) -> Command {
     // instead of orphaning children of the shell.
     #[cfg(unix)]
     cmd.process_group(0);
+    cmd
+}
+
+#[cfg(unix)]
+fn platform_shell_command(command: &str) -> Command {
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c").arg(command);
+    cmd
+}
+
+#[cfg(windows)]
+fn platform_shell_command(command: &str) -> Command {
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/C").arg(command);
     cmd
 }
 
@@ -988,6 +1001,18 @@ mod tests {
         exec.message.as_ref().expect("a result")
     }
 
+    #[cfg(windows)]
+    fn test_shell_command(unix: &str, windows: &str) -> String {
+        let _ = unix;
+        windows.to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn test_shell_command(unix: &str, windows: &str) -> String {
+        let _ = windows;
+        unix.to_string()
+    }
+
     #[test]
     fn output_caps_truncate_and_say_so() {
         let (text, truncated) = cap("x".repeat(200), 100);
@@ -1006,7 +1031,7 @@ mod tests {
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
-                    command: "echo cursor-exec-ok".into(),
+                    command: test_shell_command("echo cursor-exec-ok", "echo cursor-exec-ok"),
                     working_directory: std::env::temp_dir().to_string_lossy().to_string(),
                     ..Default::default()
                 },
@@ -1029,7 +1054,7 @@ mod tests {
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
-                    command: "exit 3".into(),
+                    command: test_shell_command("exit 3", "exit /B 3"),
                     ..Default::default()
                 },
             )))
@@ -1050,7 +1075,7 @@ mod tests {
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
-                    command: "sleep 30".into(),
+                    command: test_shell_command("sleep 30", "ping -n 31 127.0.0.1 > nul"),
                     timeout: 300,
                     ..Default::default()
                 },
@@ -1183,7 +1208,7 @@ mod tests {
         let opening = host
             .handle(exec(pb::exec_server_message::Message::ShellStreamArgs(
                 pb::ShellArgs {
-                    command: "echo streamed".into(),
+                    command: test_shell_command("echo streamed", "echo streamed"),
                     ..Default::default()
                 },
             )))
@@ -1231,7 +1256,10 @@ mod tests {
         let handle = tokio::spawn(async move {
             host.handle(exec(pb::exec_server_message::Message::ShellStreamArgs(
                 pb::ShellArgs {
-                    command: "echo early; sleep 2".into(),
+                    command: test_shell_command(
+                        "echo early; sleep 2",
+                        "echo early & ping -n 3 127.0.0.1 > nul",
+                    ),
                     timeout: 5000,
                     ..Default::default()
                 },
@@ -1272,7 +1300,7 @@ mod tests {
             .handle(exec(
                 pb::exec_server_message::Message::BackgroundShellSpawnArgs(
                     pb::BackgroundShellSpawnArgs {
-                        command: "cat > /dev/null".into(),
+                        command: test_shell_command("cat > /dev/null", "more > nul"),
                         ..Default::default()
                     },
                 ),
