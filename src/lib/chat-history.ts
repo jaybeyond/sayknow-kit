@@ -1,3 +1,4 @@
+import type { ChatImage } from "./chat-image"
 import { storage } from "./storage"
 
 export type ChatRole = "user" | "assistant"
@@ -9,6 +10,8 @@ export type ChatMsg = {
   ts: number
   /** Model id that produced this assistant turn (assistant only). */
   model?: string
+  /** Attached images (user turns). Stored downscaled; see chat-image.ts. */
+  images?: ChatImage[]
 }
 
 export type Conversation = {
@@ -31,8 +34,9 @@ function genId(): string {
 }
 
 function genTitle(messages: ChatMsg[]): string {
-  const first = messages.find((m) => m.role === "user")?.content?.trim() ?? ""
-  if (!first) return "새 대화"
+  const firstUser = messages.find((m) => m.role === "user")
+  const first = firstUser?.content?.trim() ?? ""
+  if (!first) return firstUser?.images?.length ? "이미지" : "새 대화"
   return first.length > 32 ? first.slice(0, 32).trimEnd() + "…" : first
 }
 
@@ -60,8 +64,31 @@ function readAll(): Conversation[] {
   return storage.get<Conversation[]>(CONVS_KEY) ?? []
 }
 
+/**
+ * Persist, shedding image payloads oldest-first if the store overflows.
+ *
+ * A dropped image keeps its slot with `data: ""` so the bubble can still say
+ * "image no longer stored" instead of the message quietly changing shape. The
+ * text of every conversation always survives; only pixels are sacrificed.
+ */
 function writeAll(list: Conversation[]) {
-  storage.set(CONVS_KEY, list.slice(0, MAX_CONVS))
+  const trimmed = list.slice(0, MAX_CONVS)
+  if (storage.set(CONVS_KEY, trimmed)) return
+
+  // Oldest conversation first, oldest message first, until it fits.
+  const shed = trimmed.map((c) => ({ ...c, messages: c.messages.map((m) => ({ ...m })) }))
+  const order = [...shed].sort((a, b) => a.updatedAt - b.updatedAt)
+  for (const conv of order) {
+    for (const msg of conv.messages) {
+      if (!msg.images?.some((img) => img.data)) continue
+      msg.images = msg.images.map((img) => ({ ...img, data: "" }))
+      if (storage.set(CONVS_KEY, shed)) return
+    }
+  }
+  // Still too big with no images at all: fall back to dropping conversations.
+  for (let keep = shed.length - 1; keep > 0; keep--) {
+    if (storage.set(CONVS_KEY, shed.slice(0, keep))) return
+  }
 }
 
 export const conversations = {

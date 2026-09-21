@@ -3,8 +3,12 @@ import { storage } from "@/lib/storage"
 import {
   CLAUDE_CLI_MODELS,
   fetchModels,
+  parseOAuthProvider,
   type OpenRouterModel,
 } from "@/lib/openrouter"
+import { OAUTH_MODELS } from "@/lib/oauth/models"
+import { listCursorModels } from "@/lib/oauth/cursor-chat"
+import { ensureAccessToken } from "@/lib/oauth/registry"
 
 const CACHE_KEY_PREFIX = "models-cache"
 const TTL_MS = 24 * 60 * 60 * 1000 // 24h
@@ -21,7 +25,10 @@ function isOcpLike(baseURL: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\b/.test(baseURL)
 }
 
-export function useModels(apiKey: string, baseURL: string) {
+export function useModels(apiKey: string, baseURL: string, provider?: string) {
+  // OAuth providers answer on their own API, not an OpenAI-compatible
+  // `/models` endpoint, so their catalogue is bundled rather than probed.
+  const oauthProvider = provider ? parseOAuthProvider(provider) : null
   const ocpLike = isOcpLike(baseURL)
   const [fetched, setFetched] = useState<OpenRouterModel[]>(() => {
     const cached = storage.get<Cache>(cacheKey(baseURL))
@@ -83,5 +90,35 @@ export function useModels(apiKey: string, baseURL: string) {
     }
   }, [apiKey, baseURL, ocpLike])
 
+  const [cursorModels, setCursorModels] = useState<OpenRouterModel[] | null>(null)
+  useEffect(() => {
+    if (oauthProvider !== "cursor") return
+    let cancelled = false
+    void (async () => {
+      const token = await ensureAccessToken("cursor")
+      if (cancelled || token.status !== "ready") return
+      try {
+        const list = await listCursorModels(token.credentials.access)
+        if (!cancelled && list.length > 0) setCursorModels(list)
+      } catch {
+        // The bundled fallback already fills the picker, so a failed probe is
+        // not something the user has to act on.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [oauthProvider])
+
+  // Cursor is the one OAuth provider that publishes its own list, and it is
+  // account-specific: a plan change adds or removes models. The bundled list
+  // is only the seed shown until the account answers.
+  if (oauthProvider) {
+    const catalogue =
+      oauthProvider === "cursor"
+        ? cursorModels ?? OAUTH_MODELS.cursor
+        : OAUTH_MODELS[oauthProvider]
+    return { models: catalogue, loading: false, error: null }
+  }
   return { models, loading, error }
 }

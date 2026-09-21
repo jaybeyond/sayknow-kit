@@ -3,31 +3,52 @@
 // (https://github.com/dtzp555-max/ocp), Ollama, LM Studio, etc.
 export const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-/**
- * Wrapper around fetch that routes through the Tauri HTTP plugin (Rust) when
- * running inside the desktop app. The plugin bypasses webview CORS policy —
- * essential for hitting localhost endpoints like OCP that don't ship the
- * exact CORS headers needed for `tauri://localhost` origin.
- */
-async function httpFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<Response> {
-  if (
-    typeof window !== "undefined" &&
-    ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
-  ) {
-    const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http")
-    return tauriFetch(url, init)
-  }
-  return fetch(url, init)
-}
+import type { ChatImage } from "./chat-image"
+import { httpFetch } from "./http"
+import { OAUTH_PROVIDER_IDS } from "./oauth/registry"
+import { oauthChat, toOpenAIContent } from "./oauth/chat"
+import type { OAuthProvider } from "./oauth/types"
+
+export { httpFetch }
 export const OCP_BASE = "http://127.0.0.1:3456/v1"
 
-export type ProviderId = "openrouter" | "ocp" | "custom"
+/**
+ * Which backend answers a request.
+ *
+ * `oauth:<provider>` entries are signed in through the app's own browser OAuth
+ * flow and carry no API key; everything else is an OpenAI-compatible endpoint
+ * reached with a key (or unauthenticated, for local servers).
+ */
+export type ProviderId = "openrouter" | "ocp" | "custom" | OAuthProviderRef
+
+/** A provider backed by OAuth credentials rather than an API key. */
+export type OAuthProviderRef = `oauth:${OAuthProvider}`
+
+export function oauthProviderRef(provider: OAuthProvider): OAuthProviderRef {
+  return `oauth:${provider}`
+}
+
+/** The provider id when `value` is an OAuth selection, else `null`. */
+export function parseOAuthProvider(value: string): OAuthProvider | null {
+  if (!value.startsWith("oauth:")) return null
+  const id = value.slice("oauth:".length)
+  return (OAUTH_PROVIDER_IDS as readonly string[]).includes(id) ? (id as OAuthProvider) : null
+}
+
+export function isOAuthProvider(value: string): value is OAuthProviderRef {
+  return parseOAuthProvider(value) !== null
+}
+
+/**
+ * Endpoint defaults for the key-based providers.
+ *
+ * OAuth providers are intentionally absent: they have no user-editable base
+ * URL and no key field, so they are described by `OAUTH_PROVIDERS` instead.
+ */
+export type EndpointProviderId = "openrouter" | "ocp" | "custom"
 
 export const PROVIDER_PRESETS: Record<
-  ProviderId,
+  EndpointProviderId,
   { label: string; baseURL: string; description: string }
 > = {
   openrouter: {
@@ -64,6 +85,8 @@ function trimSlash(s: string): string {
 export type ChatMessage = {
   role: "system" | "user" | "assistant"
   content: string
+  /** Attached images; only user turns carry them. */
+  images?: ChatImage[]
 }
 
 export type ChatOptions = {
@@ -77,7 +100,27 @@ export type ChatOptions = {
   fallbackModel?: string
   messages: ChatMessage[]
   signal?: AbortSignal
+  /**
+   * Which backend to use. When this names an OAuth provider the request is
+   * routed to that provider's own API with the stored token, and `apiKey` /
+   * `baseURL` are ignored. Omitted means the OpenAI-compatible path, which is
+   * what every existing caller already did.
+   */
+  provider?: ProviderId
   temperature?: number
+  /**
+   * Streamed assistant text, chunk by chunk.
+   *
+   * Only the OAuth providers whose transport streams call this — today that
+   * is Cursor. Every path still resolves with the complete text, so this is
+   * additive for callers that want to render as it arrives.
+   */
+  onDelta?: (text: string) => void
+  /**
+   * Tool-call activity from an agentic provider. Cursor is the only one that
+   * reports it; the rest never call this.
+   */
+  onTool?: (tool: { callId: string; name: string; completed: boolean }) => void
 }
 
 export type ChatUsage = {
@@ -94,10 +137,35 @@ export type ChatResult = {
 }
 
 export async function chat(opts: ChatOptions): Promise<ChatResult> {
+  const oauthProvider = opts.provider ? parseOAuthProvider(opts.provider) : null
+  if (oauthProvider) {
+    const result = await oauthChat({
+      provider: oauthProvider,
+      model: opts.model,
+      messages: opts.messages,
+      temperature: opts.temperature,
+      signal: opts.signal,
+      onDelta: opts.onDelta,
+      onTool: opts.onTool,
+    })
+    return {
+      content: result.content,
+      model: result.model,
+      usage: result.usage
+        ? {
+            prompt_tokens: result.usage.prompt_tokens ?? 0,
+            completion_tokens: result.usage.completion_tokens ?? 0,
+            total_tokens:
+              (result.usage.prompt_tokens ?? 0) + (result.usage.completion_tokens ?? 0),
+          }
+        : undefined,
+    }
+  }
+
   const base = trimSlash(opts.baseURL ?? OPENROUTER_BASE)
   const fallback = opts.fallbackModel?.trim()
   const body: Record<string, unknown> = {
-    messages: opts.messages,
+    messages: opts.messages.map((m) => ({ role: m.role, content: toOpenAIContent(m) })),
     temperature: opts.temperature ?? 0.3,
   }
   if (fallback && fallback !== opts.model) {

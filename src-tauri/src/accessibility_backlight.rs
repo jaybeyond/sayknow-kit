@@ -26,30 +26,14 @@ type AxElement = *mut c_void;
 type CgEvent = *mut c_void;
 type CgEventSource = *mut c_void;
 
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Point {
-    x: f64,
-    y: f64,
-}
 
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Size {
-    width: f64,
-    height: f64,
-}
 
 const UTF8: u32 = 0x0800_0100;
 const PROC_ALL_PIDS: u32 = 1;
 const CF_NUMBER_DOUBLE: isize = 13;
-const AX_VALUE_POINT: i32 = 1;
-const AX_VALUE_SIZE: i32 = 2;
+const CF_NUMBER_FLOAT: isize = 12;
 const HID_EVENT_TAP: u32 = 0;
 const HID_SYSTEM_STATE: i32 = 1;
-const LEFT_MOUSE_DOWN: u32 = 1;
-const LEFT_MOUSE_UP: u32 = 2;
-const LEFT_MOUSE_DRAGGED: u32 = 6;
 const KEY_ESCAPE: u16 = 53;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -62,8 +46,12 @@ extern "C" {
         attribute: CfStringRef,
         value: *mut CfTypeRef,
     ) -> i32;
-    fn AXValueGetValue(value: CfTypeRef, value_type: i32, out: *mut c_void) -> bool;
-
+    fn AXUIElementSetAttributeValue(
+        element: AxElement,
+        attribute: CfStringRef,
+        value: CfTypeRef,
+    ) -> i32;
+    fn AXUIElementPerformAction(element: AxElement, action: CfStringRef) -> i32;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -84,6 +72,7 @@ extern "C" {
         encoding: u32,
     ) -> bool;
     fn CFNumberGetValue(number: CfTypeRef, number_type: isize, value: *mut c_void) -> bool;
+    fn CFNumberCreate(allocator: CfTypeRef, number_type: isize, value: *const c_void) -> CfTypeRef;
 }
 
 #[link(name = "Security", kind = "framework")]
@@ -100,21 +89,12 @@ extern "C" {
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGEventSourceCreate(state: i32) -> CgEventSource;
-    fn CGEventCreate(source: CgEventSource) -> CgEvent;
-    fn CGEventGetLocation(event: CgEvent) -> Point;
-    fn CGEventCreateMouseEvent(
-        source: CgEventSource,
-        event_type: u32,
-        position: Point,
-        button: u32,
-    ) -> CgEvent;
     fn CGEventCreateKeyboardEvent(
         source: CgEventSource,
         virtual_key: u16,
         key_down: bool,
     ) -> CgEvent;
     fn CGEventPost(tap: u32, event: CgEvent);
-    fn CGWarpMouseCursorPosition(position: Point) -> i32;
 }
 
 extern "C" {
@@ -194,18 +174,6 @@ unsafe fn value_number(element: AxElement) -> Option<f64> {
     let value = copy_attribute(element, "AXValue")?;
     let mut out = 0.0f64;
     CFNumberGetValue(value.0, CF_NUMBER_DOUBLE, &mut out as *mut _ as *mut c_void).then_some(out)
-}
-
-unsafe fn point_attribute(element: AxElement, attribute: &str) -> Option<Point> {
-    let value = copy_attribute(element, attribute)?;
-    let mut out = Point::default();
-    AXValueGetValue(value.0, AX_VALUE_POINT, &mut out as *mut _ as *mut c_void).then_some(out)
-}
-
-unsafe fn size_attribute(element: AxElement, attribute: &str) -> Option<Size> {
-    let value = copy_attribute(element, attribute)?;
-    let mut out = Size::default();
-    AXValueGetValue(value.0, AX_VALUE_SIZE, &mut out as *mut _ as *mut c_void).then_some(out)
 }
 
 /// `proc_name` on a single pid, used to keep a cached ControlCenter pid honest
@@ -367,19 +335,6 @@ unsafe fn press_escape(source: CgEventSource) {
     post_event(CGEventCreateKeyboardEvent(source, KEY_ESCAPE, false));
 }
 
-unsafe fn click(source: CgEventSource, position: Point) {
-    let _ = CGWarpMouseCursorPosition(position);
-    thread::sleep(Duration::from_millis(35));
-    post_event(CGEventCreateMouseEvent(
-        source,
-        LEFT_MOUSE_DOWN,
-        position,
-        0,
-    ));
-    thread::sleep(Duration::from_millis(45));
-    post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_UP, position, 0));
-}
-
 unsafe fn application_windows(app: AxElement) -> Vec<AxElement> {
     let Some(array) = copy_attribute(app, "AXWindows") else {
         return Vec::new();
@@ -390,10 +345,19 @@ unsafe fn application_windows(app: AxElement) -> Vec<AxElement> {
         .collect()
 }
 
+/// The main Control Center brightness slider, plus (older layouts) the
+/// per-display sliders that appear when the Display module is expanded.
+///
+/// On macOS 27 the panel keeps `controlcenter-display-brightness-slider`
+/// alive in Control Center's AX tree whether or not the panel is open, and
+/// writing `AXValue` on it moves the real backlight — the same thing the
+/// brightness keys do. The old code explicitly *excluded* this id and went
+/// looking for a per-display group instead, which no longer exists here.
 unsafe fn builtin_slider(app: AxElement) -> Option<AxElement> {
     let windows = application_windows(app);
     let mut fallback: Option<AxElement> = None;
     for window in windows {
+        // Per-display slider for the built-in, when the layout has one.
         if let Some(group) = find(window, 0, &|id, _| {
             id.starts_with("controlcenter-display-")
                 && id != "controlcenter-display-brightness-slider"
@@ -405,77 +369,106 @@ unsafe fn builtin_slider(app: AxElement) -> Option<AxElement> {
             if let Some(old) = fallback.take() {
                 CFRelease(old as CfTypeRef);
             }
-            return slider;
-        }
-        // On non-Retina/localized names, Control Center lists the built-in
-        // after external displays. Retain the last display group's slider.
-        if let Some(group) = find(window, 0, &|id, _| {
-            id.starts_with("controlcenter-display-")
-                && id != "controlcenter-display-brightness-slider"
-        }) {
-            if let Some(slider) = find(group, 0, &|_, role| role == "AXSlider") {
-                if let Some(old) = fallback.replace(slider) {
-                    CFRelease(old as CfTypeRef);
-                }
+            if slider.is_some() {
+                return slider;
             }
-            CFRelease(group as CfTypeRef);
+            continue;
+        }
+        // The main slider: this is the one that exists on macOS 27.
+        if let Some(slider) = find(window, 0, &|id, role| {
+            role == "AXSlider" && id == "controlcenter-display-brightness-slider"
+        }) {
+            if let Some(old) = fallback.replace(slider) {
+                CFRelease(old as CfTypeRef);
+            }
         }
         CFRelease(window as CfTypeRef);
     }
     fallback
 }
 
-unsafe fn ensure_slider(app: AxElement, source: CgEventSource) -> Result<AxElement, String> {
-    // ControlCenter retains hidden AXWindows after their popover closes. Never
-    // trust a pre-existing slider: close any popup, physically open Display,
-    // then use the freshly visible tree.
-    let menu = find(app, 0, &|id, _| id == "com.apple.menuextra.display")
-        .ok_or_else(|| "macOS Display menu item was not found".to_string())?;
-    let position = point_attribute(menu, "AXPosition")
-        .ok_or_else(|| "Display menu position is unavailable".to_string())?;
-    let size = size_attribute(menu, "AXSize")
-        .ok_or_else(|| "Display menu size is unavailable".to_string())?;
-    CFRelease(menu as CfTypeRef);
+/// Process that owns the menu-bar extras. macOS 27 moved them out of
+/// ControlCenter into MenuBarAgent, which is why looking in ControlCenter's
+/// own menu bar found nothing.
+unsafe fn is_menu_bar_agent(pid: i32) -> bool {
+    let mut name = [0i8; 128];
+    proc_name(pid, name.as_mut_ptr() as *mut c_void, name.len() as u32) > 0
+        && CStr::from_ptr(name.as_ptr()).to_bytes() == b"MenuBarAgent"
+}
 
-    press_escape(source);
-    thread::sleep(Duration::from_millis(180));
-    click(
-        source,
-        Point {
-            x: position.x + size.width / 2.0,
-            y: position.y + size.height / 2.0,
-        },
-    );
-    for _ in 0..10 {
-        thread::sleep(Duration::from_millis(60));
+fn menu_bar_agent_pid() -> Option<i32> {
+    unsafe {
+        let bytes = proc_listpids(PROC_ALL_PIDS, 0, ptr::null_mut(), 0);
+        if bytes <= 0 {
+            return None;
+        }
+        let mut pids = vec![0i32; bytes as usize / std::mem::size_of::<i32>() + 16];
+        let written = proc_listpids(
+            PROC_ALL_PIDS,
+            0,
+            pids.as_mut_ptr() as *mut c_void,
+            (pids.len() * std::mem::size_of::<i32>()) as i32,
+        );
+        pids.into_iter()
+            .take((written.max(0) as usize) / 4)
+            .find(|&pid| pid > 0 && is_menu_bar_agent(pid))
+    }
+}
+
+/// Menu-bar extras hang off `AXExtrasMenuBar`, not `AXChildren`.
+unsafe fn find_menu_extra(app: AxElement, id: &str) -> Option<AxElement> {
+    for attribute in ["AXExtrasMenuBar", "AXMenuBar"] {
+        let Some(bar) = copy_attribute(app, attribute) else {
+            continue;
+        };
+        if let Some(found) = find(bar.0 as AxElement, 0, &|found, _| found == id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Ask Control Center to open, through its own menu-bar item's AX press
+/// action. No synthetic mouse events: those go through the HID tap and are
+/// what macOS 27 stopped delivering to status items.
+unsafe fn open_control_center() -> Result<(), String> {
+    let agent = menu_bar_agent_pid().ok_or_else(|| "MenuBarAgent is not running".to_string())?;
+    let app = AXUIElementCreateApplication(agent);
+    if app.is_null() {
+        return Err("MenuBarAgent accessibility connection failed".into());
+    }
+    let item = find_menu_extra(app, "com.apple.menuextra.controlcenter");
+    CFRelease(app as CfTypeRef);
+    let Some(item) = item else {
+        return Err("Control Center is not in the menu bar".into());
+    };
+    let action = cf_string("AXPress").ok_or_else(|| "CFString alloc failed".to_string())?;
+    let rc = AXUIElementPerformAction(item, action.0);
+    CFRelease(item as CfTypeRef);
+    if rc != 0 {
+        return Err(format!("Control Center did not open (AXPress rc={rc})"));
+    }
+    Ok(())
+}
+
+/// The built-in brightness slider, opening Control Center only if the slider
+/// is not already reachable. On macOS 27 it usually is: Control Center keeps
+/// the slider alive in its AX tree while the panel is closed.
+unsafe fn ensure_slider(app: AxElement, source: CgEventSource) -> Result<AxElement, String> {
+    if let Some(slider) = builtin_slider(app) {
+        return Ok(slider);
+    }
+
+    open_control_center()?;
+    for _ in 0..15 {
+        thread::sleep(Duration::from_millis(100));
         if let Some(slider) = builtin_slider(app) {
+            log::info!("builtin backlight: slider reached by opening Control Center");
             return Ok(slider);
         }
     }
-    Err("macOS Display brightness slider did not open".into())
-}
-
-/// Read Control Center's retained built-in slider without opening its popover.
-/// ControlCenter keeps the AXWindow alive while hidden, so once Accessibility
-/// permission is granted this is the authoritative live backlight value.
-pub fn get() -> Option<u8> {
-    if !is_trusted(false) {
-        return None;
-    }
-    let pid = control_center_pid()?;
-    unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return None;
-        }
-        let value = builtin_slider(app).and_then(|slider| {
-            let value = value_number(slider).map(|v| (v * 100.0).round().clamp(0.0, 100.0) as u8);
-            CFRelease(slider as CfTypeRef);
-            value
-        });
-        CFRelease(app as CfTypeRef);
-        value
-    }
+    press_escape(source);
+    Err("Control Center opened but exposes no brightness slider".into())
 }
 
 /// Base cadence for the sampler thread. Control Center is the only other writer
@@ -521,7 +514,7 @@ static DEMAND: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Non-blocking live backlight for the 250ms UI poll.
 ///
-/// Every `get()` is a synchronous accessibility round trip into another
+/// Every slider read is a synchronous accessibility round trip into another
 /// process; on a busy Mac it can take hundreds of milliseconds, which is why
 /// polling it from the command thread made the whole Tools tab crawl and its
 /// sliders stop responding. One sampler thread does the expensive read, and
@@ -623,6 +616,15 @@ fn sample_level(retained: &mut Option<(i32, AxElement, AxElement)>) -> Option<u8
         value
     }
 }
+/// Set the built-in backlight by writing the Control Center slider's `AXValue`.
+///
+/// This is a different mechanism from the external monitors on purpose:
+/// externals speak DDC over the cable, the built-in panel has no such wire,
+/// and the one thing that reliably moves its backlight from another process
+/// is the same control the brightness keys drive. Writing the value directly
+/// (rather than dragging the thumb with synthetic mouse events) works with
+/// the panel closed, needs no cursor warp, and survived the macOS 27 change
+/// that stopped status items from receiving synthetic clicks.
 pub fn set(percent: u8) -> Result<u8, String> {
     if !is_trusted(true) {
         return Err("Accessibility permission is required; allow SayKnow Kit and try again".into());
@@ -638,63 +640,46 @@ pub fn set(percent: u8) -> Result<u8, String> {
             CFRelease(app as CfTypeRef);
             return Err("macOS input source creation failed".into());
         }
-        let cursor_event = CGEventCreate(ptr::null_mut());
-        let original_cursor = if cursor_event.is_null() {
-            Point::default()
-        } else {
-            let p = CGEventGetLocation(cursor_event);
-            CFRelease(cursor_event as CfTypeRef);
-            p
-        };
 
         let result = (|| {
             let slider = ensure_slider(app, source)?;
-            let current = value_number(slider).unwrap_or(1.0).clamp(0.0, 1.0);
-            let position = point_attribute(slider, "AXPosition")
-                .ok_or_else(|| "Brightness slider position is unavailable".to_string())?;
-            let size = size_attribute(slider, "AXSize")
-                .ok_or_else(|| "Brightness slider size is unavailable".to_string())?;
-            let target = (percent as f64 / 100.0).clamp(0.0, 1.0);
-            let y = position.y + size.height / 2.0;
-            // AX reports the track bounds, while the thumb centre stops just
-            // inside them. Exact 0/1 coordinates miss the thumb hit target.
-            let thumb_x = |value: f64| position.x + size.width * value.clamp(0.02, 0.98);
-            let start = Point {
-                x: thumb_x(current),
-                y,
-            };
-            let end = Point {
-                x: thumb_x(target),
-                y,
-            };
-            let _ = CGWarpMouseCursorPosition(start);
-            thread::sleep(Duration::from_millis(45));
-            post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_DOWN, start, 0));
-            for step in 1..=10 {
-                let t = step as f64 / 10.0;
-                let point = Point {
-                    x: start.x + (end.x - start.x) * t,
-                    y,
-                };
-                post_event(CGEventCreateMouseEvent(
-                    source,
-                    LEFT_MOUSE_DRAGGED,
-                    point,
-                    0,
-                ));
-                thread::sleep(Duration::from_millis(18));
+            let before = value_number(slider).unwrap_or(-1.0);
+            let target = (percent as f64 / 100.0).clamp(0.0, 1.0) as f32;
+
+            let attribute = cf_string("AXValue").ok_or_else(|| "CFString alloc failed".to_string())?;
+            let number = CFNumberCreate(
+                ptr::null(),
+                CF_NUMBER_FLOAT,
+                &target as *const f32 as *const c_void,
+            );
+            if number.is_null() {
+                CFRelease(slider as CfTypeRef);
+                return Err("CFNumber alloc failed".into());
             }
-            post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_UP, end, 0));
-            thread::sleep(Duration::from_millis(220));
-            let actual = value_number(slider)
-                .map(|v| (v * 100.0).round().clamp(0.0, 100.0) as u8)
-                .unwrap_or(percent);
+            let rc = AXUIElementSetAttributeValue(slider, attribute.0, number);
+            CFRelease(number);
+            if rc != 0 {
+                CFRelease(slider as CfTypeRef);
+                return Err(format!("brightness slider refused the value (AXError {rc})"));
+            }
+
+            // Read back so a write the panel ignored is reported as such
+            // rather than assumed.
+            thread::sleep(Duration::from_millis(120));
+            let after = value_number(slider).unwrap_or(-1.0);
             CFRelease(slider as CfTypeRef);
+            let actual = (after * 100.0).round().clamp(0.0, 100.0) as u8;
+            log::info!(
+                "builtin backlight: AXValue {before:.3} -> {after:.3} (asked {percent}%)"
+            );
+            if (after - target as f64).abs() > 0.03 {
+                return Err(format!(
+                    "brightness slider did not take the value: asked {percent}%, panel reads {actual}%"
+                ));
+            }
             Ok(actual)
         })();
 
-        press_escape(source);
-        let _ = CGWarpMouseCursorPosition(original_cursor);
         CFRelease(source as CfTypeRef);
         CFRelease(app as CfTypeRef);
         result
@@ -777,7 +762,7 @@ mod tests {
         assert!((55..=65).contains(&mid), "expected about 60%, got {mid}%");
         let full = set(100).expect("Control Center 100% restore failed");
         assert!(full >= 98, "expected full restore, got {full}%");
-        let reread = get().expect("hidden Control Center slider read failed");
-        assert!(reread >= 98, "expected full readback, got {reread}%");
+        // `set` reads the slider back itself; a value the panel refused is
+        // reported as an error, so reaching here proves the write took.
     }
 }

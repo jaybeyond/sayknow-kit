@@ -718,6 +718,15 @@ mod gamma_dim {
             )
         };
         let ok = write_table(display, &r, &g, &b);
+        // A write that "succeeds" without changing the panel is the failure
+        // that hid for a whole session, so read the table back and say what
+        // the panel actually holds now.
+        let applied = read_table(display).map(|(red, _, _)| red.last().copied().unwrap_or(-1.0));
+        let wanted = r.last().copied().unwrap_or(-1.0);
+        log::info!(
+            "gamma display={display} factor={factor:.2} rc_ok={ok} wanted_max={wanted:.3} readback_max={applied:?} samples={}",
+            r.len()
+        );
         if ok {
             LAST.lock().unwrap().insert(display, factor);
         }
@@ -2686,6 +2695,7 @@ pub fn list_displays(force: Option<bool>) -> Vec<DisplayStatus> {
 
 #[tauri::command(async)]
 pub fn set_display_brightness(app: tauri::AppHandle, id: String, value: i64) -> Result<(), String> {
+    log::info!("set_display_brightness: id={id} value={value}");
     if id == BUILTIN_ID {
         // CGS gamma writes only take effect from the main thread's WindowServer
         // connection. The identical call returns success from a worker thread
@@ -2698,10 +2708,17 @@ pub fn set_display_brightness(app: tauri::AppHandle, id: String, value: i64) -> 
             let _ = tx.send(set_brightness(BUILTIN_ID, percent));
         })
         .map_err(|e| e.to_string())?;
-        return rx
+        let result = rx
             .recv_timeout(std::time::Duration::from_secs(2))
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string());
+        // Outcome goes to the log too: a slider that moves while the screen
+        // does not is otherwise undiagnosable after the fact.
+        match &result {
+            Ok(()) => log::info!("builtin brightness: {percent}% applied (gamma)"),
+            Err(e) => log::warn!("builtin brightness: {percent}% failed: {e}"),
+        }
+        return result;
     }
     set_brightness(&id, clamp_percent(value)).map_err(|e| e.to_string())
 }
@@ -2715,7 +2732,18 @@ pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, St
     let percent = clamp_percent(value);
     #[cfg(target_os = "macos")]
     {
-        let actual = crate::accessibility_backlight::set(percent)?;
+        // The failure reason only ever went to the webview, which made a
+        // silently dead built-in slider impossible to diagnose from the log.
+        let actual = match crate::accessibility_backlight::set(percent) {
+            Ok(actual) => {
+                log::info!("builtin backlight: set {percent}% -> {actual}%");
+                actual
+            }
+            Err(e) => {
+                log::warn!("builtin backlight: set {percent}% failed: {e}");
+                return Err(e);
+            }
+        };
         probe("set_builtin_backlight", _probe_started);
         brightness_tap::seed_sixteenths(actual as f64 / 100.0);
         crate::accessibility_backlight::publish_level(actual);
@@ -3762,3 +3790,6 @@ mod tests {
         assert_ne!(BUILTIN_ID, "ddc:");
     }
 }
+
+
+

@@ -70,18 +70,16 @@ export const secrets = {
     }
     bumpRev()
   },
+  /**
+   * Delete the API key.
+   *
+   * Scoped to this one credential: DeepL lives under its own account, and
+   * OAuth providers keep their tokens under `oauth_*` accounts, so signing out
+   * of the key-based provider must not disturb either.
+   */
   async clear(): Promise<void> {
     if (isTauri()) {
       await invoke("delete_api_key")
-      // "Sign out (delete key)" should also tear down the OCP daemon the
-      // user connected — otherwise launchd keeps respawning OCP on :3456
-      // and the next login auto-reconnects. Best-effort: a machine that
-      // never used OCP just silently no-ops.
-      try {
-        await invoke("disconnect_ocp")
-      } catch {
-        /* best effort */
-      }
     } else {
       storage.remove(LS_KEY)
     }

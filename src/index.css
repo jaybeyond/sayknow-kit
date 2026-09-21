@@ -94,7 +94,7 @@
 
 @keyframes sayknow-popover-in {
   from {
-    opacity: 0;
+    opacity: 1;
     transform: translateY(-6px) scale(0.98);
   }
   to {
@@ -103,15 +103,37 @@
   }
 }
 
-/* Inner layer — only the CONTENT fades/slides in. The outer shell with the
- * frosted bg is always rendered immediately so the user never sees a frame of
- * transparent window without the popover skin. */
+/* Content remains visible even if focus events or animation playback stop. */
 .popover-content {
-  opacity: 0;
-  transform: translateY(-6px) scale(0.98);
+  opacity: 1;
+  transform: none;
   transform-origin: top center;
-  will-change: opacity, transform;
+  will-change: transform;
 }
 .popover-content.appear {
   animation: sayknow-popover-in 180ms cubic-bezier(0.2, 0.85, 0.4, 1) forwards;
+}
+
+/* Chat image lightbox. Entry via @starting-style: the browser transitions
+   from the starting values on first paint, so React never has to set a
+   "mounted" flag in an effect. Exit is unmount, which is instant on purpose —
+   Escape is a repeated action and must not feel delayed. */
+.lightbox {
+  opacity: 1;
+  transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  @starting-style {
+    opacity: 0;
+  }
+}
+.lightbox-image {
+  transform: scale(1);
+  transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  @starting-style {
+    transform: scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lightbox-image {
+    transition: none;
+  }
 }

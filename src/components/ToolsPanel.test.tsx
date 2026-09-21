@@ -119,7 +119,8 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver
 
-import { ToolsPanel, brightnessCommand } from "./ToolsPanel"
+import { ToolsPanel } from "./ToolsPanel"
+import { brightnessCommand } from "@/lib/brightness-command"
 
 afterEach(() => {
   cleanup()
@@ -310,18 +311,18 @@ describe("ToolsPanel all-displays slider", () => {
     mocks.toolsState.displays = []
   })
 
-  it("routes a gamma built-in through the real backlight, not the overlay", () => {
+  it("drives the built-in and an external through different mechanisms", () => {
+    // The built-in panel has no DDC. Its slider must reach the real backlight
+    // (the Control Center control the F1/F2 keys move), never the DDC/gamma
+    // command: that only darkens the picture and is exactly how the built-in
+    // slider went dead while externals kept working.
     expect(brightnessCommand(builtin)).toEqual({ command: "set_builtin_backlight" })
+    expect(brightnessCommand({ ...builtin, method: "backlight" })).toEqual({
+      command: "set_builtin_backlight",
+    })
     expect(brightnessCommand(external)).toEqual({
       command: "set_display_brightness",
       id: "ddc:lg",
-    })
-  })
-
-  it("uses brightness when the built-in has a real IOKit backlight", () => {
-    expect(brightnessCommand({ ...builtin, method: "backlight" })).toEqual({
-      command: "set_display_brightness",
-      id: "builtin",
     })
   })
 

@@ -1,6 +1,6 @@
 [package]
 name = "sayknow"
-version = "0.2.26"
+version = "0.2.27"
 description = "SayKnow Kit — menu bar AI kit for translation, chat, and clipboard"
 authors = ["SayKnow"]
 license = ""
@@ -14,6 +14,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.1", features = [] }
+# Cursor's agent protocol types are generated from proto/agent.proto at build
+# time; see build.rs. Requires `protoc` on PATH (or $PROTOC).
+prost-build = "0.14"
 
 [dependencies]
 serde_json = "1.0"
@@ -25,11 +28,39 @@ tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
-tauri-plugin-http = "2"
+# `unsafe-headers` lets a request opt out of the Origin header the plugin
+# otherwise always sets. Anthropic classifies any request carrying an Origin
+# as a browser call, and an organization can forbid those outright, so the
+# OAuth chat path sends an empty Origin to have it stripped.
+tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 keyring = "3"
 ddc-hi = "0.4"
 sysinfo = { version = "=0.30.13", default-features = false }
-tokio = { version = "1", features = ["sync", "time", "rt"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "net", "macros", "io-util", "process"] }
+
+# Cursor agent protocol (Connect-RPC over HTTP/2).
+#
+# `h2` and `tokio-rustls` are already in the dependency graph via
+# tauri-plugin-http/reqwest, so promoting them to direct dependencies adds no
+# second TLS or HTTP stack. Cursor needs the send and receive halves of the
+# stream independently: it heartbeats every 5s and answers server-initiated
+# blob and context messages after the response has started, which a
+# request/response client cannot express.
+h2 = "0.4"
+http = "1"
+bytes = "1"
+prost = "0.14"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+webpki-roots = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "v5"] }
+
+# Cancelling a turn must kill the whole process group a shell spawned, not
+# just the direct child; that needs a raw `kill(-pgid)`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # macOS-only: used by the gamma/backlight registry reads. A plain
 # [dependencies] entry breaks the Windows build (std::os::unix).
@@ -39,7 +70,7 @@ core-foundation = "0.9"
 # NX event parsing: the tap callback receives CGEvent, and the NX data1
 # field is only exposed through NSEvent. Already in the graph via wry.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "NSScreen", "block2"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject"] }
 block2 = "0.6"
 

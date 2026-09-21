@@ -13,9 +13,11 @@ import {
   LogOut,
   Pin,
   Plug,
+  Power,
   Settings as SettingsIcon,
   Sparkles,
 } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -39,6 +41,7 @@ import type { ThemeMode } from "@/hooks/useTheme"
 import {
   DEFAULT_REFINE_PROMPT,
   DEFAULT_TRANSLATE_PROMPT,
+  isOAuthProvider,
 } from "@/lib/openrouter"
 import {
   UI_LOCALES,
@@ -64,6 +67,8 @@ type Props = {
   setThemeMode: (m: ThemeMode) => void
   /** Set when a stored credential could not be read out of the Keychain. */
   credentialError?: string | null
+  /** Re-checks OAuth connection state after a sign-in or sign-out. */
+  refreshOAuth?: () => void
 }
 
 type Section =
@@ -80,12 +85,14 @@ export function SettingsWindow({
   themeMode,
   setThemeMode,
   credentialError,
+  refreshOAuth,
 }: Props) {
   const { t } = useT(settings.uiLocale)
   const [section, setSection] = useState<Section>("general")
   const { models, loading: modelsLoading } = useModels(
     settings.apiKey,
     settings.baseURL,
+    settings.provider,
   )
 
   const NAV: { id: Section; label: string; icon: typeof SettingsIcon }[] = [
@@ -157,6 +164,7 @@ export function SettingsWindow({
                 models={models}
                 modelsLoading={modelsLoading}
                 credentialError={credentialError}
+                refreshOAuth={refreshOAuth}
               />
             )}
             {section === "glossary" && (
@@ -301,6 +309,7 @@ function ConnectionSection({
   models,
   modelsLoading,
   credentialError,
+  refreshOAuth,
 }: {
   settings: Settings
   update: (p: Partial<Settings>) => void
@@ -308,6 +317,7 @@ function ConnectionSection({
   models: import("@/lib/openrouter").OpenRouterModel[]
   modelsLoading: boolean
   credentialError?: string | null
+  refreshOAuth?: () => void
 }) {
   const { t } = useT(settings.uiLocale)
   return (
@@ -331,6 +341,9 @@ function ConnectionSection({
         apiKey={settings.apiKey}
         uiLocale={settings.uiLocale}
         onChange={(next) => update(next)}
+        // Signing in or out changes whether the app is connected, and that is
+        // derived in useSettings from the Keychain — nudge it to re-read.
+        onAuthChanged={refreshOAuth}
       />
 
       <ApiKeyRow
@@ -773,6 +786,20 @@ function AboutSection({ settings }: { settings: Settings }) {
           <ExternalLink className="h-3 w-3" />
         </button>
       </div>
+
+      <Separator />
+
+      {/* The tray icon no longer pops a quit menu, so this is where quitting
+          lives. Without it the app could only be force-quit. */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void invoke("quit_app").catch(() => {})}
+        className="text-destructive hover:text-destructive"
+      >
+        <Power className="mr-1.5 h-3.5 w-3.5" />
+        {t("tray.quit")}
+      </Button>
     </div>
   )
 }
@@ -837,19 +864,12 @@ function ApiKeyRow({
     setDraft(apiKey)
   }
 
-  const placeholder =
-    provider === "openrouter"
-      ? "sk-or-..."
-      : provider === "ocp"
-        ? "OCP token (leave blank for open mode)"
-        : "API key"
+  // An OAuth provider has no key to enter — its credentials came from the
+  // browser sign-in and live in their own Keychain account.
+  if (isOAuthProvider(provider)) return null
 
-  const label =
-    provider === "openrouter"
-      ? "OpenRouter API Key"
-      : provider === "ocp"
-        ? "OCP Token (optional)"
-        : "API Key"
+  const placeholder = provider === "openrouter" ? "sk-or-..." : "API key"
+  const label = provider === "openrouter" ? "OpenRouter API Key" : "API Key"
 
   return (
     <Row label={label}>

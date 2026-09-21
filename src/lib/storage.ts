@@ -14,13 +14,19 @@ export const storage = {
       return null
     }
   },
-  set(key: string, value: unknown) {
+  /**
+   * Returns false when the write did not land — almost always a quota
+   * overflow. Callers that store large payloads (chat images) use this to
+   * shed weight and retry instead of silently losing the whole record.
+   */
+  set(key: string, value: unknown): boolean {
     try {
       const serialized =
         typeof value === "string" ? value : JSON.stringify(value)
       localStorage.setItem(PREFIX + key, serialized)
+      return true
     } catch {
-      // ignore
+      return false
     }
   },
   remove(key: string) {

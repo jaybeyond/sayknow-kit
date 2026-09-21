@@ -4,7 +4,8 @@ import {
   type ChatMsg,
   type Conversation,
 } from "@/lib/chat-history"
-import { chat as openrouterChat, type ChatMessage } from "@/lib/openrouter"
+import type { ChatImage } from "@/lib/chat-image"
+import { chat as openrouterChat, type ChatMessage, type ProviderId } from "@/lib/openrouter"
 
 const SYSTEM_PROMPT =
   "You are a helpful, concise assistant. Answer in the user's language. " +
@@ -13,16 +14,33 @@ const SYSTEM_PROMPT =
 type Args = {
   apiKey: string
   baseURL: string
+  /** Selected backend. OAuth providers route to their own API. */
+  provider?: ProviderId
   model: string
   fallbackModel?: string
 }
 
-export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
+export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Args) {
   const [list, setList] = useState<Conversation[]>(() => conversations.list())
   const [currentId, setCurrentId] = useState<string | null>(
     () => conversations.currentId(),
   )
   const [sending, setSending] = useState(false)
+  /**
+   * Assistant text as it arrives, before the turn finishes.
+   *
+   * Providers that answer in one piece leave this empty; the finished message
+   * is appended to the conversation either way, so this is only what the UI
+   * shows while the answer is still being written.
+   */
+  const [streamingText, setStreamingText] = useState("")
+  /**
+   * Tools the provider's agent is running right now.
+   *
+   * Cursor can execute shell commands and file operations mid-answer; showing
+   * them is the difference between "it froze" and "it is running your build".
+   */
+  const [activeTools, setActiveTools] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -79,17 +97,37 @@ export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
         ...currentMessages.map<ChatMessage>((m) => ({
           role: m.role,
           content: m.content,
+          // Evicted images have data "" and are filtered at the wire; the
+          // model then sees only the text, which is the honest degradation.
+          ...(m.images?.length ? { images: m.images } : {}),
         })),
       ]
 
       try {
+        setStreamingText("")
+        setActiveTools([])
         const result = await openrouterChat({
           apiKey,
           baseURL,
+          provider,
           model,
           fallbackModel,
           messages: apiMessages,
           signal: ctrl.signal,
+          onDelta: (text) => {
+            if (ctrl.signal.aborted) return
+            setStreamingText((previous) => previous + text)
+          },
+          onTool: (tool) => {
+            if (ctrl.signal.aborted) return
+            setActiveTools((previous) =>
+              tool.completed
+                ? previous.filter((name) => name !== tool.name)
+                : previous.includes(tool.name)
+                  ? previous
+                  : [...previous, tool.name],
+            )
+          },
         })
         if (ctrl.signal.aborted) return
         conversations.appendMessage(convId, {
@@ -102,18 +140,24 @@ export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
         if (ctrl.signal.aborted) return
         setError(e instanceof Error ? e.message : String(e))
       } finally {
+        setStreamingText("")
+        setActiveTools([])
         if (!ctrl.signal.aborted) setSending(false)
       }
     },
-    [apiKey, baseURL, model, fallbackModel, refresh],
+    [apiKey, baseURL, provider, model, fallbackModel, refresh],
   )
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, images: ChatImage[] = []) => {
       const trimmed = text.trim()
-      if (!trimmed) return
+      if (!trimmed && images.length === 0) return
       const conv = ensureCurrent()
-      conversations.appendMessage(conv.id, { role: "user", content: trimmed })
+      conversations.appendMessage(conv.id, {
+        role: "user",
+        content: trimmed,
+        ...(images.length ? { images } : {}),
+      })
       refresh()
       const next = conversations.get(conv.id)?.messages ?? []
       await requestAssistant(conv.id, next)
@@ -141,9 +185,9 @@ export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
   )
 
   const editAndResend = useCallback(
-    async (userId: string, newText: string) => {
+    async (userId: string, newText: string, images: ChatImage[] = []) => {
       const trimmed = newText.trim()
-      if (!trimmed || !currentId) return
+      if ((!trimmed && images.length === 0) || !currentId) return
       const conv = conversations.get(currentId)
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === userId)
@@ -151,7 +195,7 @@ export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
       if (conv.messages[idx].role !== "user") return
       conversations.setMessages(currentId, conv.messages.slice(0, idx))
       refresh()
-      await send(trimmed)
+      await send(trimmed, images)
     },
     [currentId, refresh, send],
   )
@@ -195,6 +239,8 @@ export function useChat({ apiKey, baseURL, model, fallbackModel }: Args) {
     current,
     messages,
     sending,
+    streamingText,
+    activeTools,
     error,
     setError,
     send,

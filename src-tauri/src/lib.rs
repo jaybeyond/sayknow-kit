@@ -5,6 +5,9 @@ mod accessibility_backlight;
 mod thermal_macos;
 mod display;
 mod clipboard;
+mod oauth_callback;
+mod cursor;
+mod cursor_chat;
 
 mod system_metrics;
 use std::fs::OpenOptions;
@@ -19,7 +22,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use keyring::Entry;
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
 };
@@ -65,6 +67,9 @@ struct AppState {
     /// unreliable for this window (see `popover_is_showing`), so the toggle
     /// reads the state we set ourselves.
     popover_open: AtomicBool,
+    /// Click anchor and display bounds in global logical points.
+    #[cfg(target_os = "macos")]
+    popover_anchor: Mutex<Option<(Rect, Rect)>>,
 }
 
 /// Move the main window under the tray, but only if the positioner plugin
@@ -121,6 +126,17 @@ fn position_under_tray(app: &AppHandle, intended_logical_width: Option<f64>) -> 
         log::info!("place: no main window");
         return false;
     };
+    #[cfg(target_os = "macos")]
+    let saved_anchor = *app.state::<AppState>().popover_anchor.lock().unwrap();
+    #[cfg(target_os = "macos")]
+    if let Some((anchor, monitor)) = saved_anchor {
+        let width = intended_logical_width.unwrap_or_else(|| {
+            *app.state::<AppState>().logical_width.lock().unwrap()
+        });
+        let (x, y) = tray_anchored_origin(anchor, width.round() as u32, monitor, 8);
+        log::info!("place(click): anchor={anchor:?} monitor={monitor:?} -> ({x},{y})");
+        return win.set_position(tauri::LogicalPosition::new(x as f64, y as f64)).is_ok();
+    }
     let Some(tray) = app.tray_by_id("sayknow-tray") else {
         log::info!("place: no tray by id");
         return false;
@@ -384,17 +400,33 @@ fn now_ms() -> i64 {
 const KEYRING_SERVICE: &str = "com.sayknow.app";
 const KEYRING_USER: &str = "openrouter_api_key";
 
+/// Providers the app can sign into through its own browser OAuth flow. Kept
+/// in sync with `OAUTH_PROVIDERS` in `src/lib/oauth/registry.ts`; the test
+/// below fails if the two drift.
+const OAUTH_PROVIDER_ACCOUNTS: &[&str] = &[
+    "anthropic",
+    "openai-codex",
+    "google-gemini-cli",
+    "xai",
+    "cursor",
+];
+
 fn entry() -> Result<Entry, String> {
     Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
 }
 
-/// Secondary credentials (currently the DeepL key) live under their own
-/// Keychain account in the same service. Named accounts rather than one blob
-/// so signing out of one provider can't take the other's key with it.
+/// Secondary credentials live under their own Keychain account in the same
+/// service. Named accounts rather than one blob so signing out of one
+/// provider can't take the other's key with it.
 fn named_entry(account: &str) -> Result<Entry, String> {
-    // Whitelist: the account name reaches the Keychain, so it is never taken
-    // straight from the frontend.
-    let allowed = matches!(account, "deepl_api_key");
+    // The account name reaches the Keychain, so it is never taken straight
+    // from the frontend. `oauth_*` covers the browser-login providers, whose
+    // suffixes are checked against the registry rather than accepted as any
+    // free-form string.
+    let allowed = matches!(account, "deepl_api_key")
+        || account
+            .strip_prefix("oauth_")
+            .is_some_and(|provider| OAUTH_PROVIDER_ACCOUNTS.contains(&provider));
     if !allowed {
         return Err(format!("unknown credential: {account}"));
     }
@@ -473,6 +505,7 @@ fn resize_main_window(app: AppHandle, width: f64, height: f64) -> Result<(), Str
     if let Some(win) = app.get_webview_window("main") {
         win.set_size(tauri::LogicalSize::new(width, height))
             .map_err(|e| e.to_string())?;
+        refresh_window_shadow(&win);
     }
     // Re-anchor under the tray after resize so a smaller window doesn't end
     // up half-offscreen. The width we just asked for is passed through, since
@@ -1450,25 +1483,6 @@ fn uninstall_ocp(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Update the tray menu's quit-item text. React calls this on mount with
-/// the resolved i18n string so the menu honors the user's UI locale
-/// override. TrayIcon doesn't expose a getter for the current menu, so we
-/// rebuild a single-item menu and swap it in via `set_menu`.
-#[tauri::command]
-fn set_tray_quit_label(app: AppHandle, label: String) -> Result<(), String> {
-    let tray = app
-        .tray_by_id("sayknow-tray")
-        .ok_or_else(|| "tray not found".to_string())?;
-    let item = MenuItem::with_id(&app, "quit", &label, true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&item]).map_err(|e| e.to_string())?;
-    tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
-    // set_menu re-attaches to the NSStatusItem, and an attached menu makes
-    // macOS open it on left click instead of firing our button action.
-    detach_tray_menu(&tray);
-    Ok(())
-}
-
 /// Update the tray icon's hover tooltip. Same rationale as the quit label:
 /// the builder can only bake in a locale-neutral default, so React pushes
 /// the resolved i18n string once the WebView is up.
@@ -1497,6 +1511,17 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
 #[tauri::command]
 fn relaunch_app(app: AppHandle) {
     app.restart();
+}
+
+/// Quit from the app's own UI.
+///
+/// The tray icon deliberately has no menu: a click there opens the popover and
+/// nothing else. That makes this the only way out, so it must stay wired to
+/// the About panel's quit button.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    log::info!("quit: requested from the app UI");
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -1558,6 +1583,7 @@ fn reassert_window_transparency(win: &tauri::WebviewWindow) {
         let window = &*(ptr as *const NSWindow);
         window.setOpaque(false);
         window.setBackgroundColor(Some(&NSColor::clearColor()));
+        round_window_content(window);
         // The shadow is cached against the old opaque shape; without this the
         // black outline survives the background change.
         window.invalidateShadow();
@@ -1575,6 +1601,56 @@ fn reassert_window_transparency(win: &tauri::WebviewWindow) {
         }
     }
 }
+
+/// Corner radius of the popover card, matching `rounded-xl` on the React root.
+#[cfg(target_os = "macos")]
+const POPOVER_CORNER_RADIUS: f64 = 12.0;
+
+/// Clip the window's content layer to the popover's rounded shape.
+///
+/// The webview draws a rounded card, but the NSWindow underneath is a plain
+/// rectangle, and macOS computes the drop shadow from the window's opaque
+/// region — so the shadow had four square corners poking out from under the
+/// rounded card as a hard black edge. Masking the content layer makes the
+/// window's alpha match what is drawn, and the shadow follows.
+#[cfg(target_os = "macos")]
+unsafe fn round_window_content(window: &objc2_app_kit::NSWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Some(view) = window.contentView() else {
+        return;
+    };
+    view.setWantsLayer(true);
+    let layer: *mut AnyObject = msg_send![&*view, layer];
+    if layer.is_null() {
+        return;
+    }
+    let _: () = msg_send![layer, setCornerRadius: POPOVER_CORNER_RADIUS];
+    let _: () = msg_send![layer, setMasksToBounds: true];
+}
+
+/// Re-derive the shadow after any size change. `resize_main_window` and the
+/// compact-mode toggle both change the window's shape, and a shadow computed
+/// for the old rectangle shows as a black line along the old edge.
+#[cfg(target_os = "macos")]
+fn refresh_window_shadow(win: &tauri::WebviewWindow) {
+    use objc2_app_kit::NSWindow;
+    let Ok(ptr) = win.ns_window() else {
+        return;
+    };
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let window = &*(ptr as *const NSWindow);
+        round_window_content(window);
+        window.invalidateShadow();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn refresh_window_shadow(_win: &tauri::WebviewWindow) {}
 
 #[cfg(not(target_os = "macos"))]
 fn reassert_window_transparency(_win: &tauri::WebviewWindow) {}
@@ -1617,6 +1693,37 @@ fn raise_popover(win: &tauri::WebviewWindow) {
     let _ = win.set_focus();
 }
 
+fn should_hide_after_blur(pinned: bool, focused: bool, observed_show: i64, latest_show: i64) -> bool {
+    !pinned && !focused && observed_show == latest_show
+}
+
+/// Capture the pointer before activation can change the active screen.
+/// AppKit screen frames and mouseLocation share global points (Y upwards).
+#[cfg(target_os = "macos")]
+fn capture_popover_anchor(app: &AppHandle) {
+    use objc2_app_kit::{NSEvent, NSScreen};
+    use objc2_foundation::MainThreadMarker;
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let screens = NSScreen::screens(mtm);
+    let Some(primary) = screens.iter().next() else { return };
+    let desktop_top = primary.frame().origin.y + primary.frame().size.height;
+    let mouse = NSEvent::mouseLocation();
+    let anchor = screens.iter().find_map(|screen| {
+        let frame = screen.frame();
+        if mouse.x < frame.origin.x || mouse.x >= frame.origin.x + frame.size.width
+            || mouse.y < frame.origin.y || mouse.y >= frame.origin.y + frame.size.height {
+            return None;
+        }
+        let visible = screen.visibleFrame();
+        let top = desktop_top - frame.origin.y - frame.size.height;
+        let menu_bottom = desktop_top - visible.origin.y - visible.size.height;
+        let monitor = (frame.origin.x.round() as i32, top.round() as i32,
+            frame.size.width.round() as u32, frame.size.height.round() as u32);
+        Some(((mouse.x.round() as i32, menu_bottom.round() as i32, 0, 0), monitor))
+    });
+    *app.state::<AppState>().popover_anchor.lock().unwrap() = anchor;
+}
+
 fn toggle_window(app: &AppHandle, source: &str) {
     let Some(win) = app.get_webview_window("main") else {
         return;
@@ -1629,9 +1736,16 @@ fn toggle_window(app: &AppHandle, source: &str) {
         state.popover_open.store(false, Ordering::Relaxed);
         return;
     }
+    #[cfg(target_os = "macos")]
+    capture_popover_anchor(app);
     safe_move_to_tray(app);
     state.shown_at.store(now_ms(), Ordering::Relaxed);
     raise_popover(&win);
+    // Activating the app can pull the window back to the Space and display
+    // it was last on, which lands the popover on the built-in even though
+    // the icon was clicked on an external menu bar. Place it again now that
+    // the window is up, so the tray we actually clicked wins.
+    safe_move_to_tray(app);
     state.popover_open.store(true, Ordering::Relaxed);
     // JS listens for this — it re-runs the reveal animation and auto-fills
     // the clipboard on shortcut open. It is also the only reliable "you are
@@ -1640,62 +1754,55 @@ fn toggle_window(app: &AppHandle, source: &str) {
     let _ = app.emit("sayknow:open", source);
 }
 
-/// The quit menu we popped off the status item, kept so right-click can
-/// still show it. Only ever touched on the main thread.
-#[cfg(target_os = "macos")]
-struct MainThreadMenu(objc2::rc::Retained<objc2_app_kit::NSMenu>);
-#[cfg(target_os = "macos")]
-unsafe impl Send for MainThreadMenu {}
-#[cfg(target_os = "macos")]
-static TRAY_MENU: Mutex<Option<MainThreadMenu>> = Mutex::new(None);
-
-/// Take the menu off the status item and remember it.
+/// When the status-item button last ran its own left-click action, in
+/// milliseconds since the epoch.
 ///
-/// A menu attached to an NSStatusItem makes AppKit open it on *left* click
-/// and never fire the button's action — which is why the popover never
-/// appeared and Quit did. `set_tray_quit_label` re-attaches a fresh menu
-/// every time React pushes the localized label, so this has to run again
-/// after each of those.
-#[cfg(target_os = "macos")]
-fn detach_tray_menu(tray: &tauri::tray::TrayIcon) {
-    let detached = tray.with_inner_tray_icon(|inner| {
-        let Some(item) = inner.ns_status_item() else {
-            return false;
-        };
-        let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
-            return false;
-        };
-        let Some(menu) = item.menu(mtm) else {
-            return false;
-        };
-        item.setMenu(None);
-        if let Ok(mut slot) = TRAY_MENU.lock() {
-            *slot = Some(MainThreadMenu(menu));
-        }
-        true
-    });
-    match detached {
-        Ok(true) => log::info!("tray: menu detached from status item"),
-        Ok(false) => log::info!("tray: no menu attached to detach"),
-        Err(e) => log::info!("tray: menu detach failed: {e}"),
-    }
+/// AppKit has been seen delivering a secondary-button event to the app right
+/// after a plain left click on the menu-bar button, which pops the quit menu
+/// on top of the popover the same click just opened.
+static TRAY_LEFT_CLICK_AT_MS: AtomicI64 = AtomicI64::new(0);
+
+/// Milliseconds since the epoch, for the echo window above.
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn detach_tray_menu(_tray: &tauri::tray::TrayIcon) {}
+/// A secondary event this soon after a left click is the echo of that same
+/// click, not a new one. Two deliberate clicks are never this close.
+const TRAY_SECONDARY_ECHO_MS: i64 = 400;
+
+/// Whether a secondary-button event should toggle the popover.
+///
+/// The tray has no menu, so a secondary click is just another click — but only
+/// when it is really ours: on our button, and not the echo of the left click
+/// whose action already ran, which would toggle the popover straight back
+/// closed.
+///
+/// Split out so the rule is testable without AppKit: the live handler only
+/// gathers the facts and calls this.
+fn should_toggle_on_secondary(inside_button: bool, ms_since_left_click: i64) -> bool {
+    if !inside_button {
+        return false;
+    }
+    ms_since_left_click > TRAY_SECONDARY_ECHO_MS
+}
+
 
 /// macOS 27 status-item scenes swallow clicks that land on tray-icon's
 /// transparent overlay view. Live log: Enter/Move/Leave fire, mouseDown
 /// never does. Remove that overlay and bind the real NSStatusItem button
-/// so a left click opens the popover. The native menu is detached (see
-/// `detach_tray_menu`); right click pops it ourselves.
+/// so a click opens the popover. No menu is ever attached: quitting lives in
+/// the app's About panel instead.
 #[cfg(target_os = "macos")]
 fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol, Sel};
     use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
-    use objc2_app_kit::{NSEvent, NSEventMask, NSMenu};
+    use objc2_app_kit::{NSEvent, NSEventMask};
     use objc2_foundation::MainThreadMarker;
     use std::ptr::NonNull;
 
@@ -1715,6 +1822,7 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
             fn clicked(&self, _sender: Option<&NSObject>) {
                 let app = &self.ivars().app;
                 log::info!("tray: left click -> popover");
+                TRAY_LEFT_CLICK_AT_MS.store(now_millis(), Ordering::Relaxed);
                 app.state::<AppState>()
                     .tray_positioned
                     .store(true, Ordering::Relaxed);
@@ -1754,26 +1862,44 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
                 button.setAction(Some(Sel::register(c"sayknowTrayClicked:")));
                 std::mem::forget(target.clone());
 
-                let button_for_right = button.clone();
+                // Secondary clicks open the popover too. There is no tray menu
+                // any more: quitting lives in the About panel, and a menu
+                // popping out of the menu bar on a stray secondary event was
+                // the whole complaint.
+                let button_for_secondary = button.clone();
+                let app_for_secondary = app.clone();
                 let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
                     let event = event.as_ref();
                     let window_match = event
                         .window(mtm)
-                        .zip(button_for_right.window())
+                        .zip(button_for_secondary.window())
                         .is_some_and(|(a, b)| a == b);
+
                     if window_match {
-                        // Read the menu fresh: React re-pushes a localized
-                        // one through set_tray_quit_label after launch.
-                        let menu = TRAY_MENU
-                            .lock()
-                            .ok()
-                            .and_then(|slot| slot.as_ref().map(|held| held.0.clone()));
-                        if let Some(menu) = menu {
-                            log::info!("tray: right click -> quit menu");
-                            NSMenu::popUpContextMenu_withEvent_forView(
-                                &menu,
-                                event,
-                                &button_for_right,
+                        // The menu-bar window hosts every status item, so the
+                        // click has to land on our button to be ours.
+                        let local = button_for_secondary
+                            .convertPoint_fromView(event.locationInWindow(), None);
+                        let bounds = button_for_secondary.bounds();
+                        let inside_button = local.x >= bounds.origin.x
+                            && local.y >= bounds.origin.y
+                            && local.x <= bounds.origin.x + bounds.size.width
+                            && local.y <= bounds.origin.y + bounds.size.height;
+                        let since_left =
+                            now_millis() - TRAY_LEFT_CLICK_AT_MS.load(Ordering::Relaxed);
+
+                        if should_toggle_on_secondary(inside_button, since_left) {
+                            log::info!("tray: secondary click -> popover");
+                            TRAY_LEFT_CLICK_AT_MS.store(now_millis(), Ordering::Relaxed);
+                            app_for_secondary
+                                .state::<AppState>()
+                                .tray_positioned
+                                .store(true, Ordering::Relaxed);
+                            toggle_window(&app_for_secondary, "tray-secondary");
+                        } else {
+                            log::info!(
+                                "tray: secondary event ignored \
+                                 (inside={inside_button} since_left={since_left}ms)"
                             );
                         }
                     }
@@ -1789,7 +1915,7 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
         }
     });
     match bound {
-        Ok(true) => log::info!("tray: overlay stripped; left=popover right=menu"),
+        Ok(true) => log::info!("tray: overlay stripped; every click opens the popover"),
         Ok(false) => log::info!("tray: overlay strip skipped"),
         Err(e) => log::info!("tray: overlay strip failed: {e}"),
     }
@@ -1813,9 +1939,18 @@ pub fn run() {
             logical_width: Mutex::new(480.0),
             shown_at: AtomicI64::new(0),
             popover_open: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            popover_anchor: Mutex::new(None),
         })
         .manage(system_metrics::SystemMetricsService::new())
+        .manage(oauth_callback::OAuthCallbackState::default())
+        .manage(cursor_chat::CursorState::default())
         .invoke_handler(tauri::generate_handler![
+            oauth_callback::oauth_callback_start,
+            oauth_callback::oauth_callback_stop,
+            cursor_chat::cursor_chat_send,
+            cursor_chat::cursor_chat_cancel,
+            cursor_chat::cursor_list_models,
             get_api_key,
             set_api_key,
             delete_api_key,
@@ -1827,7 +1962,7 @@ pub fn run() {
             resize_main_window,
             open_settings,
             open_external,
-            set_tray_quit_label,
+            quit_app,
             set_tray_tooltip,
             detect_claude_cli,
             claude_chat,
@@ -1925,22 +2060,15 @@ pub fn run() {
             eprintln!("[sayknow] building tray icon...");
             let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
 
-            // Default to English; React calls `set_tray_quit_label` with the
-            // resolved i18n string once the WebView is up.
-            let quit_item = MenuItem::with_id(app, "quit", "Quit SayKnow Kit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&quit_item])?;
+            // No tray menu at all. macOS pops an attached menu on click, and a
+            // menu appearing out of the menu bar is not what a click on this
+            // icon should ever do — quitting lives in the About panel.
 
             let tray = TrayIconBuilder::with_id("sayknow-tray")
                 .icon(icon)
                 .icon_as_template(true)
                 .tooltip("SayKnow Kit")
-                .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    if event.id == "quit" {
-                        app.exit(0);
-                    }
-                })
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
                     tauri_plugin_positioner::on_tray_event(app, &event);
@@ -1976,7 +2104,6 @@ pub fn run() {
                 })
                 .build(app)?;
             eprintln!("[sayknow] tray icon built: id={:?}", tray.id());
-            detach_tray_menu(&tray);
             strip_tray_click_overlay(app.handle(), &tray);
 
             // Brightness-key observer: keeps the built-in slider in step with
@@ -1984,9 +2111,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             display::start_brightness_sync(app.handle());
 
-            // Hide window when it loses focus — popover behavior.
-            // Skip blur events that fire within ~400ms of show() to avoid
-            // the show-then-immediately-hide race during tray click.
+            // Recheck transient blur instead of dropping it: a discarded blur
+            // may be the only one delivered after the user clicks elsewhere.
             if let Some(win) = app.get_webview_window("main") {
                 let win_clone = win.clone();
                 let app_handle_for_blur = app.handle().clone();
@@ -1999,27 +2125,33 @@ pub fn run() {
                         tauri::WindowEvent::Focused(true) => {
                             reassert_window_transparency(&win_clone);
                         }
+                        // Any size change reshapes the window; a shadow kept
+                        // from the previous rectangle draws a black line along
+                        // the old edge until it is recomputed.
+                        tauri::WindowEvent::Resized(_) => {
+                            refresh_window_shadow(&win_clone);
+                        }
                         tauri::WindowEvent::Focused(false) => {
-                            // Honor user's pin: never hide while pinned.
-                            if app_handle_for_blur
-                                .state::<AppState>()
-                                .pinned
-                                .load(Ordering::Relaxed)
-                            {
-                                return
-                            }
-                            let since = now_ms()
-                                - app_handle_for_blur
-                                    .state::<AppState>()
-                                    .shown_at
-                                    .load(Ordering::Relaxed);
-                            if since > 2000 {
-                                let _ = win_clone.hide();
-                                app_handle_for_blur
-                                    .state::<AppState>()
-                                    .popover_open
-                                    .store(false, Ordering::Relaxed);
-                            }
+                            let app = app_handle_for_blur.clone();
+                            let shown_at = app.state::<AppState>().shown_at.load(Ordering::Relaxed);
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                let handle = app.clone();
+                                let _ = app.run_on_main_thread(move || {
+                                    let Some(win) = handle.get_webview_window("main") else { return };
+                                    let state = handle.state::<AppState>();
+                                    if should_hide_after_blur(
+                                        state.pinned.load(Ordering::Relaxed),
+                                        win.is_focused().unwrap_or(true),
+                                        shown_at,
+                                        state.shown_at.load(Ordering::Relaxed),
+                                    ) {
+                                        if win.hide().is_ok() {
+                                            state.popover_open.store(false, Ordering::Relaxed);
+                                        }
+                                    }
+                                });
+                            });
                         }
                         _ => {}
                     }
@@ -2045,8 +2177,9 @@ pub fn run() {
 #[cfg(test)]
 mod window_placement_tests {
     use super::{
-        is_offscreen, monitor_containing, overlap_area, tray_anchored_origin,
-        tray_fallback_origin, Rect,
+        is_offscreen, monitor_containing, overlap_area, should_hide_after_blur,
+        should_toggle_on_secondary, tray_anchored_origin, tray_fallback_origin, Rect,
+        TRAY_SECONDARY_ECHO_MS,
     };
 
     /// This machine, in logical points — the space macOS actually positions
@@ -2063,6 +2196,15 @@ mod window_placement_tests {
         (x, y, NORMAL_W, 580)
     }
 
+    #[test]
+    fn pointer_anchors_stay_on_external_displays_in_global_points() {
+        let right = (2056, -885, 1080, 1920);
+        let above = (-504, -1080, 2560, 1080);
+        assert_eq!(tray_anchored_origin((3000, -855, 0, 0), 480, right, 8), (2648, -855));
+        assert_eq!(tray_anchored_origin((-400, -1050, 0, 0), 480, above, 8), (-496, -1050));
+        // A width change must use the saved click rather than today's pointer.
+        assert_eq!(tray_anchored_origin((1500, -1050, 0, 0), 800, above, 8), (1100, -1050));
+    }
     #[test]
     fn the_popover_is_centred_under_the_tray_icon() {
         // Icon as reported on the built-in: 34pt wide at x 1010.
@@ -2225,17 +2367,98 @@ mod window_placement_tests {
             toggle.contains("raise_popover("),
             "showing the popover must orderFrontRegardless, not only set_focus"
         );
+        // Built at runtime: a literal here would be found in this very file
+        // and the check would pass on its own text.
+        let pop_up_menu = format!("popUp{}", "ContextMenu_withEvent_forView");
         assert!(
-            source.contains("popUpContextMenu_withEvent_forView"),
-            "right click must pop the quit menu ourselves after detaching it from left click"
+            !source.contains(&pop_up_menu),
+            "no menu may pop out of the menu bar: a click on the icon opens the popover"
+        );
+        let attach_menu = format!(".menu(&{})", "menu)");
+        assert!(
+            !source.contains(&attach_menu),
+            "an attached status-item menu is what made macOS open a menu on click"
         );
         assert!(
-            source.contains("item.setMenu(None)"),
-            "native menu attachment makes macOS 27 treat left click as the quit menu"
+            source.contains("fn quit_app("),
+            "with no tray menu, the app UI must still be able to quit"
         );
-        assert!(
-            source.contains("if since > 2000"),
-            "macOS 27 fires Focused(false) well after 400ms of a tray click"
-        );
+    }
+
+    #[test]
+    fn a_left_click_echo_does_not_reopen_the_popover() {
+        // Observed live: the button's own left-click action ran and a
+        // secondary event for the same click arrived milliseconds later.
+        // Acting on it would toggle the popover straight back closed.
+        assert!(!should_toggle_on_secondary(true, 12));
+        assert!(!should_toggle_on_secondary(true, TRAY_SECONDARY_ECHO_MS));
+    }
+
+    #[test]
+    fn a_real_secondary_click_opens_the_popover() {
+        // Right click is an ordinary click now: it opens the app, never a menu.
+        assert!(should_toggle_on_secondary(true, TRAY_SECONDARY_ECHO_MS + 1));
+        assert!(should_toggle_on_secondary(true, 60_000));
+    }
+
+    #[test]
+    fn a_secondary_click_elsewhere_in_the_menu_bar_is_not_ours() {
+        // The menu-bar window hosts every status item, so the window alone
+        // cannot decide whose click this was.
+        assert!(!should_toggle_on_secondary(false, 10_000));
+    }
+
+    #[test]
+    fn blur_closes_only_the_same_unpinned_unfocused_opening() {
+        assert!(should_hide_after_blur(false, false, 100, 100));
+        assert!(!should_hide_after_blur(true, false, 100, 100));
+        assert!(!should_hide_after_blur(false, true, 100, 100));
+        assert!(!should_hide_after_blur(false, false, 100, 101));
+    }
+}
+
+#[cfg(test)]
+mod credential_account_tests {
+    use super::{named_entry, OAUTH_PROVIDER_ACCOUNTS};
+
+    #[test]
+    fn oauth_accounts_are_accepted_and_anything_else_is_refused() {
+        // The frontend stores each provider's tokens under `oauth_<id>`.
+        // Refusing these is what made a completed browser sign-in fail with
+        // "unknown credential" and silently drop the token.
+        for provider in OAUTH_PROVIDER_ACCOUNTS {
+            assert!(
+                named_entry(&format!("oauth_{provider}")).is_ok(),
+                "oauth_{provider} must be storable"
+            );
+        }
+        assert!(named_entry("deepl_api_key").is_ok());
+    }
+
+    #[test]
+    fn the_account_name_is_not_a_free_form_string() {
+        // It reaches the Keychain, so an unknown suffix stays refused even
+        // with the right prefix.
+        for account in [
+            "oauth_",
+            "oauth_not-a-provider",
+            "oauth_anthropic/../deepl_api_key",
+            "openrouter_api_key",
+            "",
+        ] {
+            assert!(named_entry(account).is_err(), "{account} must be refused");
+        }
+    }
+
+    #[test]
+    fn the_provider_list_matches_the_frontend_registry() {
+        // Drift here means a provider can sign in but never persist.
+        let registry = include_str!("../../src/lib/oauth/registry.ts");
+        for provider in OAUTH_PROVIDER_ACCOUNTS {
+            assert!(
+                registry.contains(&format!("id: \"{provider}\"")),
+                "{provider} is missing from the frontend registry"
+            );
+        }
     }
 }

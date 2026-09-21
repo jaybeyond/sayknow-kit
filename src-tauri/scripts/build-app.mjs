@@ -2,10 +2,15 @@ import { spawnSync } from "node:child_process"
 
 const env = { ...process.env }
 
-// Local macOS builds need a stable Apple Development identity so Accessibility
-// permission survives rebuilds. The release workflow does not use this wrapper:
-// it explicitly requests and verifies an ad-hoc signature until Developer ID
-// and notarization credentials are provisioned.
+// Local macOS builds need a stable signing identity so the Accessibility grant
+// survives rebuilds. An ad-hoc signature's designated requirement is a cdhash,
+// so every rebuild looks like a different app to TCC: the permission silently
+// stops applying and the built-in backlight, which drives Control Center
+// through the Accessibility API, fails while external DDC monitors keep
+// working. That exact failure is what an unsigned local build buys.
+//
+// Either identity gives a stable requirement. Developer ID is preferred
+// because it is also what a distributable build uses.
 if (process.platform === "darwin" && !env.APPLE_SIGNING_IDENTITY) {
   const identities = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], {
     encoding: "utf8",
@@ -14,15 +19,22 @@ if (process.platform === "darwin" && !env.APPLE_SIGNING_IDENTITY) {
   if (identities.status !== 0) {
     throw new Error(`security find-identity failed with exit code ${identities.status}`)
   }
-  const matches = [...identities.stdout.matchAll(/"(Apple Development:[^"]+)"/g)].map((match) => match[1])
-  const unique = [...new Set(matches)]
+  const patterns = [/"(Developer ID Application:[^"]+)"/g, /"(Apple Development:[^"]+)"/g]
+  const unique = patterns
+    .map((pattern) => [...new Set([...identities.stdout.matchAll(pattern)].map((m) => m[1]))])
+    .find((found) => found.length > 0) ?? []
   if (unique.length === 1) {
     env.APPLE_SIGNING_IDENTITY = unique[0]
     console.log(`[build-app] using local signing identity: ${unique[0]}`)
   } else if (env.SAYKNOW_ALLOW_UNSIGNED_LOCAL_BUILD === "1") {
-    console.warn(`[build-app] explicitly building unsigned; found ${unique.length} Apple Development identities`)
+    console.warn(
+      `[build-app] explicitly building unsigned; found ${unique.length} usable identities. ` +
+        "Accessibility permission will have to be granted again after install.",
+    )
   } else {
-    throw new Error(`expected exactly one Apple Development identity, found ${unique.length}`)
+    throw new Error(
+      `expected exactly one Developer ID or Apple Development identity, found ${unique.length}`,
+    )
   }
 }
 

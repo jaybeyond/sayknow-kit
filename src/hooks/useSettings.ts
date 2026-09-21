@@ -7,7 +7,15 @@ import {
   secrets,
   SECRETS_REV_KEY,
 } from "@/lib/secrets"
-import { OPENROUTER_BASE, type LangCode, type ProviderId } from "@/lib/openrouter"
+import {
+  isOAuthProvider,
+  OPENROUTER_BASE,
+  parseOAuthProvider,
+  type LangCode,
+  type ProviderId,
+} from "@/lib/openrouter"
+import { ensureAccessToken } from "@/lib/oauth/registry"
+import { OAUTH_REV_KEY } from "@/lib/oauth/store"
 import type { UILocaleSetting } from "@/i18n"
 
 export type GlossaryTerm = { source: string; target: string }
@@ -93,6 +101,11 @@ export function useSettings() {
   // a refused prompt lands here.
   const [credentialError, setCredentialError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  // Resolved OAuth connection state, tagged with the provider it belongs to so
+  // a stale answer cannot be read as the current provider's.
+  const [oauthState, setOauthState] = useState<{ provider: string; ready: boolean } | null>(null)
+  // Bumped by the store on sign-in/out so the check re-runs.
+  const [oauthRev, setOauthRev] = useState(0)
 
   useEffect(() => {
     secrets
@@ -108,6 +121,30 @@ export function useSettings() {
       .then(setDeeplKey)
       .catch((e) => setCredentialError(String(e)))
   }, [])
+
+  // An OAuth provider is connected when a stored token is live, or can be
+  // refreshed. That is a Keychain read plus possibly a network round-trip, so
+  // it is resolved here rather than derived inline.
+  //
+  // The result is tagged with the provider it was resolved for. Without that,
+  // switching providers would show the previous one's answer until the new
+  // check lands — and clearing it eagerly means a synchronous setState in an
+  // effect, which cascades a render.
+  useEffect(() => {
+    const oauthProvider = parseOAuthProvider(prefs.provider)
+    if (!oauthProvider) return
+    let cancelled = false
+    void ensureAccessToken(oauthProvider)
+      .then((state) => {
+        if (!cancelled) setOauthState({ provider: prefs.provider, ready: state.status === "ready" })
+      })
+      .catch(() => {
+        if (!cancelled) setOauthState({ provider: prefs.provider, ready: false })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [prefs.provider, oauthRev])
 
   useEffect(() => {
     storage.set(PREFS_KEY, prefs)
@@ -125,6 +162,8 @@ export function useSettings() {
         void secrets.get().then(setApiKey)
       } else if (e.key === "sayknow:" + DEEPL_REV_KEY) {
         void namedSecret.get(DEEPL_ACCOUNT).then(setDeeplKey)
+      } else if (e.key === "sayknow:" + OAUTH_REV_KEY) {
+        setOauthRev((n) => n + 1)
       }
     }
     window.addEventListener("storage", onStorage)
@@ -169,13 +208,19 @@ export function useSettings() {
 
   const settings: Settings = { ...prefs, apiKey, deeplKey }
 
-  // OpenRouter always needs a key. OCP / Custom can run in open mode where
-  // /models works unauthenticated — for those we treat a configured baseURL
-  // as "connected" so the user actually reaches TabbedPanel after Connect.
-  const isLoggedIn =
-    prefs.provider === "openrouter"
+  // OAuth providers hold no key and no base URL — a live (or refreshable)
+  // token is the whole signal. OpenRouter always needs a key. OCP / Custom can
+  // run in open mode where /models works unauthenticated, so for those a
+  // configured baseURL counts as connected.
+  const isLoggedIn = isOAuthProvider(prefs.provider)
+    ? oauthState?.provider === prefs.provider && oauthState.ready
+    : prefs.provider === "openrouter"
       ? apiKey.length > 0
       : prefs.baseURL.trim().length > 0
+
+  // Sign-in/out inside *this* window does not raise a `storage` event — that
+  // only reaches other windows — so the OAuth check has to be nudged directly.
+  const refreshOAuth = useCallback(() => setOauthRev((n) => n + 1), [])
 
   return {
     settings,
@@ -184,5 +229,6 @@ export function useSettings() {
     isLoggedIn,
     loaded,
     credentialError,
+    refreshOAuth,
   }
 }

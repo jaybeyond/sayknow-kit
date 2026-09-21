@@ -94,7 +94,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const [compactSplit, setCompactSplit] = useState(50)
   const [stackedSplit, setStackedSplit] = useState(36)
   const splitContainerRef = useRef<HTMLDivElement | null>(null)
-  const { models } = useModels(settings.apiKey, settings.baseURL)
+  const { models } = useModels(settings.apiKey, settings.baseURL, settings.provider)
   // History is listed and restored from the tab strip; this panel only files
   // new entries into it.
   const { add: addHistory } = useHistory()
@@ -255,6 +255,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     chat({
       apiKey: settings.apiKey,
       baseURL: settings.baseURL,
+      provider: settings.provider,
       model: settings.model,
       fallbackModel: settings.fallbackModel,
       messages: buildTranslatePrompt(
@@ -375,6 +376,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       const result = await chat({
         apiKey: settings.apiKey,
         baseURL: settings.baseURL,
+        provider: settings.provider,
         model: settings.model,
         fallbackModel: settings.fallbackModel,
         messages: buildRefinePrompt(

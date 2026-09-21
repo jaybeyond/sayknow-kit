@@ -25,22 +25,13 @@ function MainRoot() {
   const { mode: themeMode, setMode: setThemeMode } = useTheme()
   const { t } = useT(settings.uiLocale)
   const contentRef = useRef<HTMLDivElement>(null)
-  // Read pin state via ref so the listeners don't need to re-bind every toggle.
-  // Written in an effect, not during render: a ref mutation in the render body
-  // is a side effect, and under concurrent rendering it can run for a pass
-  // that never commits.
-  const pinnedRef = useRef(settings.pinned)
-  useEffect(() => {
-    pinnedRef.current = settings.pinned
-  }, [settings.pinned])
 
-  // Push the resolved "Quit SayKnow Kit" label and the tray tooltip to the native
-  // tray whenever the UI locale settles. The Rust side only bakes in a
-  // locale-neutral default; this localizes both for all 8 locales.
+  // Push the tray tooltip whenever the UI locale settles. The Rust side only
+  // bakes in a locale-neutral default; this localizes it for all 8 locales.
+  // There is no tray menu to label: clicking the icon opens the popover, and
+  // quitting lives in the About panel.
   useEffect(() => {
     if (!isTauri() || !loaded) return
-    const label = t("tray.quit")
-    if (label) void invoke("set_tray_quit_label", { label }).catch(() => {})
     const tagline = t("app.tagline")
     if (tagline) {
       void invoke("set_tray_tooltip", { tooltip: `SayKnow Kit — ${tagline}` }).catch(() => {})
@@ -48,60 +39,34 @@ function MainRoot() {
   }, [t, loaded])
 
   useEffect(() => {
-    let playedAt = 0
     function play() {
       const el = contentRef.current
       if (!el) return
-      playedAt = Date.now()
       el.classList.remove("appear")
       void el.offsetWidth
       el.classList.add("appear")
     }
-    function reset() {
-      // When pinned, the window stays visible on blur — don't strip the
-      // `appear` class or the content snaps back to opacity:0 leaving the
-      // user with a blank popover.
-      if (pinnedRef.current) return
-      // A window that never became key can emit blur right after we were
-      // told to show. Stripping `appear` there is what leaves the popover
-      // as an empty shell, so ignore a blur that lands on the heels of a
-      // show.
-      if (Date.now() - playedAt < 600) return
-      contentRef.current?.classList.remove("appear")
-    }
     play()
-    // The native side is the only reliable signal that the popover is being
-    // shown. A borderless window in an Accessory app does not reliably become
-    // key, so the DOM `focus` event may never arrive — `appear` then stays
-    // off and the user is left with the shell and nothing inside it: the
-    // black box. `sayknow:open` fires on every show, focus or not.
+    // Animation is decorative: content stays visible even without show/focus.
+    let disposed = false
     let unlistenOpen: (() => void) | undefined
     if (isTauri()) {
       void import("@tauri-apps/api/event")
         .then(({ listen }) => listen("sayknow:open", () => play()))
         .then((un) => {
-          unlistenOpen = un
+          if (disposed) un()
+          else unlistenOpen = un
         })
         .catch(() => {})
     }
     window.addEventListener("focus", play)
-    window.addEventListener("blur", reset)
     return () => {
+      disposed = true
       unlistenOpen?.()
       window.removeEventListener("focus", play)
-      window.removeEventListener("blur", reset)
     }
   }, [])
 
-  // Defensive: if the user pins after the content has already been hidden by
-  // a previous blur, force the content visible again.
-  useEffect(() => {
-    if (!settings.pinned) return
-    const el = contentRef.current
-    if (!el || el.classList.contains("appear")) return
-    void el.offsetWidth
-    el.classList.add("appear")
-  }, [settings.pinned])
 
   return (
     // Outer shell — always rendered with full bg/border/shadow/blur so the
@@ -132,7 +97,8 @@ function MainRoot() {
 }
 
 function SettingsRoot() {
-  const { settings, update, clearKey, loaded, credentialError } = useSettings()
+  const { settings, update, clearKey, loaded, credentialError, refreshOAuth } =
+    useSettings()
   const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
   // Settings window has no logged-out UI of its own; the only visible signal
@@ -166,6 +132,7 @@ function SettingsRoot() {
       themeMode={themeMode}
       setThemeMode={setThemeMode}
       credentialError={credentialError}
+      refreshOAuth={refreshOAuth}
     />
   )
 }

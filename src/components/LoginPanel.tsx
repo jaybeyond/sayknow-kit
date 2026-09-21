@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ProviderPicker } from "./ProviderPicker"
 import {
+  isOAuthProvider,
   OPENROUTER_BASE,
   PROVIDER_PRESETS,
   verifyKey,
@@ -37,15 +38,32 @@ export function LoginPanel({ update, uiLocale }: Props) {
   const [status, setStatus] = useState<"idle" | "checking" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
 
-  function handleProviderChange(next: { provider: ProviderId; baseURL: string }) {
+  function handleProviderChange(next: {
+    provider: ProviderId
+    baseURL: string
+    model?: string
+  }) {
     setProvider(next.provider)
     setBaseURL(next.baseURL)
+    // An OAuth provider is only selectable once its card holds a live token,
+    // so picking one *is* the login — there is no key to type and nothing to
+    // verify. Commit it now; waiting for Connect would strand the user on
+    // this screen with a sign-in that already succeeded.
+    if (isOAuthProvider(next.provider)) {
+      update({
+        provider: next.provider,
+        baseURL: next.baseURL,
+        apiKey: "",
+        ...(next.model ? { model: next.model } : {}),
+      })
+    }
   }
 
   function handleAutoReachable() {
-    // Auto-login when OCP / a custom endpoint is reachable without a key.
+    // Auto-login when a custom endpoint is reachable without a key.
     // OpenRouter is excluded because it always needs a key.
     if (provider === "openrouter") return
+    if (isOAuthProvider(provider)) return
     if (key.trim()) return // User typed a key — wait for explicit Connect.
     update({
       provider,
@@ -55,8 +73,15 @@ export function LoginPanel({ update, uiLocale }: Props) {
   }
 
   async function handleConnect() {
+    // OAuth providers carry their own credentials; `verifyKey` would probe an
+    // endpoint that has nothing to do with them and never settle.
+    if (isOAuthProvider(provider)) {
+      update({ provider, baseURL: baseURL.trim(), apiKey: "" })
+      return
+    }
     if (!baseURL.trim()) return
-    // OCP / custom may not require a key for `/models`. Only enforce it for OpenRouter.
+    // A custom endpoint may not require a key for `/models`. Only enforce it
+    // for OpenRouter.
     if (provider === "openrouter" && !key.trim()) return
     setStatus("checking")
     setError(null)
@@ -126,6 +151,11 @@ export function LoginPanel({ update, uiLocale }: Props) {
           uiLocale={uiLocale}
           onChange={handleProviderChange}
           onAutoReachable={handleAutoReachable}
+          // Signing out of the selected provider must drop us back to a
+          // disconnected state rather than leave a stale selection behind.
+          onAuthChanged={() => {
+            if (isOAuthProvider(provider)) update({ provider, baseURL, apiKey: "" })
+          }}
           compact
         />
       </div>
@@ -136,7 +166,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
           {t("login.label")}
           {provider !== "openrouter" && (
             <span className="ml-1 text-muted-foreground">
-              ({provider === "ocp" ? "OCP" : "API"})
+              (API)
             </span>
           )}
         </Label>
@@ -144,13 +174,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
           <Input
             id="api-key"
             type={show ? "text" : "password"}
-            placeholder={
-              provider === "openrouter"
-                ? "sk-or-..."
-                : provider === "ocp"
-                  ? "OCP token (or leave empty for open mode)"
-                  : "API key"
-            }
+            placeholder={provider === "openrouter" ? "sk-or-..." : "API key"}
             autoComplete="off"
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -172,9 +196,13 @@ export function LoginPanel({ update, uiLocale }: Props) {
         <Button
           onClick={handleConnect}
           disabled={
-            !baseURL.trim() ||
-            (provider === "openrouter" && !key.trim()) ||
-            status === "checking"
+            // An OAuth provider needs no endpoint and no key, so the only
+            // gate is that a request is not already in flight.
+            isOAuthProvider(provider)
+              ? status === "checking"
+              : !baseURL.trim() ||
+                (provider === "openrouter" && !key.trim()) ||
+                status === "checking"
           }
           className="mt-2 w-full"
           size="sm"
@@ -202,16 +230,6 @@ export function LoginPanel({ update, uiLocale }: Props) {
             className="mt-2 inline-flex w-full items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
           >
             {t("login.getKey")}
-            <ExternalLink className="h-2.5 w-2.5" />
-          </button>
-        )}
-        {provider === "ocp" && (
-          <button
-            type="button"
-            onClick={() => openExternal("https://github.com/dtzp555-max/ocp")}
-            className="mt-2 inline-flex w-full items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-          >
-            github.com/dtzp555-max/ocp
             <ExternalLink className="h-2.5 w-2.5" />
           </button>
         )}

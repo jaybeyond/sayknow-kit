@@ -39,30 +39,11 @@ import {
   type TemperatureMetric,
 } from "@/lib/system-metrics-store"
 import { cn } from "@/lib/utils"
+import { brightnessCommand } from "@/lib/brightness-command"
 
 type Props = {
   settings: Settings
   active: boolean
-}
-
-/**
- * Which Tauri command actually changes the light on this card. The built-in's
- * real backlight on a new-backlight Mac is Control Center; brightness there
- * is only the gamma overlay. "All displays" must follow the same path as
- * each card's own slider, or the laptop panel stays put while the externals
- * move.
- */
-export function brightnessCommand(
-  display: Pick<DisplayRow, "id" | "kind" | "method" | "controllable">,
-):
-  | { command: "set_builtin_backlight" }
-  | { command: "set_display_brightness"; id: string }
-  | null {
-  if (!display.controllable) return null
-  if (display.kind === "builtin" && display.method !== "backlight") {
-    return { command: "set_builtin_backlight" }
-  }
-  return { command: "set_display_brightness", id: display.id }
 }
 
 /**
@@ -150,24 +131,28 @@ export function ToolsPanel({ settings, active }: Props) {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
       await invoke("set_display_brightness", { id, value })
-    } catch {
+    } catch (e) {
+      // Never swallow this silently: a slider that moves while the screen
+      // does not is exactly the bug that hid behind an empty catch.
+      console.error("set_display_brightness failed", id, value, e)
       void scanDisplays(true)
     }
   }, [])
 
+  // The built-in panel's real backlight, through Control Center. The first
+  // attempt opens macOS Accessibility settings if the grant is missing.
   const applyBacklight = useCallback(async (value: number) => {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
       await invoke<number>("set_builtin_backlight", { value })
-      // Do not force a DDC rescan on every backlight tick. Mute hubs hang
-      // list_displays for 10s and that is what made the app look crashed.
-    } catch {
-      // The first attempt opens macOS Accessibility settings. Once SayKnow
-      // Kit is allowed, the next drag controls the real backlight.
+    } catch (e) {
+      console.error("set_builtin_backlight failed", value, e)
     }
   }, [])
 
-  // Drive each panel the same way its own slider does.
+  // Built-in and external panels are driven by different mechanisms and
+  // never share one: DDC for externals, the Control Center backlight for the
+  // built-in. brightnessCommand is the single place that decides.
   const applyDisplay = useCallback(
     async (display: DisplayRow, value: number) => {
       const target = brightnessCommand(display)
@@ -282,9 +267,12 @@ export function ToolsPanel({ settings, active }: Props) {
                 key={d.id}
                 display={d}
                 t={t}
-                onCommit={(v) => void apply(d.id, v)}
+                // Each card drives its panel the way brightnessCommand says,
+                // exactly like "All displays" does. Sending the built-in id to
+                // set_display_brightness handed it to the DDC worker, which
+                // has no built-in panel, so the built-in slider did nothing.
+                onCommit={(v) => void applyDisplay(d, v)}
                 onPower={(on) => togglePower(d.id, on)}
-                onBacklight={(v) => void applyBacklight(v)}
               />
             ))}
           </div>
@@ -472,30 +460,26 @@ function DisplayControl({
   t,
   onCommit,
   onPower,
-  onBacklight,
 }: {
   display: DisplayRow
   t: (k: string) => string
   onCommit: (v: number) => void
   onPower: (on: boolean) => Promise<boolean>
-  onBacklight: (v: number) => void
 }) {
-  const [v, setV] = useState(display.brightness ?? 100)
+  // The built-in slider drives the real backlight, so it shows the system
+  // level (what the keys change), not the gamma table. Externals show DDC.
+  const level = (row: DisplayRow) =>
+    row.kind === "builtin" ? (row.system_level ?? row.brightness) : row.brightness
+  const [v, setV] = useState(level(display) ?? 100)
   const [busy, setBusy] = useState(false)
 
-  const [backlightV, setBacklightV] = useState(display.system_level ?? 100)
   // Hardware value wins when it changes; the local value is only the
   // optimistic drag preview. Adopted during render rather than in an effect.
-  const [seenBrightness, setSeenBrightness] = useState(display.brightness)
-  if (display.brightness !== seenBrightness) {
-    setSeenBrightness(display.brightness)
-    if (display.brightness !== null) setV(display.brightness)
-  }
-
-  const [seenSystemLevel, setSeenSystemLevel] = useState(display.system_level)
-  if (display.system_level !== seenSystemLevel) {
-    setSeenSystemLevel(display.system_level)
-    if (display.system_level !== null) setBacklightV(display.system_level)
+  const [seenLevel, setSeenLevel] = useState(level(display))
+  if (level(display) !== seenLevel) {
+    setSeenLevel(level(display))
+    const current = level(display)
+    if (current !== null && current !== undefined) setV(current)
   }
 
   const [isOn, setIsOn] = useState(display.power !== false)
@@ -535,7 +519,7 @@ function DisplayControl({
             {t("tools.brightness.main")}
           </span>
         )}
-        {display.method === "gamma" && (
+        {display.kind === "external" && display.method === "gamma" && (
           <span className="rounded bg-muted px-1 py-px text-[9px] text-muted-foreground">
             {t("tools.brightness.softwareDim")}
           </span>
@@ -583,27 +567,11 @@ function DisplayControl({
           </div>
         )}
       </div>
-      {display.kind === "builtin" && display.method === "gamma" && display.system_level !== null && (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="shrink-0 text-[9px] text-muted-foreground">
-            {t("tools.brightness.backlight")}
-          </span>
-          <Slider
-            aria-label={`${display.name} ${t("tools.brightness.backlight")}`}
-            value={[backlightV]}
-            min={0}
-            onValueChange={([n]) => setBacklightV(n)}
-            onValueCommit={([n]) => onBacklight(n)}
-            className="flex-1"
-          />
-          <span className="w-7 shrink-0 text-right tabular-nums text-[9px] text-muted-foreground">
-            {backlightV}%
-          </span>
-        </div>
-      )}
+      {/* One slider per panel. For the built-in it drives the real backlight
+          through Control Center — the same control the F1/F2 keys move. */}
       {display.controllable ? (
         <Slider
-          aria-label={`${display.name} ${display.method === "gamma" ? t("tools.brightness.softwareDim") : t("tools.brightness.title")}`}
+          aria-label={`${display.name} ${display.kind === "external" && display.method === "gamma" ? t("tools.brightness.softwareDim") : t("tools.brightness.title")}`}
           value={[v]}
           min={0}
           onValueChange={([n]) => setV(n)}

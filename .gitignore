@@ -36,3 +36,6 @@ data/
 .env
 .env.local
 .env.*.local
+
+# SKC agent session state — local only
+.skc/
