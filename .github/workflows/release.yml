@@ -372,8 +372,15 @@ jobs:
           test -n "$dmg"
           mount="$RUNNER_TEMP/sayknow-dmg"
           mkdir -p "$mount"
+          detach_dmg() {
+            for _ in 1 2 3 4 5; do
+              hdiutil detach "$mount" && return 0
+              sleep 2
+            done
+            hdiutil detach -force "$mount"
+          }
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          trap 'hdiutil detach "$mount"' EXIT
+          trap detach_dmg EXIT
           app="$mount/SayKnow Kit.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" = true
           test "$(/usr/libexec/PlistBuddy -c 'Print :NSQuitAlwaysKeepsWindows' "$app/Contents/Info.plist")" = false
