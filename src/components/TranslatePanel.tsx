@@ -14,6 +14,7 @@ import {
   CornerDownLeft,
   Loader2,
   Sparkles,
+  Eraser,
   X,
 } from "lucide-react"
 import { listen } from "@tauri-apps/api/event"
@@ -344,6 +345,18 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       lastTranslatedRef.current = ""
       abortRef.current?.abort()
     }
+  }
+  function clearSession() {
+    abortRef.current?.abort()
+    rewriteAbort.current?.abort()
+    setInput("")
+    setOutput("")
+    setError(null)
+    setRefineText("")
+    setRewriteCards([])
+    setTranslating(false)
+    setRefining(false)
+    lastTranslatedRef.current = ""
   }
 
   function forceTranslate() {
@@ -865,6 +878,17 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
                 </Button>
               </PopoverContent>
             </Popover>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 active:scale-[0.98]"
+              onClick={clearSession}
+              disabled={!input && !output && rewriteCards.length === 0 && !error}
+              aria-label={t("session.clear")}
+              title={t("session.clear")}
+            >
+              <Eraser className="h-3.5 w-3.5" />
+            </Button>
             <Button
               size="icon"
               variant="ghost"
