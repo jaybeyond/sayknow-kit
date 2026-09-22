@@ -779,7 +779,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
                   <Button
                     key={p.id}
                     size="sm"
-                    variant={on ? "default" : "ghost"}
+                    variant={on ? "secondary" : "ghost"}
                     className="h-6 rounded-full px-2.5 text-[11px]"
                     onClick={() => toggleRewritePreset(p.id)}
                   >
@@ -789,7 +789,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               })}
               <Button
                 size="sm"
-                className="h-7 rounded-full px-3 text-[11px]"
+                className="ml-auto h-7 rounded-full px-3 text-[11px]"
                 disabled={input.trim().length < 2 || rewriteSelected.length === 0 || rewriteCards.some((c) => c.loading)}
                 onClick={() => void runRewrite()}
               >
@@ -834,50 +834,52 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             </>
           )}
           <div className="ml-auto flex items-center gap-0.5">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  disabled={!output || refining}
-                  aria-label={t("freePrompt")}
+            {!rewriteMode && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    disabled={!output || refining}
+                    aria-label={t("freePrompt")}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  className="w-72 p-2.5"
+                  sideOffset={6}
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                className="w-72 p-2.5"
-                sideOffset={6}
-              >
-                <Label className="text-[11px]">{t("freePrompt")}</Label>
-                <Textarea
-                  value={refineText}
-                  onChange={(e) => setRefineText(e.target.value)}
-                  placeholder={t("freePrompt.placeholder")}
-                  className="mt-1.5 min-h-[60px] text-xs"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault()
-                      handleFreeRefine()
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  className="mt-2 w-full text-xs"
-                  onClick={handleFreeRefine}
-                  disabled={!refineText.trim() || refining}
-                >
-                  {refining ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    t("freePrompt.apply")
-                  )}
-                </Button>
-              </PopoverContent>
-            </Popover>
+                  <Label className="text-[11px]">{t("freePrompt")}</Label>
+                  <Textarea
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                    placeholder={t("freePrompt.placeholder")}
+                    className="mt-1.5 min-h-[60px] text-xs"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault()
+                        handleFreeRefine()
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="mt-2 w-full text-xs"
+                    onClick={handleFreeRefine}
+                    disabled={!refineText.trim() || refining}
+                  >
+                    {refining ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      t("freePrompt.apply")
+                    )}
+                  </Button>
+                </PopoverContent>
+              </Popover>
+            )}
             <Button
               size="icon"
               variant="ghost"
@@ -889,20 +891,22 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             >
               <Eraser className="h-3.5 w-3.5" />
             </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7"
-              onClick={handleCopy}
-              disabled={!output}
-              aria-label={t("copy")}
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-            </Button>
+            {!rewriteMode && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={handleCopy}
+                disabled={!output}
+                aria-label={t("copy")}
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-500" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            )}
           </div>
         </div>
       </div>
