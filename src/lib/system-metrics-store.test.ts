@@ -23,7 +23,7 @@ import type { MetricsSnapshot } from "./system-metrics-store"
 const snapshot: MetricsSnapshot = {
   schema_version: 1,
   sampled_at_ms: 1_000,
-  cpu: { state: "available", percent: 42.6, sample_start_ms: 500, sample_end_ms: 1_000 },
+  cpu: { state: "available", percent: 42.6, system_percent: 12.1, user_percent: 30.5, idle_percent: 57.4, sample_start_ms: 500, sample_end_ms: 1_000 },
   memory: {
     state: "available",
     total_bytes: 16 * 1024 ** 3,
@@ -39,6 +39,8 @@ const snapshot: MetricsSnapshot = {
     sampled_at_ms: 1_000,
   },
   cpu_package_temperature: { state: "unavailable", reason: "no_verified_package_sensor" },
+  battery: { state: "available", percent: 82, is_charging: true, adapter_name: "140W", max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
+  network: { state: "available", interface: "en0", ip_address: "192.0.2.1", upload_bytes_per_sec: 50700, download_bytes_per_sec: 1700 },
 }
 
 function deferred<T>() {
@@ -73,6 +75,8 @@ describe("system metrics formatting", () => {
     expect(formatBytes(0)).toBe("0 B")
     expect(formatBytes(1024)).toBe("1.0 KB")
     expect(formatBytes(1024 ** 3)).toBe("1.0 GB")
+    expect(formatBytes(48 * 1024 ** 3)).toBe("48.0 GB")
+    expect(formatBytes(994_610_000_000, 1000)).toBe("994.6 GB")
     expect(formatBytes(-1)).toBe("—")
     expect(formatBytes(Number.NaN)).toBe("—")
   })

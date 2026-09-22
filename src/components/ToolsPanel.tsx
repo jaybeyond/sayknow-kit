@@ -6,13 +6,14 @@ import {
   RefreshCw,
   ShieldAlert,
   Sun,
-  Wrench,
 } from "lucide-react"
 import { UsagePanel } from "@/components/UsagePanel"
+import { MolePanel } from "@/components/MolePanel"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
+import { refreshScans } from "@/lib/mole-store"
 import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
@@ -34,7 +35,10 @@ import {
   subscribe as subscribeMetrics,
   formatBytes,
   formatPercent,
+  formatRate,
+  type BatteryMetric,
   type CpuMetric,
+  type NetworkMetric,
   type ResourceMetric,
   type TemperatureMetric,
 } from "@/lib/system-metrics-store"
@@ -45,6 +49,8 @@ type Props = {
   settings: Settings
   active: boolean
 }
+
+type ToolTab = "status" | "display" | "usage" | "mole"
 
 /**
  * Tools that talk to the machine rather than to a translation provider. The
@@ -59,11 +65,19 @@ export function ToolsPanel({ settings, active }: Props) {
     getSnapshot,
   )
   const metrics = useSyncExternalStore(subscribeMetrics, getMetricsSnapshot)
+  const [tab, setTab] = useState<ToolTab>("status")
+  const [refreshing, setRefreshing] = useState(false)
 
-  const refreshAll = useCallback(() => {
-    void scanDisplays(true)
-    void refreshMetrics()
-  }, [])
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      const jobs: Promise<unknown>[] = [scanDisplays(true), refreshMetrics()]
+      if (tab === "mole") jobs.push(refreshScans())
+      await Promise.all(jobs)
+    } finally {
+      setRefreshing(false)
+    }
+  }, [tab])
 
   // DDC reads take tens of ms per display, so only scan while visible. The
   // effect is a pure trigger; state lands in the store.
@@ -205,88 +219,145 @@ export function ToolsPanel({ settings, active }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium">
-          <Wrench className="h-3.5 w-3.5" />
-          {t("tools.heading")}
+      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
+        <div
+          aria-label={t("tools.tabs.label")}
+          className="grid min-w-0 flex-1 grid-cols-4 gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
+          role="tablist"
+        >
+          <ToolTabButton
+            active={tab === "status"}
+            label={t("tools.tabs.status")}
+            onClick={() => setTab("status")}
+          />
+          <ToolTabButton
+            active={tab === "display"}
+            label={t("tools.tabs.display")}
+            onClick={() => setTab("display")}
+          />
+          <ToolTabButton
+            active={tab === "usage"}
+            label={t("tools.tabs.usage")}
+            onClick={() => setTab("usage")}
+          />
+          <ToolTabButton
+            active={tab === "mole"}
+            label={t("tools.tabs.mole")}
+            onClick={() => setTab("mole")}
+          />
         </div>
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[11px]"
+          className="h-7 w-7 shrink-0 px-0 active:scale-[0.98]"
+          disabled={refreshing}
           onClick={() => void refreshAll()}
           title={t("tools.refresh")}
         >
-          <RefreshCw className="h-3 w-3" />
+          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
         </Button>
       </div>
 
-      <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
-        <SystemMetricsSection state={metrics} t={t} />
-        <section className="rounded-lg border bg-muted/30 p-2.5">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium">
-            <Sun className="h-3.5 w-3.5" />
-            {t("tools.brightness.title")}
-          </div>
-          <p className="mb-2 text-[10px] leading-relaxed text-muted-foreground">
-            {t("tools.brightness.body")}
-          </p>
+      <div className="flex-1 overflow-y-auto p-2.5">
+        {tab === "status" && <SystemMetricsSection state={metrics} t={t} />}
 
-          {error && (
-            <p className="mb-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] text-destructive">
-              {error}
-            </p>
-          )}
+        {tab === "display" && (
+          <div className="space-y-2">
+            <section className="rounded-lg border bg-muted/30 p-2.5">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium">
+                <Sun className="h-3.5 w-3.5" />
+                {t("tools.brightness.title")}
+              </div>
+              <p className="mb-2 text-[10px] leading-relaxed text-muted-foreground">
+                {t("tools.brightness.body")}
+              </p>
 
-          <AccessibilityNotice
-            state={accessibility}
-            needed={displays.some(
-              (d) => d.kind === "builtin" && d.method !== "backlight",
-            )}
-            t={t}
-          />
+              {error && (
+                <p className="mb-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] text-destructive">
+                  {error}
+                </p>
+              )}
 
-          {loaded && displays.length === 0 && (
-            <p className="py-4 text-center text-[11px] text-muted-foreground">
-              {t("tools.brightness.none")}
-            </p>
-          )}
-
-          {displays.length > 0 && (
-            <AllSlider
-              label={t("tools.brightness.all")}
-              onCommit={(v) => void applyAll(v)}
-              disabled={displays.filter((d) => d.controllable).length < 2}
-              hint={t("tools.brightness.allHint")}
-            />
-          )}
-
-          <div className="mt-1 space-y-1.5">
-            {displays.map((d) => (
-              <DisplayControl
-                key={d.id}
-                display={d}
+              <AccessibilityNotice
+                state={accessibility}
+                needed={displays.some(
+                  (d) => d.kind === "builtin" && d.method !== "backlight",
+                )}
                 t={t}
-                // Each card drives its panel the way brightnessCommand says,
-                // exactly like "All displays" does. Sending the built-in id to
-                // set_display_brightness handed it to the DDC worker, which
-                // has no built-in panel, so the built-in slider did nothing.
-                onCommit={(v) => void applyDisplay(d, v)}
-                onPower={(on) => togglePower(d.id, on)}
               />
-            ))}
-          </div>
-        </section>
 
-        {loaded && externalCount > 0 && (
-          <p className="px-0.5 text-[10px] leading-relaxed text-muted-foreground">
-            {t("tools.brightness.ddcNote")}
-          </p>
+              {loaded && displays.length === 0 && (
+                <p className="py-4 text-center text-[11px] text-muted-foreground">
+                  {t("tools.brightness.none")}
+                </p>
+              )}
+
+              {displays.length > 0 && (
+                <AllSlider
+                  label={t("tools.brightness.all")}
+                  onCommit={(v) => void applyAll(v)}
+                  disabled={displays.filter((d) => d.controllable).length < 2}
+                  hint={t("tools.brightness.allHint")}
+                />
+              )}
+
+              <div className="mt-1 space-y-1.5">
+                {displays.map((d) => (
+                  <DisplayControl
+                    key={d.id}
+                    display={d}
+                    t={t}
+                    // Each card drives its panel the way brightnessCommand says,
+                    // exactly like "All displays" does. Sending the built-in id to
+                    // set_display_brightness handed it to the DDC worker, which
+                    // has no built-in panel, so the built-in slider did nothing.
+                    onCommit={(v) => void applyDisplay(d, v)}
+                    onPower={(on) => togglePower(d.id, on)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {loaded && externalCount > 0 && (
+              <p className="px-0.5 text-[10px] leading-relaxed text-muted-foreground">
+                {t("tools.brightness.ddcNote")}
+              </p>
+            )}
+          </div>
         )}
 
-        <UsagePanel settings={settings} active={active} />
+        {tab === "usage" && <UsagePanel settings={settings} active={active} />}
+        {tab === "mole" && <MolePanel t={t} active />}
       </div>
     </div>
+  )
+}
+
+
+function ToolTabButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      aria-selected={active}
+      className={cn(
+        "h-7 rounded-md px-1.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98]",
+        active
+          ? "bg-background text-foreground shadow-sm ring-1 ring-black/10 dark:ring-white/15"
+          : "text-foreground/70 hover:bg-background/60 hover:text-foreground",
+      )}
+      onClick={onClick}
+      role="tab"
+      type="button"
+    >
+      {label}
+    </button>
   )
 }
 
@@ -360,26 +431,92 @@ function AccessibilityNotice({
   )
 }
 
+function metricLine(label: string, value: string) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 text-[11px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+function cpuLines(cpu: CpuMetric, label: (kind: string) => string): [string, string][] {
+  if (cpu.state === "available") {
+    const lines: [string, string][] = [[label("cpu"), formatPercent(cpu.percent)]]
+    if (cpu.system_percent != null) lines.push([label("cpuSystem"), formatPercent(cpu.system_percent)])
+    if (cpu.user_percent != null) lines.push([label("cpuUser"), formatPercent(cpu.user_percent)])
+    if (cpu.idle_percent != null) lines.push([label("cpuIdle"), formatPercent(cpu.idle_percent)])
+    return lines
+  }
+  if (cpu.state === "warming_up") return [[label("cpu"), label("warming")]]
+  return [[label("cpu"), label("unavailable")]]
+}
+
+function resourceLines(kind: string, metric: ResourceMetric, label: (kind: string) => string): [string, string][] {
+  if (metric.state === "available") {
+    const base = kind === "storage" ? 1000 : 1024
+    return [[label(kind), `${formatBytes(metric.used_bytes, base)} / ${formatBytes(metric.total_bytes, base)}`]]
+  }
+  return [[label(kind), label("unavailable")]]
+}
+
+function temperatureLines(metric: TemperatureMetric, label: (kind: string) => string): [string, string][] {
+  if (metric.state === "available") return [[label("temperature"), `${metric.celsius.toFixed(1)} °C`]]
+  if (metric.reason === "no_verified_package_sensor") return [[label("temperature"), label("temperatureUnavailable")]]
+  return [[label("temperature"), label("unavailable")]]
+}
+
+function batteryLines(metric: BatteryMetric, label: (kind: string) => string): [string, string][] {
+  if (metric.state === "not_installed") return [[label("battery"), label("notInstalled")]]
+  if (metric.state === "unavailable") return [[label("battery"), label("unavailable")]]
+  const powerSource = metric.adapter_name
+    ? metric.is_charging
+      ? metric.adapter_name
+      : `${label("notCharging")} · ${metric.adapter_name}`
+    : metric.is_charging
+      ? label("charging")
+      : label("notCharging")
+  const lines: [string, string][] = [
+    [label("battery"), formatPercent(metric.percent)],
+    [label("powerSource"), powerSource],
+  ]
+  if (metric.max_capacity_percent != null) lines.push([label("maxCapacity"), formatPercent(metric.max_capacity_percent)])
+  if (metric.cycle_count != null) lines.push([label("cycleCount"), String(metric.cycle_count)])
+  if (metric.temperature_celsius != null) lines.push([label("batteryTemperature"), `${metric.temperature_celsius.toFixed(1)} °C`])
+  return lines
+}
+
+function networkLines(metric: NetworkMetric, label: (kind: string) => string): [string, string][] {
+  if (metric.state === "warming_up") return [[label("network"), label("warming")]]
+  if (metric.state === "unavailable") return [[label("network"), label("unavailable")]]
+  return [
+    [label("network"), metric.interface],
+    [label("localIp"), metric.ip_address || "—"],
+    [label("upload"), formatRate(metric.upload_bytes_per_sec)],
+    [label("download"), formatRate(metric.download_bytes_per_sec)],
+  ]
+}
+
 function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetricsSnapshot>; t: (key: string) => string }) {
   const age = state.age_ms
   const stale = state.status === "stale" || state.status === "stale_with_error" || (age != null && age > 6000)
   const label = (kind: string) => t(`tools.metrics.${kind}`)
-  const value = (metric: CpuMetric | ResourceMetric | TemperatureMetric): string => {
-    if (metric.state === "available") {
-      if ("percent" in metric) return formatPercent(metric.percent)
-      if ("celsius" in metric) return `${metric.celsius.toFixed(1)} °C`
-      return `${formatBytes(metric.used_bytes)} / ${formatBytes(metric.total_bytes)}`
-    }
-    if (metric.state === "warming_up") return label("warming")
-    if (metric.reason === "no_verified_package_sensor") return label("temperatureUnavailable")
-    return label("unavailable")
-  }
   const snapshot = state.snapshot
   const seconds = age == null ? null : label("seconds").replace("{count}", `${Math.floor(age / 1000)}`)
   const statusParts = snapshot
     ? [stale ? label("stale") : "", state.refreshing ? label("refreshing") : ""].filter(Boolean)
     : [label(state.status === "initial_error" ? "error" : "loading")]
   const statusText = statusParts.join(" · ")
+  const cards = snapshot
+    ? [
+        cpuLines(snapshot.cpu, label),
+        resourceLines("memory", snapshot.memory, label),
+        resourceLines("storage", snapshot.storage, label),
+        temperatureLines(snapshot.cpu_package_temperature, label),
+        batteryLines(snapshot.battery, label),
+        networkLines(snapshot.network, label),
+      ]
+    : []
   return (
     <section
       aria-label={label("title")}
@@ -396,11 +533,12 @@ function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetric
           {label(state.status === "initial_error" ? "error" : "loading")}
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-1.5 text-xs">
-          <div><span className="text-muted-foreground">{label("cpu")}</span><div>{value(snapshot.cpu)}</div></div>
-          <div><span className="text-muted-foreground">{label("memory")}</span><div>{value(snapshot.memory)}</div></div>
-          <div><span className="text-muted-foreground">{label("storage")}</span><div>{value(snapshot.storage)}</div></div>
-          <div><span className="text-muted-foreground">{label("temperature")}</span><div>{value(snapshot.cpu_package_temperature)}</div></div>
+        <div className="grid grid-cols-1 gap-1.5 text-xs">
+          {cards.map((lines) => (
+            <div key={lines[0][0]} className="rounded-md bg-background/60 px-2 py-1.5">
+              {lines.map(([k, v]) => metricLine(k, v))}
+            </div>
+          ))}
         </div>
       )}
       {state.error && (

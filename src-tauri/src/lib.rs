@@ -3,6 +3,10 @@ mod agent_usage;
 mod accessibility_backlight;
 #[cfg(target_os = "macos")]
 mod thermal_macos;
+#[cfg(target_os = "macos")]
+mod battery_macos;
+mod mole;
+mod network_metrics;
 mod display;
 mod clipboard;
 mod oauth_callback;
@@ -493,8 +497,13 @@ fn hide_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_pinned(state: tauri::State<AppState>, pinned: bool) {
-    state.pinned.store(pinned, Ordering::Relaxed);
+fn set_pinned(app: AppHandle, pinned: bool) {
+    app.state::<AppState>()
+        .pinned
+        .store(pinned, Ordering::Relaxed);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_always_on_top(pinned);
+    }
 }
 
 #[tauri::command]
@@ -621,7 +630,7 @@ fn claude_chat(
 /// `~/.zprofile` and the Homebrew `shellenv` block. `/bin/sh -lc` runs
 /// bash, which silently ignores zsh profile files and ends up with a
 /// stripped-down PATH that doesn't see Homebrew.
-fn which_via_shell(name: &str) -> Option<PathBuf> {
+pub(crate) fn which_via_shell(name: &str) -> Option<PathBuf> {
     let common = [
         format!("/opt/homebrew/bin/{}", name),
         format!("/opt/homebrew/sbin/{}", name),
@@ -770,7 +779,7 @@ fn port_from_url(url: &str) -> Option<u16> {
 /// a stripped-down PATH that's missing Homebrew, nvm, volta, asdf, etc., so
 /// we ask the user's own shell what its PATH actually is and prepend that
 /// to OCP's install pipeline.
-fn login_shell_path() -> Option<String> {
+pub(crate) fn login_shell_path() -> Option<String> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -1994,6 +2003,8 @@ pub fn run() {
             display::sync_builtin_brightness,
             agent_usage::agent_usage,
             system_metrics::get_system_metrics,
+            mole::detect_mole,
+            mole::run_mole_action,
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Clipboard as ClipboardIcon,
   Languages as TranslateIcon,
@@ -23,6 +23,8 @@ import type { ThemeMode } from "@/hooks/useTheme"
 import { useT } from "@/i18n"
 import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
+import { invoke } from "@tauri-apps/api/core"
+import { isTauri } from "@/lib/runtime"
 
 type Tab = "translate" | "chat" | "clipboard" | "tools"
 const TAB_KEY = "active-tab"
@@ -53,6 +55,17 @@ export function TabbedPanel(props: Props) {
     togglePin: toggleHistoryPin,
     clear: clearHistory,
   } = useHistory()
+  useEffect(() => {
+    if (!isTauri()) return
+    void invoke("set_pinned", { pinned: props.settings.pinned }).catch(() => {})
+  }, [props.settings.pinned])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const [width, height] =
+      props.settings.windowMode === "compact" ? [720, 240] : [480, 580]
+    void invoke("resize_main_window", { width, height }).catch(() => {})
+  }, [props.settings.windowMode])
 
   function selectTab(next: Tab) {
     setTab(next)

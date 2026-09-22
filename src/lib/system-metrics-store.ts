@@ -1,7 +1,7 @@
 import { isTauri } from "./runtime"
 
 export type CpuMetric =
-  | { state: "available"; percent: number; sample_start_ms: number; sample_end_ms: number }
+  | { state: "available"; percent: number; system_percent: number | null; user_percent: number | null; idle_percent: number | null; sample_start_ms: number; sample_end_ms: number }
   | { state: "warming_up"; reason: string }
   | { state: "unavailable"; reason: string }
 export type ResourceMetric =
@@ -11,6 +11,14 @@ export type TemperatureProvenance = "verified_cpu_package" | "apple_soc_die_max"
 export type TemperatureMetric =
   | { state: "available"; celsius: number; sampled_at_ms: number; provenance: TemperatureProvenance; adapter_id: string }
   | { state: "unavailable"; reason: string }
+export type BatteryMetric =
+  | { state: "available"; percent: number; is_charging: boolean; adapter_name: string | null; max_capacity_percent: number | null; cycle_count: number | null; temperature_celsius: number | null }
+  | { state: "not_installed" }
+  | { state: "unavailable"; reason: string }
+export type NetworkMetric =
+  | { state: "available"; interface: string; ip_address: string | null; upload_bytes_per_sec: number; download_bytes_per_sec: number }
+  | { state: "warming_up"; reason: string }
+  | { state: "unavailable"; reason: string }
 export type MetricsSnapshot = {
   schema_version: 1
   sampled_at_ms: number
@@ -18,6 +26,8 @@ export type MetricsSnapshot = {
   memory: ResourceMetric
   storage: ResourceMetric
   cpu_package_temperature: TemperatureMetric
+  battery: BatteryMetric
+  network: NetworkMetric
 }
 export type SystemMetricsState = {
   status: "initial_loading" | "ready" | "stale" | "stale_with_error" | "initial_error"
@@ -33,16 +43,21 @@ export function formatPercent(percent: number): string {
   return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? `${Math.round(percent)}%` : "—"
 }
 
-export function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number, base: 1000 | 1024 = 1024): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—"
   const units = ["B", "KB", "MB", "GB", "TB"]
   let value = bytes
   let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
+  while (value >= base && index < units.length - 1) {
+    value /= base
     index++
   }
-  return `${value >= 100 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`
+  const roundWhole = base === 1000 ? value >= 1000 : value >= 100
+  return `${roundWhole || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`
+}
+
+export function formatRate(bytesPerSec: number): string {
+  return `${formatBytes(bytesPerSec, 1000)}/s`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,10 +92,13 @@ function decodeCpu(value: unknown): CpuMetric {
   if (value.state === "warming_up" || value.state === "unavailable") return reasonMetric(value, value.state)
   if (
     value.state !== "available" ||
-    !exactKeys(value, ["state", "percent", "sample_start_ms", "sample_end_ms"]) ||
+    !exactKeys(value, ["state", "percent", "system_percent", "user_percent", "idle_percent", "sample_start_ms", "sample_end_ms"]) ||
     !finiteNumber(value.percent) ||
     value.percent < 0 ||
     value.percent > 100 ||
+    !optionalPercent(value.system_percent) ||
+    !optionalPercent(value.user_percent) ||
+    !optionalPercent(value.idle_percent) ||
     !safeCount(value.sample_start_ms) ||
     !safeCount(value.sample_end_ms) ||
     value.sample_end_ms <= value.sample_start_ms
@@ -90,8 +108,83 @@ function decodeCpu(value: unknown): CpuMetric {
   return {
     state: "available",
     percent: value.percent,
+    system_percent: asOptionalNumber(value.system_percent),
+    user_percent: asOptionalNumber(value.user_percent),
+    idle_percent: asOptionalNumber(value.idle_percent),
     sample_start_ms: value.sample_start_ms,
     sample_end_ms: value.sample_end_ms,
+  }
+}
+
+function optionalPercent(value: unknown): boolean {
+  return value === null || (finiteNumber(value) && value >= 0 && value <= 100)
+}
+
+function asOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" ? value : null
+}
+
+
+function optionalCount(value: unknown): boolean {
+  return value === null || safeCount(value)
+}
+
+function optionalCelsius(value: unknown): boolean {
+  return value === null || (finiteNumber(value) && value >= -40 && value <= 90)
+}
+
+function decodeBattery(value: unknown): BatteryMetric {
+  if (!isRecord(value) || typeof value.state !== "string") throw new Error("invalid battery metric")
+  if (value.state === "unavailable") return reasonMetric(value, "unavailable")
+  if (value.state === "not_installed") {
+    if (!exactKeys(value, ["state"])) throw new Error("invalid not_installed battery metric")
+    return { state: "not_installed" }
+  }
+  if (
+    value.state !== "available" ||
+    !exactKeys(value, ["state", "percent", "is_charging", "adapter_name", "max_capacity_percent", "cycle_count", "temperature_celsius"]) ||
+    !finiteNumber(value.percent) ||
+    value.percent < 0 ||
+    value.percent > 100 ||
+    typeof value.is_charging !== "boolean" ||
+    !(value.adapter_name === null || typeof value.adapter_name === "string") ||
+    !optionalPercent(value.max_capacity_percent) ||
+    !optionalCount(value.cycle_count) ||
+    !optionalCelsius(value.temperature_celsius)
+  ) {
+    throw new Error("invalid available battery metric")
+  }
+  return {
+    state: "available",
+    percent: value.percent,
+    is_charging: value.is_charging,
+    adapter_name: typeof value.adapter_name === "string" ? value.adapter_name : null,
+    max_capacity_percent: asOptionalNumber(value.max_capacity_percent),
+    cycle_count: typeof value.cycle_count === "number" ? value.cycle_count : null,
+    temperature_celsius: asOptionalNumber(value.temperature_celsius),
+  }
+}
+
+function decodeNetwork(value: unknown): NetworkMetric {
+  if (!isRecord(value) || typeof value.state !== "string") throw new Error("invalid network metric")
+  if (value.state === "warming_up" || value.state === "unavailable") return reasonMetric(value, value.state)
+  if (
+    value.state !== "available" ||
+    !exactKeys(value, ["state", "interface", "ip_address", "upload_bytes_per_sec", "download_bytes_per_sec"]) ||
+    typeof value.interface !== "string" ||
+    !value.interface ||
+    !(value.ip_address === null || typeof value.ip_address === "string") ||
+    !safeCount(value.upload_bytes_per_sec) ||
+    !safeCount(value.download_bytes_per_sec)
+  ) {
+    throw new Error("invalid available network metric")
+  }
+  return {
+    state: "available",
+    interface: value.interface,
+    ip_address: typeof value.ip_address === "string" ? value.ip_address : null,
+    upload_bytes_per_sec: value.upload_bytes_per_sec,
+    download_bytes_per_sec: value.download_bytes_per_sec,
   }
 }
 
@@ -154,7 +247,7 @@ function decodeTemperature(value: unknown): TemperatureMetric {
 export function decodeMetricsSnapshot(value: unknown): MetricsSnapshot {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ["schema_version", "sampled_at_ms", "cpu", "memory", "storage", "cpu_package_temperature"]) ||
+    !exactKeys(value, ["schema_version", "sampled_at_ms", "cpu", "memory", "storage", "cpu_package_temperature", "battery", "network"]) ||
     value.schema_version !== 1 ||
     !safeCount(value.sampled_at_ms)
   ) {
@@ -167,6 +260,8 @@ export function decodeMetricsSnapshot(value: unknown): MetricsSnapshot {
     memory: decodeResource(value.memory, "memory"),
     storage: decodeResource(value.storage, "storage"),
     cpu_package_temperature: decodeTemperature(value.cpu_package_temperature),
+    battery: decodeBattery(value.battery),
+    network: decodeNetwork(value.network),
   }
 }
 

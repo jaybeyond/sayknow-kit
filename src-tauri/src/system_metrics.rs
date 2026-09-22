@@ -22,6 +22,8 @@ pub struct MetricsSnapshot {
     pub memory: ResourceStatus,
     pub storage: ResourceStatus,
     pub cpu_package_temperature: TemperatureStatus,
+    pub battery: BatteryStatus,
+    pub network: NetworkStatus,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -29,6 +31,9 @@ pub struct MetricsSnapshot {
 pub enum CpuStatus {
     Available {
         percent: f32,
+        system_percent: Option<f32>,
+        user_percent: Option<f32>,
+        idle_percent: Option<f32>,
         sample_start_ms: u64,
         sample_end_ms: u64,
     },
@@ -71,11 +76,54 @@ pub enum TemperatureStatus {
     },
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum BatteryStatus {
+    Available {
+        percent: f32,
+        is_charging: bool,
+        adapter_name: Option<String>,
+        max_capacity_percent: Option<f32>,
+        cycle_count: Option<u32>,
+        temperature_celsius: Option<f32>,
+    },
+    NotInstalled,
+    Unavailable {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum NetworkStatus {
+    Available {
+        interface: String,
+        ip_address: Option<String>,
+        upload_bytes_per_sec: u64,
+        download_bytes_per_sec: u64,
+    },
+    WarmingUp {
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
 type CollectionResult = Result<MetricsSnapshot, String>;
 
 struct Sampler {
     system: System,
-    cpu_baseline: Option<(Instant, u64)>,
+    cpu_baseline: Option<(Instant, u64, Option<CpuTicks>)>,
+    network: crate::network_metrics::NetworkSampler,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CpuTicks {
+    user: u64,
+    system: u64,
+    idle: u64,
+    nice: u64,
 }
 
 impl Sampler {
@@ -83,6 +131,7 @@ impl Sampler {
         Self {
             system: System::new(),
             cpu_baseline: None,
+            network: crate::network_metrics::NetworkSampler::new(),
         }
     }
 }
@@ -246,6 +295,12 @@ fn unavailable_snapshot(reason: &str) -> MetricsSnapshot {
         cpu_package_temperature: TemperatureStatus::Unavailable {
             reason: NO_PACKAGE_SENSOR.to_string(),
         },
+        battery: BatteryStatus::Unavailable {
+            reason: reason.to_string(),
+        },
+        network: NetworkStatus::Unavailable {
+            reason: reason.to_string(),
+        },
     }
 }
 
@@ -365,31 +420,34 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
 
     let cpu = match sampler.cpu_baseline {
         None => {
-            sampler.system.refresh_cpu_usage();
-            sampler.cpu_baseline = Some((Instant::now(), sampled_at_ms));
+            sampler.cpu_baseline = Some((Instant::now(), sampled_at_ms, read_cpu_ticks()));
             CpuStatus::WarmingUp {
                 reason: "baseline_pending".to_string(),
             }
         }
-        Some((baseline_at, _)) if baseline_at.elapsed() < MINIMUM_CPU_UPDATE_INTERVAL => {
+        Some((baseline_at, _, _)) if baseline_at.elapsed() < MINIMUM_CPU_UPDATE_INTERVAL => {
             CpuStatus::WarmingUp {
                 reason: "minimum_interval_pending".to_string(),
             }
         }
-        Some((baseline_at, baseline_ms)) => {
-            sampler.system.refresh_cpu_usage();
+        Some((baseline_at, baseline_ms, previous_ticks)) => {
+            let ticks = read_cpu_ticks();
             let end = Instant::now();
             let elapsed_ms = end.duration_since(baseline_at).as_millis();
             let sample_end_ms = u64::try_from(elapsed_ms)
                 .ok()
                 .filter(|elapsed| *elapsed > 0)
                 .and_then(|elapsed| baseline_ms.checked_add(elapsed));
-            sampler.cpu_baseline = sample_end_ms.map(|end_ms| (end, end_ms));
-            let percent = sampler.system.global_cpu_info().cpu_usage();
-            match sample_end_ms {
-                Some(sample_end_ms) if percent.is_finite() && (0.0..=100.0).contains(&percent) => {
+            let breakdown = cpu_breakdown(previous_ticks, ticks);
+            sampler.cpu_baseline = sample_end_ms.map(|end_ms| (end, end_ms, ticks));
+            match (sample_end_ms, breakdown) {
+                (Some(sample_end_ms), Some((system, user, idle))) => {
+                    let percent = (system + user).clamp(0.0, 100.0);
                     CpuStatus::Available {
                         percent,
+                        system_percent: Some(system),
+                        user_percent: Some(user),
+                        idle_percent: Some(idle),
                         sample_start_ms: baseline_ms,
                         sample_end_ms,
                     }
@@ -401,30 +459,34 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
         }
     };
 
-    sampler.system.refresh_memory();
-    let memory = resource_status(
-        sampler.system.total_memory(),
-        sampler.system.available_memory(),
-        sampled_at_ms,
-    );
+    let memory = macos_memory_status(sampled_at_ms).unwrap_or_else(|| {
+        sampler.system.refresh_memory();
+        resource_status(
+            sampler.system.total_memory(),
+            sampler.system.available_memory(),
+            sampled_at_ms,
+        )
+    });
 
-    let storage = system_root()
-        .map(|root| {
-            let disks = Disks::new_with_refreshed_list();
-            select_system_volume(
-                disks.list().iter().map(|disk| DiskCandidate {
-                    mount: disk.mount_point().to_path_buf(),
-                    total: disk.total_space(),
-                    available: disk.available_space(),
-                    removable: disk.is_removable(),
-                }),
-                &root,
-                sampled_at_ms,
-            )
-        })
-        .unwrap_or_else(|| ResourceStatus::Unavailable {
-            reason: "system_volume_unavailable".to_string(),
-        });
+    let storage = macos_storage_status(sampled_at_ms).unwrap_or_else(|| {
+        system_root()
+            .map(|root| {
+                let disks = Disks::new_with_refreshed_list();
+                select_system_volume(
+                    disks.list().iter().map(|disk| DiskCandidate {
+                        mount: disk.mount_point().to_path_buf(),
+                        total: disk.total_space(),
+                        available: disk.available_space(),
+                        removable: disk.is_removable(),
+                    }),
+                    &root,
+                    sampled_at_ms,
+                )
+            })
+            .unwrap_or_else(|| ResourceStatus::Unavailable {
+                reason: "system_volume_unavailable".to_string(),
+            })
+    });
 
     Ok(MetricsSnapshot {
         schema_version: 1,
@@ -433,7 +495,206 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
         memory,
         storage,
         cpu_package_temperature: temperature_status(sampled_at_ms),
+        battery: battery_status(),
+        network: match sampler.network.sample() {
+            crate::network_metrics::NetworkStatus::Available {
+                interface,
+                ip_address,
+                upload_bytes_per_sec,
+                download_bytes_per_sec,
+            } => NetworkStatus::Available {
+                interface,
+                ip_address,
+                upload_bytes_per_sec,
+                download_bytes_per_sec,
+            },
+            crate::network_metrics::NetworkStatus::WarmingUp { reason } => {
+                NetworkStatus::WarmingUp { reason }
+            }
+            crate::network_metrics::NetworkStatus::Unavailable { reason } => {
+                NetworkStatus::Unavailable { reason }
+            }
+        },
     })
+}
+
+
+fn battery_status() -> BatteryStatus {
+    #[cfg(target_os = "macos")]
+    {
+        match crate::battery_macos::read_battery() {
+            Some(crate::battery_macos::BatteryReading::NotInstalled) => BatteryStatus::NotInstalled,
+            Some(crate::battery_macos::BatteryReading::Installed {
+                percent,
+                is_charging,
+                adapter_name,
+                max_capacity_percent,
+                cycle_count,
+                temperature_celsius,
+            }) => BatteryStatus::Available {
+                percent,
+                is_charging,
+                adapter_name,
+                max_capacity_percent,
+                cycle_count,
+                temperature_celsius,
+            },
+            None => BatteryStatus::Unavailable {
+                reason: "iokit_unavailable".to_string(),
+            },
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        BatteryStatus::Unavailable {
+            reason: "unsupported_platform".to_string(),
+        }
+    }
+}
+
+fn cpu_breakdown(previous: Option<CpuTicks>, current: Option<CpuTicks>) -> Option<(f32, f32, f32)> {
+    let (previous, current) = (previous?, current?);
+    let user = current.user.saturating_sub(previous.user);
+    let system = current.system.saturating_sub(previous.system);
+    let idle = current.idle.saturating_sub(previous.idle);
+    let nice = current.nice.saturating_sub(previous.nice);
+    let total = user + system + idle + nice;
+    if total == 0 {
+        return None;
+    }
+    let total = total as f32;
+    Some((
+        (system as f32 / total) * 100.0,
+        ((user + nice) as f32 / total) * 100.0,
+        (idle as f32 / total) * 100.0,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn read_cpu_ticks() -> Option<CpuTicks> {
+    unsafe {
+        let mut info = std::mem::MaybeUninit::<libc::host_cpu_load_info>::uninit();
+        let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
+        let kr = libc::host_statistics(
+            libc::mach_host_self(),
+            libc::HOST_CPU_LOAD_INFO,
+            info.as_mut_ptr() as *mut libc::integer_t,
+            &mut count,
+        );
+        if kr != libc::KERN_SUCCESS {
+            return None;
+        }
+        let info = info.assume_init();
+        Some(CpuTicks {
+            user: info.cpu_ticks[libc::CPU_STATE_USER as usize] as u64,
+            system: info.cpu_ticks[libc::CPU_STATE_SYSTEM as usize] as u64,
+            idle: info.cpu_ticks[libc::CPU_STATE_IDLE as usize] as u64,
+            nice: info.cpu_ticks[libc::CPU_STATE_NICE as usize] as u64,
+        })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_cpu_ticks() -> Option<CpuTicks> {
+    None
+}
+
+/// RunCat / SystemInfoKit formula: app + wired + compressed, not sysinfo's
+/// `used = total - available`. Activity Monitor matches this much more closely
+/// than `sysinfo::System::used_memory()`.
+#[cfg(target_os = "macos")]
+fn macos_memory_status(sampled_at_ms: u64) -> Option<ResourceStatus> {
+    unsafe {
+        let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::uninit();
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        let kr = libc::host_statistics64(
+            libc::mach_host_self(),
+            libc::HOST_VM_INFO64,
+            stats.as_mut_ptr() as *mut libc::integer_t,
+            &mut count,
+        );
+        if kr != libc::KERN_SUCCESS {
+            return None;
+        }
+        let stats = stats.assume_init();
+        let page_size = libc::vm_page_size;
+        if page_size == 0 {
+            return None;
+        }
+        let mut total: u64 = 0;
+        let mut total_len = std::mem::size_of::<u64>();
+        let name = std::ffi::CString::new("hw.memsize").ok()?;
+        if libc::sysctlbyname(
+            name.as_ptr(),
+            &mut total as *mut u64 as *mut libc::c_void,
+            &mut total_len,
+            std::ptr::null_mut(),
+            0,
+        ) != 0
+            || total == 0
+        {
+            return None;
+        }
+        let page = page_size as u64;
+        let wired = stats.wire_count as u64;
+        let compressed = stats.compressor_page_count as u64;
+        // Activity Monitor "Memory Used" ≈ App Memory + Wired + Compressed.
+        // App Memory is anonymous/internal pages, not active+inactive-cached.
+        let app = stats.internal_page_count as u64;
+        let used_pages = app.saturating_add(wired).saturating_add(compressed);
+        let used = used_pages.saturating_mul(page).min(total);
+        Some(resource_status(total, total - used, sampled_at_ms))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_memory_status(_sampled_at_ms: u64) -> Option<ResourceStatus> {
+    None
+}
+
+#[cfg(test)]
+fn memory_formula_pages(app: u64, wired: u64, compressed: u64) -> u64 {
+    app.saturating_add(wired).saturating_add(compressed)
+}
+
+
+/// System Settings / RunCat: APFS container capacity, not the sealed system
+/// snapshot `df` reports for `/`.
+#[cfg(target_os = "macos")]
+fn macos_storage_status(sampled_at_ms: u64) -> Option<ResourceStatus> {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{
+        NSNumber, NSString, NSURL, NSURLVolumeAvailableCapacityForImportantUsageKey,
+        NSURLVolumeTotalCapacityKey,
+    };
+
+    let url = NSURL::fileURLWithPath(&NSString::from_str("/"));
+    let mut total_obj: Option<Retained<AnyObject>> = None;
+    let mut available_obj: Option<Retained<AnyObject>> = None;
+    unsafe {
+        url.getResourceValue_forKey_error(&mut total_obj, NSURLVolumeTotalCapacityKey)
+            .ok()?;
+        url.getResourceValue_forKey_error(
+            &mut available_obj,
+            NSURLVolumeAvailableCapacityForImportantUsageKey,
+        )
+        .ok()?;
+    }
+    let total = total_obj
+        .as_ref()
+        .and_then(|obj| obj.downcast_ref::<NSNumber>())
+        .map(|n| n.as_u64())?;
+    let available = available_obj
+        .as_ref()
+        .and_then(|obj| obj.downcast_ref::<NSNumber>())
+        .map(|n| n.as_u64())?;
+    Some(resource_status(total, available, sampled_at_ms))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_storage_status(_sampled_at_ms: u64) -> Option<ResourceStatus> {
+    None
 }
 
 /// macOS reads the SoC die sensors through the unprivileged AppleVendor HID
@@ -598,6 +859,11 @@ mod tests {
     }
 
     #[test]
+    fn activity_monitor_memory_used_is_app_plus_wired_plus_compressed() {
+        assert_eq!(memory_formula_pages(10, 3, 2), 15);
+    }
+
+    #[test]
     fn invalid_capacities_are_unavailable() {
         assert!(matches!(
             resource_status(0, 0, 1),
@@ -634,9 +900,64 @@ mod tests {
 
         std::thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
         let second = collect(&sampler).unwrap();
-        assert!(matches!(second.cpu, CpuStatus::Available { .. }));
-        assert!(matches!(second.memory, ResourceStatus::Available { .. }));
-        assert!(matches!(second.storage, ResourceStatus::Available { .. }));
+        match second.cpu {
+            CpuStatus::Available {
+                percent,
+                system_percent,
+                user_percent,
+                idle_percent,
+                ..
+            } => {
+                let system = system_percent.expect("system ticks");
+                let user = user_percent.expect("user ticks");
+                let idle = idle_percent.expect("idle ticks");
+                assert!((percent - (system + user)).abs() < 0.01);
+                assert!((system + user + idle - 100.0).abs() < 0.2);
+                eprintln!(
+                    "cpu: total={percent:.1} system={system:.1} user={user:.1} idle={idle:.1}"
+                );
+            }
+            other => panic!("expected available cpu, got {other:?}"),
+        }
+        match second.memory {
+            ResourceStatus::Available {
+                total_bytes,
+                used_bytes,
+                available_bytes,
+                ..
+            } => {
+                assert!(total_bytes > 0);
+                assert_eq!(used_bytes + available_bytes, total_bytes);
+                assert!(used_bytes < total_bytes, "used memory cannot be the whole machine");
+                eprintln!(
+                    "memory: used={} / total={} ({:.1}%)",
+                    used_bytes,
+                    total_bytes,
+                    used_bytes as f64 / total_bytes as f64 * 100.0
+                );
+            }
+            other => panic!("expected available memory, got {other:?}"),
+        }
+        match second.storage {
+            ResourceStatus::Available {
+                total_bytes,
+                used_bytes,
+                ..
+            } => {
+                eprintln!(
+                    "storage: used={} / total={} ({:.2} GB / {:.2} GB)",
+                    used_bytes,
+                    total_bytes,
+                    used_bytes as f64 / 1_000_000_000.0,
+                    total_bytes as f64 / 1_000_000_000.0
+                );
+                assert!(
+                    total_bytes > 950_000_000_000,
+                    "expected APFS container capacity, got {total_bytes}"
+                );
+            }
+            other => panic!("expected available storage, got {other:?}"),
+        }
         match second.cpu_package_temperature {
             TemperatureStatus::Available {
                 celsius,

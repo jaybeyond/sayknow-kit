@@ -18,7 +18,7 @@ import {
   type RateLimits,
   type RateWindow,
 } from "@/lib/agent-usage"
-import { formatCost, formatTokens as formatAppTokens } from "@/lib/usage"
+import { formatCost, formatTokens as formatAppTokens, modelsFromDay, shortenModelName } from "@/lib/usage"
 import { formatCharacters, type DeeplUsage } from "@/lib/deepl"
 import { cn } from "@/lib/utils"
 
@@ -108,6 +108,20 @@ export function UsagePanel({ settings, active }: Props) {
             sub={`${appUsage.month.calls} · ${formatCost(appUsage.month.costUsd)}`}
           />
         </div>
+        {modelsFromDay(appUsage.month).length > 0 && (
+          <ModelBreakdown
+            rows={modelsFromDay(appUsage.month).map((m) => ({
+              model: m.model,
+              tokens: m.tokens,
+              promptTokens: m.promptTokens,
+              completionTokens: m.completionTokens,
+              costUsd: m.costUsd,
+            }))}
+            t={t}
+            formatTokens={formatAppTokens}
+            showCost
+          />
+        )}
       </section>
 
       {(deepl || deeplError) && (
@@ -339,19 +353,11 @@ function AgentCard({
           </div>
 
           {models.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1">
-              <span className="text-[10px] text-muted-foreground">
-                {t("usage.modelsWindow")}
-              </span>
-              {models.slice(0, 3).map((m) => (
-                <span
-                  key={m.model}
-                  className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                >
-                  {m.model} · {formatTokens(m.tokens)}
-                </span>
-              ))}
-            </div>
+            <ModelBreakdown
+              rows={models.map((m) => ({ model: m.model, tokens: m.tokens }))}
+              t={t}
+              formatTokens={formatTokens}
+            />
           )}
 
           {!agent.has_cost && (
@@ -560,6 +566,66 @@ function Stat({
       {sub && (
         <div className="text-[10px] tabular-nums text-muted-foreground">{sub}</div>
       )}
+    </div>
+  )
+}
+function ModelBreakdown({
+  rows,
+  t,
+  formatTokens,
+  showCost = false,
+}: {
+  rows: {
+    model: string
+    tokens: number
+    promptTokens?: number
+    completionTokens?: number
+    costUsd?: number
+  }[]
+  t: (k: string) => string
+  formatTokens: (n: number) => string
+  showCost?: boolean
+}) {
+  const max = Math.max(1, ...rows.map((r) => r.tokens))
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="text-[10px] text-muted-foreground">{t("usage.models")}</div>
+      {rows.slice(0, 8).map((row) => {
+        const prompt = row.promptTokens ?? 0
+        const completion = row.completionTokens ?? 0
+        const known = prompt + completion
+        const promptPct = known > 0 ? (prompt / known) * 100 : 100
+        return (
+          <div key={row.model}>
+            <div className="mb-0.5 flex items-baseline justify-between gap-2 text-[11px]">
+              <span className="min-w-0 truncate font-medium">{shortenModelName(row.model)}</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {formatTokens(row.tokens)}
+                {showCost && row.costUsd != null ? ` · ${formatCost(row.costUsd)}` : ""}
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="flex h-full"
+                style={{ width: `${Math.max(6, (row.tokens / max) * 100)}%` }}
+              >
+                <div className="h-full bg-primary" style={{ width: `${promptPct}%` }} />
+                <div className="h-full bg-primary/40" style={{ width: `${100 - promptPct}%` }} />
+              </div>
+            </div>
+            {known > 0 && (
+              <div className="mt-0.5 flex gap-2 text-[10px] text-muted-foreground">
+                <span>
+                  {t("usage.model.input")} {formatTokens(prompt)}
+                </span>
+                <span>
+                  {t("usage.model.output")} {formatTokens(completion)}
+                </span>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

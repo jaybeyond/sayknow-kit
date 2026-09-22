@@ -71,7 +71,7 @@ core-foundation = "0.9"
 # field is only exposed through NSEvent. Already in the graph via wry.
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "NSScreen", "block2"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject", "NSURL", "NSError", "NSDictionary", "NSValue"] }
 block2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]

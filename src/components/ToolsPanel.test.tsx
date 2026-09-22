@@ -26,10 +26,12 @@ const mocks = vi.hoisted(() => ({
     snapshot: {
       schema_version: 1 as const,
       sampled_at_ms: 1_000,
-      cpu: { state: "available" as const, percent: 42.6, sample_start_ms: 500, sample_end_ms: 1_000 },
+      cpu: { state: "available" as const, percent: 42.6, system_percent: 12.1, user_percent: 30.5, idle_percent: 57.4, sample_start_ms: 500, sample_end_ms: 1_000 },
       memory: { state: "available" as const, total_bytes: 2_048, used_bytes: 1_024, available_bytes: 1_024, sampled_at_ms: 1_000 },
       storage: { state: "unavailable" as const, reason: "system_volume_unavailable" },
       cpu_package_temperature: { state: "unavailable" as const, reason: "no_verified_package_sensor" },
+      battery: { state: "available" as const, percent: 82, is_charging: true, adapter_name: "140W", max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
+      network: { state: "available" as const, interface: "en0", ip_address: "192.0.2.1", upload_bytes_per_sec: 50700, download_bytes_per_sec: 1700 },
     },
     error: "collection_timeout",
     listener_error: null,
@@ -45,12 +47,32 @@ vi.mock("@/i18n", () => ({
     t: (key: string) => ({
       "tools.desktopOnly": "Desktop only",
       "tools.heading": "Tools",
+      "tools.tabs.label": "Tool sections",
+      "tools.tabs.status": "Status",
+      "tools.tabs.display": "Displays",
+      "tools.tabs.usage": "Usage",
+      "tools.tabs.mole": "Clean",
       "tools.refresh": "Refresh",
       "tools.metrics.title": "System status",
       "tools.metrics.cpu": "CPU",
+      "tools.metrics.cpuSystem": "System",
+      "tools.metrics.cpuUser": "User",
+      "tools.metrics.cpuIdle": "Idle",
       "tools.metrics.memory": "Memory",
       "tools.metrics.storage": "Storage",
       "tools.metrics.temperature": "CPU temperature",
+      "tools.metrics.battery": "Battery",
+      "tools.metrics.charging": "Charging",
+      "tools.metrics.notCharging": "On battery",
+      "tools.metrics.notInstalled": "Not installed",
+      "tools.metrics.powerSource": "Power source",
+      "tools.metrics.maxCapacity": "Max capacity",
+      "tools.metrics.cycleCount": "Cycles",
+      "tools.metrics.batteryTemperature": "Battery temperature",
+      "tools.metrics.network": "Network",
+      "tools.metrics.localIp": "Local IP",
+      "tools.metrics.upload": "Upload",
+      "tools.metrics.download": "Download",
       "tools.metrics.warming": "Warming up",
       "tools.metrics.unavailable": "Unavailable",
       "tools.metrics.temperatureUnavailable": "No verified CPU package sensor",
@@ -104,11 +126,15 @@ vi.mock("@/lib/system-metrics-store", () => ({
   setActive: mocks.setMetricsActive,
   formatBytes: (bytes: number) => `${bytes} B`,
   formatPercent: (percent: number) => `${Math.round(percent)}%`,
+  formatRate: (bytes: number) => `${bytes} B/s`,
 }))
 vi.mock("@/components/UsagePanel", () => ({
   UsagePanel: ({ active }: { active: boolean }) => (
     <section aria-label="Usage" data-active={String(active)} />
   ),
+}))
+vi.mock("@/components/MolePanel", () => ({
+  MolePanel: () => <section aria-label="Clean" />,
 }))
 
 // Radix' slider measures its thumb; jsdom ships no ResizeObserver.
@@ -122,9 +148,18 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 import { ToolsPanel } from "./ToolsPanel"
 import { brightnessCommand } from "@/lib/brightness-command"
 
+function openDisplayTab() {
+  fireEvent.click(screen.getByRole("tab", { name: "Displays" }))
+}
+
+function openUsageTab() {
+  fireEvent.click(screen.getByRole("tab", { name: "Usage" }))
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  mocks.scanDisplays.mockImplementation(() => Promise.resolve())
 })
 
 describe("ToolsPanel system metrics", () => {
@@ -147,19 +182,44 @@ describe("ToolsPanel system metrics", () => {
     expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
     expect(mocks.scanDisplays).toHaveBeenCalledTimes(1)
   })
+  it("spins the header refresh control while a rescan is in flight", async () => {
+    let resolveScan: () => void = () => {}
+    mocks.scanDisplays.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolveScan = resolve
+      }),
+    )
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    const refresh = screen.getByTitle("Refresh")
+    fireEvent.click(refresh)
+    await waitFor(() => {
+      expect(refresh.querySelector("svg")?.getAttribute("class") ?? "").toMatch(/animate-spin/)
+    })
+    resolveScan()
+    await waitFor(() => {
+      expect(refresh.querySelector("svg")?.getAttribute("class") ?? "").not.toMatch(/animate-spin/)
+    })
+  })
 
-  it("hosts usage below the brightness section and forwards visibility", () => {
-    const { container } = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+  it("separates status, display controls, and usage into secondary tabs", () => {
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
 
+    expect(screen.getByRole("tab", { name: "Status" }).getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByRole("region", { name: "System status" })).toBeTruthy()
+    expect(screen.queryByText("Brightness")).toBeNull()
+
+    openDisplayTab()
+    expect(screen.getByRole("tab", { name: "Displays" }).getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByText("Brightness")).toBeTruthy()
+    expect(screen.queryByRole("region", { name: "Usage" })).toBeNull()
+
+    openUsageTab()
     const usage = screen.getByRole("region", { name: "Usage" })
     expect(usage.dataset.active).toBe("true")
-
-    const brightness = screen.getByText("Brightness").closest("section")
-    expect(brightness).not.toBeNull()
-    expect(
-      brightness!.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-    expect(container.querySelector('[aria-label="Usage"]')).toBe(usage)
+    expect(screen.getByRole("tab", { name: "Usage" }).getAttribute("aria-selected")).toBe("true")
+    fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+    expect(screen.getByRole("tab", { name: "Clean" }).getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByRole("region", { name: "Clean" })).toBeTruthy()
   })
 })
 
@@ -188,6 +248,7 @@ describe("ToolsPanel external monitor cards", () => {
   it("says what is wrong with an external the machine cannot drive", () => {
     mocks.toolsState.displays = [external({ controllable: false, method: "none", brightness: null })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByText(/answers neither DDC brightness control/)).toBeTruthy()
     expect(screen.queryByText(/cannot drive the built-in display/)).toBeNull()
@@ -196,6 +257,7 @@ describe("ToolsPanel external monitor cards", () => {
   it("does not offer a system backlight row for a software-dimmed external", () => {
     mocks.toolsState.displays = [external({ method: "gamma" })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByText("software dim")).toBeTruthy()
     // The backlight row is the built-in's F1/F2 base level; an external has none.
@@ -208,6 +270,7 @@ describe("ToolsPanel external monitor cards", () => {
       external({ method: "none", power: null, power_capable: false, controllable: false }),
     ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     // No DDC answer and no software blackout path means a button here would
     // do nothing.
@@ -221,6 +284,7 @@ describe("ToolsPanel external monitor cards", () => {
     // the brightness method took the working feature away from it.
     mocks.toolsState.displays = [external({ method: "gamma", power: true })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByTitle("Power on")).toBeTruthy()
     expect(screen.getByTitle("Power off")).toBeTruthy()
@@ -235,6 +299,7 @@ describe("ToolsPanel external monitor cards", () => {
       external({ method: "gamma", power: null, power_capable: true, brightness: null }),
     ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByTitle("Power on")).toBeTruthy()
     expect(screen.getByTitle("Power off")).toBeTruthy()
@@ -246,6 +311,7 @@ describe("ToolsPanel external monitor cards", () => {
     mocks.invoke.mockRejectedValue("MacOS kernel I/O error: 268435459")
     mocks.toolsState.displays = [external({})]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     fireEvent.click(screen.getByTitle("Power off"))
 
@@ -258,6 +324,7 @@ describe("ToolsPanel external monitor cards", () => {
     mocks.invoke.mockResolvedValue(undefined)
     mocks.toolsState.displays = [external({})]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     fireEvent.click(screen.getByTitle("Power off"))
 
@@ -277,6 +344,7 @@ describe("ToolsPanel external monitor cards", () => {
       external({ id: "ddc:?:?:?:cg7", name: "ARZOPA", brightness: 80 }),
     ]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getAllByLabelText("ARZOPA Brightness")).toHaveLength(2)
   })
@@ -333,6 +401,7 @@ describe("ToolsPanel all-displays slider", () => {
   it("offers the all-displays slider when built-in and external are both present", () => {
     mocks.toolsState.displays = [builtin, external]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
     expect(screen.getByLabelText("All displays")).toBeTruthy()
   })
 })
@@ -359,6 +428,7 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [builtinOnGamma]
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     await waitFor(() => expect(mocks.refreshAccessibility).toHaveBeenCalled())
     expect(mocks.requestAccessibility).not.toHaveBeenCalled()
@@ -371,6 +441,7 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [builtinOnGamma]
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     fireEvent.click(screen.getByRole("button", { name: "Restart the app" }))
     expect(mocks.relaunchApp).toHaveBeenCalledOnce()
@@ -382,6 +453,7 @@ describe("ToolsPanel accessibility notice", () => {
       mocks.toolsState.displays = [builtinOnGamma]
       mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
       render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      openDisplayTab()
       const initial = mocks.refreshAccessibility.mock.calls.length
 
       await vi.advanceTimersByTimeAsync(4100)
@@ -395,12 +467,14 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [builtinOnGamma]
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: true }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByText("Ad-hoc build: reset the entry")).toBeTruthy()
     cleanup()
 
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
     expect(screen.queryByText("Ad-hoc build: reset the entry")).toBeNull()
   })
 
@@ -408,6 +482,7 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [builtinOnGamma]
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: true }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     fireEvent.click(screen.getByRole("button", { name: "Reset and ask again" }))
     expect(mocks.resetAccessibility).toHaveBeenCalledOnce()
@@ -416,6 +491,7 @@ describe("ToolsPanel accessibility notice", () => {
     // A certificate-signed build keeps its grant, so the reset is not offered.
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
     expect(screen.queryByRole("button", { name: "Reset and ask again" })).toBeNull()
   })
 
@@ -423,6 +499,7 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [builtinOnGamma]
     mocks.toolsState.accessibility = { trusted: false, translocated: true, adhoc: true }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.getByText("Move SayKnow Kit to Applications")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Request permission" })).toBeNull()
@@ -432,6 +509,7 @@ describe("ToolsPanel accessibility notice", () => {
     mocks.toolsState.displays = [{ ...builtinOnGamma, method: "backlight" }]
     mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
 
     expect(screen.queryByText("Accessibility permission required")).toBeNull()
   })

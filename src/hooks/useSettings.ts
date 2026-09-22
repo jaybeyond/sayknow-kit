@@ -51,6 +51,8 @@ export type Prefs = {
   translateEngine: "llm" | "deepl"
   /** DeepL renders tone natively instead of being asked for it in prose. */
   deeplFormality: "default" | "more" | "less"
+  /** Translate tab job: translation, or retone-style rewrite of the same draft. */
+  workspaceMode: "translate" | "rewrite"
 }
 
 const DEFAULTS: Prefs = {
@@ -70,6 +72,7 @@ const DEFAULTS: Prefs = {
   windowMode: "normal",
   translateEngine: "llm",
   deeplFormality: "default",
+  workspaceMode: "translate",
 }
 
 const PREFS_KEY = "prefs"

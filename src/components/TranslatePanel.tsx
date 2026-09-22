@@ -16,7 +16,6 @@ import {
   Sparkles,
   X,
 } from "lucide-react"
-import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager"
 import { Button } from "@/components/ui/button"
@@ -43,6 +42,7 @@ import {
   LANGS,
   type LangCode,
 } from "@/lib/openrouter"
+import { REWRITE_PRESETS, buildRewritePrompt } from "@/lib/rewrite"
 import { useT } from "@/i18n"
 import { deeplSupports, deeplTranslate, DeeplError } from "@/lib/deepl"
 import { translationMemory } from "@/lib/translation-memory"
@@ -54,6 +54,14 @@ const REFINE_PRESETS = [
   { id: "business", labelKey: "refine.business", instruction: "Use a professional business email tone." },
   { id: "literal", labelKey: "refine.literal", instruction: "Make it more literal." },
 ] as const
+type RewriteCard = {
+  id: string
+  presetId: string
+  label: string
+  text: string
+  loading: boolean
+  error: string | null
+}
 
 /** What the tab strip can push into the translate tab: clipboard text, or a
  *  history entry complete with its result and language pair. */
@@ -90,6 +98,10 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refineText, setRefineText] = useState("")
+  const [rewriteSelected, setRewriteSelected] = useState<string[]>(["polish", "casual"])
+  const [rewriteCards, setRewriteCards] = useState<RewriteCard[]>([])
+  const rewriteAbort = useRef<AbortController | null>(null)
+  const rewriteMode = settings.workspaceMode === "rewrite"
   const abortRef = useRef<AbortController | null>(null)
   const [compactSplit, setCompactSplit] = useState(50)
   const [stackedSplit, setStackedSplit] = useState(36)
@@ -107,19 +119,6 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   // refining, or finishing a manual translate).
   const lastTranslatedRef = useRef("")
 
-  useEffect(() => {
-    if (!isTauri()) return
-    void invoke("set_pinned", { pinned: settings.pinned }).catch(() => {})
-  }, [settings.pinned])
-
-  useEffect(() => {
-    if (!isTauri()) return
-    // Compact = wide & short side-by-side layout, optimized for keep-on-screen.
-    // Normal = tall stacked layout, optimized for longer texts.
-    const [w, h] =
-      settings.windowMode === "compact" ? [720, 240] : [480, 580]
-    void invoke("resize_main_window", { width: w, height: h }).catch(() => {})
-  }, [settings.windowMode])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -314,7 +313,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   }
 
   useEffect(() => {
-    if (!settings.autoTranslate) return
+    if (!settings.autoTranslate || settings.workspaceMode === "rewrite") return
     const text = debounced.trim()
     // Clearing on short input is handled by changeInput(), where the change
     // actually originates — an effect would cascade an extra render.
@@ -423,6 +422,84 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     refine(t)
     setRefineText("")
   }
+  function toggleRewritePreset(id: string) {
+    setRewriteSelected((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    )
+  }
+
+  async function runRewrite() {
+    const draft = input.trim()
+    if (draft.length < 2 || rewriteSelected.length === 0) return
+    rewriteAbort.current?.abort()
+    const ctrl = new AbortController()
+    rewriteAbort.current = ctrl
+    const jobs = REWRITE_PRESETS.filter((p) => rewriteSelected.includes(p.id))
+    const stamp = Date.now()
+    setRewriteCards(
+      jobs.map((p) => ({
+        id: `${p.id}-${stamp}`,
+        presetId: p.id,
+        label: t(p.labelKey),
+        text: "",
+        loading: true,
+        error: null,
+      })),
+    )
+    setError(null)
+    await Promise.all(
+      jobs.map(async (preset) => {
+        try {
+          const result = await chat({
+            apiKey: settings.apiKey,
+            baseURL: settings.baseURL,
+            provider: settings.provider,
+            model: settings.model,
+            fallbackModel: settings.fallbackModel,
+            messages: buildRewritePrompt(draft, preset.instruction, settings.customRefinePrompt),
+            signal: ctrl.signal,
+          })
+          if (ctrl.signal.aborted) return
+          setRewriteCards((prev) =>
+            prev.map((card) =>
+              card.id === `${preset.id}-${stamp}`
+                ? { ...card, text: result.content, loading: false }
+                : card,
+            ),
+          )
+          if (result.usage) {
+            recordUsage({
+              modelId: result.model,
+              models,
+              promptTokens: result.usage.prompt_tokens ?? 0,
+              completionTokens: result.usage.completion_tokens ?? 0,
+            })
+          }
+        } catch (e) {
+          if (ctrl.signal.aborted) return
+          setRewriteCards((prev) =>
+            prev.map((card) =>
+              card.id === `${preset.id}-${stamp}`
+                ? { ...card, loading: false, error: e instanceof Error ? e.message : String(e) }
+                : card,
+            ),
+          )
+        }
+      }),
+    )
+  }
+
+  async function copyRewrite(text: string) {
+    if (!text) return
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1200)
+  }
+
+  function applyRewrite(text: string) {
+    if (!text) return
+    setOutput(text)
+  }
 
 
   const targetLang =
@@ -521,27 +598,45 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
         className="flex items-center gap-1 border-b bg-muted/30 px-2 py-1.5"
         data-tauri-drag-region
       >
-        <LangPicker
-          value={settings.from}
-          onChange={(v) => update({ from: v })}
-          showAuto
-          uiLocale={settings.uiLocale}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0"
-          onClick={swap}
-          disabled={settings.from === "auto"}
-          aria-label={t("header.swap")}
+        <button
+          type="button"
+          className={`h-6 rounded-full px-2.5 text-[11px] font-medium ${rewriteMode ? "text-muted-foreground" : "bg-background text-foreground shadow-sm"}`}
+          onClick={() => update({ workspaceMode: "translate" })}
         >
-          <ArrowLeftRight className="h-3 w-3" />
-        </Button>
-        <LangPicker
-          value={settings.to}
-          onChange={(v) => update({ to: v })}
-          uiLocale={settings.uiLocale}
-        />
+          {t("workspace.translate")}
+        </button>
+        <button
+          type="button"
+          className={`h-6 rounded-full px-2.5 text-[11px] font-medium ${rewriteMode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
+          onClick={() => update({ workspaceMode: "rewrite" })}
+        >
+          {t("workspace.rewrite")}
+        </button>
+        {!rewriteMode && (
+          <>
+            <LangPicker
+              value={settings.from}
+              onChange={(v) => update({ from: v })}
+              showAuto
+              uiLocale={settings.uiLocale}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              onClick={swap}
+              disabled={settings.from === "auto"}
+              aria-label={t("header.swap")}
+            >
+              <ArrowLeftRight className="h-3 w-3" />
+            </Button>
+            <LangPicker
+              value={settings.to}
+              onChange={(v) => update({ to: v })}
+              uiLocale={settings.uiLocale}
+            />
+          </>
+        )}
       </div>
 
       {isCompact ? (
@@ -589,7 +684,11 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               className="flex-1 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed"
               aria-live="polite"
             >
-              {outputBody}
+              {rewriteMode ? (
+                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onApply={applyRewrite} />
+              ) : (
+                outputBody
+              )}
             </div>
           </div>
         </div>
@@ -647,7 +746,11 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               className="min-h-[120px] whitespace-pre-wrap text-[14px] leading-relaxed"
               aria-live="polite"
             >
-              {outputBody}
+              {rewriteMode ? (
+                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onApply={applyRewrite} />
+              ) : (
+                outputBody
+              )}
             </div>
           </div>
         </div>
@@ -655,34 +758,68 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
 
       <div className="border-t bg-muted/20 px-2 py-1.5">
         <div className="flex flex-wrap items-center gap-1">
-          {!settings.autoTranslate && (
-            <Button
-              size="sm"
-              variant="default"
-              className="h-7 rounded-full px-3 text-[11px]"
-              onClick={forceTranslate}
-              disabled={input.trim().length < 2 || translating}
-            >
-              {translating ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <CornerDownLeft className="h-3 w-3" />
+          {rewriteMode ? (
+            <>
+              {REWRITE_PRESETS.map((p) => {
+                const on = rewriteSelected.includes(p.id)
+                return (
+                  <Button
+                    key={p.id}
+                    size="sm"
+                    variant={on ? "default" : "ghost"}
+                    className="h-6 rounded-full px-2.5 text-[11px]"
+                    onClick={() => toggleRewritePreset(p.id)}
+                  >
+                    {t(p.labelKey)}
+                  </Button>
+                )
+              })}
+              <Button
+                size="sm"
+                className="h-7 rounded-full px-3 text-[11px]"
+                disabled={input.trim().length < 2 || rewriteSelected.length === 0 || rewriteCards.some((c) => c.loading)}
+                onClick={() => void runRewrite()}
+              >
+                {rewriteCards.some((c) => c.loading) ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3 w-3" />
+                )}
+                {t("rewrite.run")}
+              </Button>
+            </>
+          ) : (
+            <>
+              {!settings.autoTranslate && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-7 rounded-full px-3 text-[11px]"
+                  onClick={forceTranslate}
+                  disabled={input.trim().length < 2 || translating}
+                >
+                  {translating ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CornerDownLeft className="h-3 w-3" />
+                  )}
+                  {t("translate")}
+                </Button>
               )}
-              {t("translate")}
-            </Button>
+              {REFINE_PRESETS.map((p) => (
+                <Button
+                  key={p.id}
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 rounded-full px-2.5 text-[11px] hover:bg-background"
+                  disabled={!output || refining}
+                  onClick={() => refine(p.instruction)}
+                >
+                  {t(p.labelKey)}
+                </Button>
+              ))}
+            </>
           )}
-          {REFINE_PRESETS.map((p) => (
-            <Button
-              key={p.id}
-              size="sm"
-              variant="ghost"
-              className="h-6 rounded-full px-2.5 text-[11px] hover:bg-background"
-              disabled={!output || refining}
-              onClick={() => refine(p.instruction)}
-            >
-              {t(p.labelKey)}
-            </Button>
-          ))}
           <div className="ml-auto flex items-center gap-0.5">
             <Popover>
               <PopoverTrigger asChild>
@@ -758,6 +895,49 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+function RewriteResults({
+  cards,
+  t,
+  onCopy,
+  onApply,
+}: {
+  cards: RewriteCard[]
+  t: (k: string) => string
+  onCopy: (text: string) => void
+  onApply: (text: string) => void
+}) {
+  if (cards.length === 0) {
+    return <span className="text-muted-foreground">{t("rewrite.empty")}</span>
+  }
+  return (
+    <div className="space-y-2">
+      {cards.map((card) => (
+        <div key={card.id} className="rounded-lg border bg-muted/30 p-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium">{card.label}</span>
+            {!card.loading && card.text && (
+              <span className="flex gap-1">
+                <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => onApply(card.text)}>
+                  {t("rewrite.apply")}
+                </button>
+                <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => onCopy(card.text)}>
+                  {t("copy")}
+                </button>
+              </span>
+            )}
+          </div>
+          {card.loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : card.error ? (
+            <p className="text-[12px] text-destructive">{card.error}</p>
+          ) : (
+            <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{card.text}</p>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
