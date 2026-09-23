@@ -6,8 +6,6 @@
 //! This is deliberately local UI automation: no shell, AppleScript, or helper
 //! binary, and the value we read back is Control Center's live value.
 
-#![cfg(target_os = "macos")]
-
 use core_foundation::{
     base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString,
 };

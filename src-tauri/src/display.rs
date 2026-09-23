@@ -744,7 +744,7 @@ mod gamma_dim {
             r[0]
         );
         let ok = write_table(display, &r, &g, &b);
-        log::info!("reset_offset: write_table ok={}", ok);
+        log::info!("reset_offset: write_table ok={ok}");
         if ok {
             LAST.lock().unwrap().insert(display, 1.0);
         }
@@ -914,10 +914,7 @@ pub mod brightness_tap {
                 SYSTEM_SIXTEENTHS.store(next, Ordering::Relaxed);
                 note_key(delta);
                 log::info!(
-                    "tap: brightness key delta={} cur={} -> {}",
-                    delta,
-                    cur,
-                    next
+                    "tap: brightness key delta={delta} cur={cur} -> {next}"
                 );
                 // Schedule the gamma reset on the NEXT main-runloop pass.
                 unsafe {

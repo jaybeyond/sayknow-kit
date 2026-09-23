@@ -94,7 +94,7 @@ fn make_preview(s: &str) -> String {
         return trimmed.to_string();
     }
     let truncated: String = trimmed.chars().take(80).collect();
-    format!("{}…", truncated)
+    format!("{truncated}…")
 }
 
 /// Drop the obviously-sensitive things (OTPs, key material, blanks). Kept

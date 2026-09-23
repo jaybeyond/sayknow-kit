@@ -1,3 +1,9 @@
+// Most of this crate is macOS-specific — mach, IOKit, CoreGraphics, PTY. The
+// Windows build compiles the same modules but never reaches those paths, so
+// dead code there is the shape of the port, not a finding. macOS, where the
+// code actually runs, stays fully linted.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 mod agent_usage;
 #[cfg(target_os = "macos")]
 mod accessibility_backlight;
@@ -632,10 +638,10 @@ fn claude_chat(
 /// stripped-down PATH that doesn't see Homebrew.
 pub(crate) fn which_via_shell(name: &str) -> Option<PathBuf> {
     let common = [
-        format!("/opt/homebrew/bin/{}", name),
-        format!("/opt/homebrew/sbin/{}", name),
-        format!("/usr/local/bin/{}", name),
-        format!("/usr/local/sbin/{}", name),
+        format!("/opt/homebrew/bin/{name}"),
+        format!("/opt/homebrew/sbin/{name}"),
+        format!("/usr/local/bin/{name}"),
+        format!("/usr/local/sbin/{name}"),
     ];
     for p in &common {
         if std::path::Path::new(p).exists() {
@@ -644,12 +650,12 @@ pub(crate) fn which_via_shell(name: &str) -> Option<PathBuf> {
     }
     if let Some(home) = std::env::var_os("HOME") {
         for sub in [
-            format!(".npm-global/bin/{}", name),
-            format!(".local/bin/{}", name),
-            format!(".bun/bin/{}", name),
-            format!(".volta/bin/{}", name),
-            format!(".fnm/aliases/default/bin/{}", name),
-            format!(".nvm/versions/node/{}", name), // unlikely to land but harmless
+            format!(".npm-global/bin/{name}"),
+            format!(".local/bin/{name}"),
+            format!(".bun/bin/{name}"),
+            format!(".volta/bin/{name}"),
+            format!(".fnm/aliases/default/bin/{name}"),
+            format!(".nvm/versions/node/{name}"), // unlikely to land but harmless
         ] {
             let p = PathBuf::from(&home).join(sub);
             if p.exists() {
@@ -675,7 +681,7 @@ pub(crate) fn which_via_shell(name: &str) -> Option<PathBuf> {
     };
     for shell in shells {
         let out = Command::new(&shell)
-            .args(["-lc", &format!("command -v {} 2>/dev/null", name)])
+            .args(["-lc", &format!("command -v {name} 2>/dev/null")])
             .output()
             .ok();
         if let Some(out) = out {
@@ -722,7 +728,7 @@ const OCP_CANDIDATE_PORTS: &[u16] = &[3456, 3457, 3458, 3459, 3460];
 /// one Claude model. This lets us distinguish OCP from any other process
 /// that happens to be bound to the same port.
 fn looks_like_ocp(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{}/v1/models", port);
+    let url = format!("http://127.0.0.1:{port}/v1/models");
     let out = Command::new("curl")
         .args(["-s", "-m", "1", &url])
         .output()
@@ -870,7 +876,7 @@ fn append_ocp_log(line: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{}", line);
+        let _ = writeln!(file, "{line}");
     }
 }
 
@@ -906,7 +912,7 @@ fn bootout_ocp_service() {
         let uid = current_uid();
         let _ = Command::new("launchctl")
             .arg("bootout")
-            .arg(format!("gui/{}/dev.ocp.proxy", uid))
+            .arg(format!("gui/{uid}/dev.ocp.proxy"))
             .output();
     }
 }
@@ -950,7 +956,7 @@ fn node_subdir() -> &'static str {
 fn node_archive_url() -> String {
     let base = node_subdir();
     #[cfg(not(target_os = "windows"))]
-    return format!("https://nodejs.org/dist/{}/{}.tar.gz", NODE_VERSION, base);
+    return format!("https://nodejs.org/dist/{NODE_VERSION}/{base}.tar.gz");
     #[cfg(target_os = "windows")]
     return format!("https://nodejs.org/dist/{}/{}.zip", NODE_VERSION, base);
 }
@@ -1030,7 +1036,7 @@ fn install_node_runtime_inner(app: &AppHandle) -> Result<PathBuf, String> {
             if name_s.starts_with("node-v") && name_s.as_ref() != current {
                 let _ = app.emit(
                     "ocp:log",
-                    format!("    Removing old Node runtime: {}", name_s),
+                    format!("    Removing old Node runtime: {name_s}"),
                 );
                 let _ = std::fs::remove_dir_all(entry.path());
             }
@@ -1042,15 +1048,15 @@ fn install_node_runtime_inner(app: &AppHandle) -> Result<PathBuf, String> {
 
     let _ = app.emit(
         "ocp:log",
-        format!("Downloading Node.js {} (~50 MB)…", NODE_VERSION),
+        format!("Downloading Node.js {NODE_VERSION} (~50 MB)…"),
     );
-    let _ = app.emit("ocp:log", format!("  {}", url));
+    let _ = app.emit("ocp:log", format!("  {url}"));
     let curl_status = Command::new("curl")
         .args(["-fL", "--retry", "2", "--show-error", "--silent", "-o"])
         .arg(&archive_path)
         .arg(&url)
         .status()
-        .map_err(|e| format!("curl spawn failed: {}", e))?;
+        .map_err(|e| format!("curl spawn failed: {e}"))?;
     if !curl_status.success() {
         return Err(format!(
             "curl exited {} downloading Node",
@@ -1065,7 +1071,7 @@ fn install_node_runtime_inner(app: &AppHandle) -> Result<PathBuf, String> {
         .arg("-C")
         .arg(&dir)
         .status()
-        .map_err(|e| format!("tar spawn failed: {}", e))?;
+        .map_err(|e| format!("tar spawn failed: {e}"))?;
     if !tar_status.success() {
         return Err(format!(
             "tar exited {} extracting Node",
@@ -1104,7 +1110,7 @@ fn install_claude_cli_inner(app: &AppHandle, node_bin_dir: &Path) -> Result<(), 
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|e| format!("npm spawn failed: {}", e))?;
+        .map_err(|e| format!("npm spawn failed: {e}"))?;
     if let Some(stdout) = child.stdout.take() {
         let a = app.clone();
         thread::spawn(move || {
@@ -1121,7 +1127,7 @@ fn install_claude_cli_inner(app: &AppHandle, node_bin_dir: &Path) -> Result<(), 
             }
         });
     }
-    let status = child.wait().map_err(|e| format!("npm wait: {}", e))?;
+    let status = child.wait().map_err(|e| format!("npm wait: {e}"))?;
     if !status.success() {
         return Err(format!(
             "npm install Claude CLI exited {}",
@@ -1172,7 +1178,7 @@ fn detect_ocp_env(base_url: Option<String>) -> OcpEnv {
 /// directory under $HOME so re-runs can do a fast `git pull` instead.
 fn ocp_dir() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    Ok(format!("{}/.sayknow-ocp", home))
+    Ok(format!("{home}/.sayknow-ocp"))
 }
 
 fn cloned_ocp_cli_path() -> Option<PathBuf> {
@@ -1222,7 +1228,7 @@ fn start_ocp_direct(
             );
         }
     };
-    emit_and_persist_ocp_log(app, format!("Using port {} for OCP", port));
+    emit_and_persist_ocp_log(app, format!("Using port {port} for OCP"));
 
     let mut cmd = Command::new(&node);
     // `node:sqlite` is a Node 22.5+ built-in but is only available behind
@@ -1247,7 +1253,7 @@ fn start_ocp_direct(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("failed to start OCP directly: {}", e))?;
+        .map_err(|e| format!("failed to start OCP directly: {e}"))?;
 
     if let Some(stdout) = child.stdout.take() {
         let a = app.clone();
@@ -1287,11 +1293,10 @@ fn start_ocp_direct(
 
     let tail = tail_ocp_log(60);
     Err(if tail.is_empty() {
-        format!("OCP direct start failed: :{} did not open after 20s", port)
+        format!("OCP direct start failed: :{port} did not open after 20s")
     } else {
         format!(
-            "OCP direct start failed: :{} did not open after 20s\n\nRecent ~/.ocp/logs/proxy.log:\n{}",
-            port, tail
+            "OCP direct start failed: :{port} did not open after 20s\n\nRecent ~/.ocp/logs/proxy.log:\n{tail}"
         )
     })
 }
@@ -1319,7 +1324,7 @@ fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), St
     // Already running — could be on 3456, or any other port if the user
     // started OCP themselves with a custom port. Scan candidates.
     if let Some(port) = find_running_ocp_port(None) {
-        let _ = app.emit("ocp:log", format!("✓ OCP already responding on :{} — using it", port));
+        let _ = app.emit("ocp:log", format!("✓ OCP already responding on :{port} — using it"));
         let _ = app.emit("ocp:port", port);
         let _ = app.emit("ocp:status", "ready");
         return Ok(());
@@ -1360,18 +1365,16 @@ fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), St
     let clone_cmd = if already_cloned {
         let _ = app.emit("ocp:log", "[4/5] Updating OCP repo…");
         format!(
-            "export PATH=\"{path}\" && cd '{dir}' && git pull --rebase --autostash 2>&1 | tail -3 && ([ -d node_modules ] || npm install --no-audit --no-fund 2>&1 | tail -10)",
-            path = prefix_path, dir = dir,
+            "export PATH=\"{prefix_path}\" && cd '{dir}' && git pull --rebase --autostash 2>&1 | tail -3 && ([ -d node_modules ] || npm install --no-audit --no-fund 2>&1 | tail -10)",
         )
     } else {
         let _ = app.emit("ocp:log", "[4/5] Cloning OCP repo + npm install…");
         format!(
-            "export PATH=\"{path}\" && \
+            "export PATH=\"{prefix_path}\" && \
              mkdir -p '{dir}' && \
              git clone --depth 1 https://github.com/dtzp555-max/ocp.git '{dir}' 2>&1 | tail -5 && \
              cd '{dir}' && \
              ([ -d node_modules ] || npm install --no-audit --no-fund 2>&1 | tail -10)",
-            path = prefix_path, dir = dir,
         )
     };
 
@@ -1391,7 +1394,7 @@ fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), St
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|e| format!("failed to spawn shell: {}", e))?;
+        .map_err(|e| format!("failed to spawn shell: {e}"))?;
 
     if let Some(stdout) = child.stdout.take() {
         let app = app.clone();
@@ -1409,7 +1412,7 @@ fn start_ocp(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), St
             }
         });
     }
-    let status = child.wait().map_err(|e| format!("waiting for clone/install: {}", e))?;
+    let status = child.wait().map_err(|e| format!("waiting for clone/install: {e}"))?;
     if !status.success() {
         return Err(format!(
             "Clone / npm install failed (exit {})",
@@ -1473,7 +1476,7 @@ fn uninstall_ocp(app: AppHandle) -> Result<(), String> {
     let uid = current_uid();
     let _ = Command::new("launchctl")
         .arg("bootout")
-        .arg(format!("gui/{}/dev.ocp.proxy", uid))
+        .arg(format!("gui/{uid}/dev.ocp.proxy"))
         .output();
     if plist.exists() {
         let _ = std::fs::remove_file(&plist);
