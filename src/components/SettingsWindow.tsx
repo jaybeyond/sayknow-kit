@@ -14,6 +14,7 @@ import {
   Pin,
   Plug,
   Power,
+  RefreshCw,
   Settings as SettingsIcon,
   Sparkles,
 } from "lucide-react"
@@ -37,6 +38,7 @@ import { ProviderPicker } from "./ProviderPicker"
 import { GlossaryEditor } from "./GlossaryEditor"
 import { useModels } from "@/hooks/useModels"
 import type { Settings } from "@/hooks/useSettings"
+import { useUpdateStatus } from "@/hooks/useUpdateStatus"
 import type { ThemeMode } from "@/hooks/useTheme"
 import {
   DEFAULT_REFINE_PROMPT,
@@ -765,6 +767,8 @@ function AboutSection({ settings }: { settings: Settings }) {
         <p className="text-sm text-muted-foreground">{t("app.tagline")}</p>
       </div>
 
+      <UpdateRow supported={supported} t={t} />
+
       <Separator />
 
       <div className="space-y-2">
@@ -799,6 +803,47 @@ function AboutSection({ settings }: { settings: Settings }) {
       >
         <Power className="mr-1.5 h-3.5 w-3.5" />
         {t("tray.quit")}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * Release check. The installers are ad-hoc signed (macOS) and unsigned
+ * (Windows), so this never swaps the app underneath the user: it names the
+ * newer version and opens the release page, checksums included.
+ */
+function UpdateRow({ supported, t }: { supported: boolean; t: (key: string) => string }) {
+  const { status, check } = useUpdateStatus()
+  if (!supported) return null
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0 text-xs text-muted-foreground">
+        {status.state === "checking" && t("update.checking")}
+        {status.state === "current" && t("update.upToDate")}
+        {status.state === "failed" && t("update.failed")}
+        {status.state === "outdated" && (
+          <button
+            type="button"
+            onClick={() => openExternal(status.url)}
+            className="inline-flex items-center gap-1 text-foreground hover:text-foreground/80"
+          >
+            {t("update.available").replace("{version}", status.latest)}
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={status.state === "checking"}
+        onClick={() => void check(true)}
+      >
+        <RefreshCw
+          className={cn("mr-1.5 h-3.5 w-3.5", status.state === "checking" && "animate-spin")}
+        />
+        {t("update.check")}
       </Button>
     </div>
   )

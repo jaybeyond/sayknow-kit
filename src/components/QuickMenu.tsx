@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Settings as SettingsIcon, Zap, ZapOff } from "lucide-react"
+import { Download, Settings as SettingsIcon, Zap, ZapOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import {
@@ -10,8 +10,9 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import type { Settings } from "@/hooks/useSettings"
+import { useUpdateStatus } from "@/hooks/useUpdateStatus"
 import { useT } from "@/i18n"
-import { isTauri } from "@/lib/runtime"
+import { isTauri, openExternal } from "@/lib/runtime"
 import { invoke } from "@tauri-apps/api/core"
 
 /**
@@ -28,6 +29,8 @@ export function QuickMenu({
 }) {
   const { t } = useT(settings.uiLocale)
   const [open, setOpen] = useState(false)
+  const { status } = useUpdateStatus()
+  const outdated = status.state === "outdated"
 
   async function openSettings() {
     setOpen(false)
@@ -46,10 +49,19 @@ export function QuickMenu({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
-          aria-label={t("header.settings")}
+          className="relative h-7 w-7"
+          aria-label={
+            outdated
+              ? `${t("header.settings")} · ${t("update.available").replace("{version}", status.latest)}`
+              : t("header.settings")
+          }
         >
           <SettingsIcon className="h-3.5 w-3.5" />
+          {/* The release check is only useful if it is visible without
+              opening anything: an unread dot rides the gear. */}
+          {outdated && (
+            <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary" />
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={6} className="w-[260px] p-3">
@@ -92,6 +104,21 @@ export function QuickMenu({
           </div>
 
           <Separator />
+
+          {outdated && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full text-xs"
+              onClick={() => {
+                setOpen(false)
+                void openExternal(status.url)
+              }}
+            >
+              <Download className="h-3 w-3" />
+              {t("update.available").replace("{version}", status.latest)}
+            </Button>
+          )}
 
           <Button
             variant="default"

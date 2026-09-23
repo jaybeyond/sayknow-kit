@@ -79,6 +79,7 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 🌓 **Light / dark / system** — auto-follows OS theme
 - 🌍 **8 UI languages** — auto-detected from system locale
 - 🔒 **System credential storage** — macOS Keychain or Windows Credential Manager; never plaintext
+- 🆕 **Release check** — once a day the gear marks a newer GitHub release and links to its page, checksums included. Nothing is ever installed behind you: the installers are ad-hoc signed (macOS) and unsigned (Windows), so the download stays a deliberate act.
 
 ## System requirements
 
