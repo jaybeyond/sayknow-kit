@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef } from "react"
 import { Loader2 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
@@ -7,7 +7,13 @@ import { useTheme } from "./hooks/useTheme"
 import { useT } from "./i18n"
 import { LoginPanel } from "./components/LoginPanel"
 import { TabbedPanel } from "./components/TabbedPanel"
-import { SettingsWindow } from "./components/SettingsWindow"
+// The settings screen lives in its own window, so the popover should not pay
+// for it in the chunk it loads on every open.
+const SettingsWindow = lazy(() =>
+  import("./components/SettingsWindow").then((m) => ({
+    default: m.SettingsWindow,
+  })),
+)
 import { isTauri } from "./lib/runtime"
 
 function isSettingsWindow(): boolean {
@@ -125,15 +131,23 @@ function SettingsRoot() {
   }
 
   return (
-    <SettingsWindow
-      settings={settings}
-      update={update}
-      onLogout={handleLogout}
-      themeMode={themeMode}
-      setThemeMode={setThemeMode}
-      credentialError={credentialError}
-      refreshOAuth={refreshOAuth}
-    />
+    <Suspense
+      fallback={
+        <div className="flex h-svh items-center justify-center bg-background">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <SettingsWindow
+        settings={settings}
+        update={update}
+        onLogout={handleLogout}
+        themeMode={themeMode}
+        setThemeMode={setThemeMode}
+        credentialError={credentialError}
+        refreshOAuth={refreshOAuth}
+      />
+    </Suspense>
   )
 }
 

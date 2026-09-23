@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import {
   Clipboard as ClipboardIcon,
   Languages as TranslateIcon,
+  Loader2,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -15,9 +16,18 @@ import { QuickMenu } from "./QuickMenu"
 import { useHistory } from "@/hooks/useHistory"
 import type { HistoryEntry } from "@/lib/history"
 import { TranslatePanel, type TranslateInjection } from "./TranslatePanel"
-import { ChatPanel } from "./ChatPanel"
-import { ClipboardPanel } from "./ClipboardPanel"
-import { ToolsPanel } from "./ToolsPanel"
+// Only the translate tab is on screen when the popover opens, so the other
+// three panels load when their tab is first chosen instead of riding along in
+// the chunk that has to arrive before anything is visible.
+const ChatPanel = lazy(() =>
+  import("./ChatPanel").then((m) => ({ default: m.ChatPanel })),
+)
+const ClipboardPanel = lazy(() =>
+  import("./ClipboardPanel").then((m) => ({ default: m.ClipboardPanel })),
+)
+const ToolsPanel = lazy(() =>
+  import("./ToolsPanel").then((m) => ({ default: m.ToolsPanel })),
+)
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { useT } from "@/i18n"
@@ -188,21 +198,29 @@ export function TabbedPanel(props: Props) {
 
       {/* Active panel */}
       <div className="flex-1 overflow-hidden">
-        {tab === "translate" ? (
-          <TranslatePanel
-            {...props}
-            injectedInput={pendingTranslateInput ?? undefined}
-          />
-        ) : tab === "chat" ? (
-          <ChatPanel settings={props.settings} update={props.update} />
-        ) : tab === "clipboard" ? (
-          <ClipboardPanel
-            settings={props.settings}
-            onSendToTranslate={sendToTranslate}
-          />
-        ) : (
-          <ToolsPanel settings={props.settings} active={tab === "tools"} />
-        )}
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          }
+        >
+          {tab === "translate" ? (
+            <TranslatePanel
+              {...props}
+              injectedInput={pendingTranslateInput ?? undefined}
+            />
+          ) : tab === "chat" ? (
+            <ChatPanel settings={props.settings} update={props.update} />
+          ) : tab === "clipboard" ? (
+            <ClipboardPanel
+              settings={props.settings}
+              onSendToTranslate={sendToTranslate}
+            />
+          ) : (
+            <ToolsPanel settings={props.settings} active={tab === "tools"} />
+          )}
+        </Suspense>
       </div>
     </div>
   )
