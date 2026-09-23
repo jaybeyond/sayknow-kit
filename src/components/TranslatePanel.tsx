@@ -104,6 +104,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const rewriteAbort = useRef<AbortController | null>(null)
   const rewriteMode = settings.workspaceMode === "rewrite"
   const abortRef = useRef<AbortController | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const [compactSplit, setCompactSplit] = useState(50)
   const [stackedSplit, setStackedSplit] = useState(36)
   const splitContainerRef = useRef<HTMLDivElement | null>(null)
@@ -141,7 +142,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
 
   // Pull in text injected from the clipboard history tab. nonce changes even
   // for identical text so the user can re-send the same entry repeatedly.
-  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!injectedInput) return
     const text = injectedInput.text.trim()
@@ -159,7 +160,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       update({ from: injectedInput.from, to: injectedInput.to })
     }
   }, [injectedInput?.nonce])
-  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   /** DeepL is only in play when it is selected, keyed, and covers the pair. */
   const deeplReady =
@@ -509,9 +510,17 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     window.setTimeout(() => setCopied(false), 1200)
   }
 
-  function applyRewrite(text: string) {
-    if (!text) return
-    setOutput(text)
+  function replaceInputWithRewrite(text: string) {
+    if (!text.trim()) return
+    abortRef.current?.abort()
+    changeInput(text)
+    // The previous translation belongs to the old draft, not this selection.
+    setOutput("")
+    setError(null)
+    setTranslating(false)
+    setRefining(false)
+    lastTranslatedRef.current = ""
+    inputRef.current?.focus()
   }
 
 
@@ -659,6 +668,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             style={{ width: `${compactSplit}%` }}
           >
             <Textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => changeInput(e.target.value)}
               onKeyDown={(e) => {
@@ -698,7 +708,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               aria-live="polite"
             >
               {rewriteMode ? (
-                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onApply={applyRewrite} />
+                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onUseAsInput={replaceInputWithRewrite} />
               ) : (
                 outputBody
               )}
@@ -712,6 +722,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
             style={{ height: `${stackedSplit}%` }}
           >
             <Textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => changeInput(e.target.value)}
               onKeyDown={(e) => {
@@ -760,7 +771,7 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
               aria-live="polite"
             >
               {rewriteMode ? (
-                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onApply={applyRewrite} />
+                <RewriteResults cards={rewriteCards} t={t} onCopy={copyRewrite} onUseAsInput={replaceInputWithRewrite} />
               ) : (
                 outputBody
               )}
@@ -930,12 +941,12 @@ function RewriteResults({
   cards,
   t,
   onCopy,
-  onApply,
+  onUseAsInput,
 }: {
   cards: RewriteCard[]
   t: (k: string) => string
   onCopy: (text: string) => void
-  onApply: (text: string) => void
+  onUseAsInput: (text: string) => void
 }) {
   if (cards.length === 0) {
     return <span className="text-muted-foreground">{t("rewrite.empty")}</span>
@@ -947,13 +958,13 @@ function RewriteResults({
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="text-[11px] font-medium">{card.label}</span>
             {!card.loading && card.text && (
-              <span className="flex gap-1">
-                <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => onApply(card.text)}>
-                  {t("rewrite.apply")}
-                </button>
-                <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => onCopy(card.text)}>
+              <span className="flex flex-wrap justify-end gap-1">
+                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px] active:scale-[0.98]" onClick={() => onUseAsInput(card.text)}>
+                  {t("rewrite.useAsInput")}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px] active:scale-[0.98]" onClick={() => onCopy(card.text)}>
                   {t("copy")}
-                </button>
+                </Button>
               </span>
             )}
           </div>
