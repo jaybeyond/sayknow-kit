@@ -171,6 +171,8 @@ jobs:
           const fs = require("fs");
           const path = require("path");
           const { hasExactLines, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
+          // Same helper name as the block above; this one has its own scope.
+          const keys = (value) => Object.keys(value).sort().join(",");
           const approval = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`, "utf8"));
           const run = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-run.json`, "utf8"));
           const jobs = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-jobs.json`, "utf8")).jobs;
