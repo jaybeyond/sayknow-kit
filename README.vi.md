@@ -51,6 +51,8 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 - 🌍 **8 ngôn ngữ giao diện** — tự nhận diện
 - 🔄 **36 ngôn ngữ dịch**
 - 🔒 **Lưu trữ an toàn** — thông tin xác thực trong kho hệ thống (macOS Keychain / Windows Credential Manager)
+- 🧹 **Dọn dẹp trong ứng dụng (macOS)** — cần Mole **1.38.1** đã được kiểm định hành vi không tương tác và không xác thực. Không mở Terminal hay login shell: chạy từng tác vụ một với quyền người dùng, bỏ qua các tác vụ cần quyền quản trị. Các phiên bản khác bị từ chối cho đến khi được kiểm định. Xem trước không xoá gì (Mole vẫn có thể ghi báo cáo của nó). Dọn dẹp thật sự sẽ thay đổi tệp và cài đặt của bạn. Khi hết thời gian chờ hoặc thoát ứng dụng, chỉ nhóm tiến trình của chính nó bị kết thúc.
+- 🆕 **Kiểm tra phiên bản mới** — mỗi ngày một lần ứng dụng hỏi bản phát hành mới nhất trên GitHub, chấm dấu lên bánh răng và dẫn tới trang phát hành kèm checksum. Không tự cài đặt sau lưng bạn: macOS ký ad hoc, Windows không ký, nên việc tải về vẫn do bạn quyết định.
 
 ## Yêu cầu hệ thống
 

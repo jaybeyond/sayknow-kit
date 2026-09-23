@@ -51,6 +51,8 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 - 🌍 **8 idiomas de interfaz** — detección automática
 - 🔄 **36 idiomas de traducción**
 - 🔒 **Almacenamiento seguro** — credenciales en el almacén del sistema (macOS Keychain / Windows Credential Manager)
+- 🧹 **Limpieza en la app (macOS)** — requiere Mole **1.38.1**, cuyo comportamiento no interactivo y sin autenticación está verificado. No abre Terminal ni un shell de login: ejecuta una tarea a la vez con permisos de usuario y omite las que exigen administrador. Otras versiones se rechazan hasta verificarlas. La vista previa no borra nada (Mole sí puede escribir su propio informe). La limpieza real modifica archivos y ajustes del usuario. Al agotarse el tiempo o al salir, solo termina su propio grupo de procesos.
+- 🆕 **Comprobación de versión** — una vez al día consulta la última publicación en GitHub, marca el engranaje y enlaza a su página con los checksums. Nunca instala nada por su cuenta: en macOS la firma es ad hoc y en Windows no hay firma, así que descargar sigue siendo una decisión tuya.
 
 ## Requisitos
 
