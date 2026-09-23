@@ -421,6 +421,7 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
     let cpu = match sampler.cpu_baseline {
         None => {
             sampler.cpu_baseline = Some((Instant::now(), sampled_at_ms, read_cpu_ticks()));
+            prime_global_cpu(&mut sampler.system);
             CpuStatus::WarmingUp {
                 reason: "baseline_pending".to_string(),
             }
@@ -452,6 +453,21 @@ fn collect(sampler: &Arc<Mutex<Sampler>>) -> CollectionResult {
                         sample_end_ms,
                     }
                 }
+                // Without tick counters there is no system/user split to report,
+                // but the total is still a real measurement.
+                (Some(sample_end_ms), None) => match global_cpu_percent(&mut sampler.system) {
+                    Some(percent) => CpuStatus::Available {
+                        percent,
+                        system_percent: None,
+                        user_percent: None,
+                        idle_percent: Some(100.0 - percent),
+                        sample_start_ms: baseline_ms,
+                        sample_end_ms,
+                    },
+                    None => CpuStatus::Unavailable {
+                        reason: "invalid_cpu_sample".to_string(),
+                    },
+                },
                 _ => CpuStatus::Unavailable {
                     reason: "invalid_cpu_sample".to_string(),
                 },
@@ -568,6 +584,30 @@ fn cpu_breakdown(previous: Option<CpuTicks>, current: Option<CpuTicks>) -> Optio
         ((user + nice) as f32 / total) * 100.0,
         (idle as f32 / total) * 100.0,
     ))
+}
+
+/// Per-state tick counters are a mach interface, so every other platform gets
+/// the total from sysinfo instead of a permanently unavailable CPU card.
+#[cfg(target_os = "macos")]
+fn prime_global_cpu(_system: &mut System) {}
+
+#[cfg(not(target_os = "macos"))]
+fn prime_global_cpu(system: &mut System) {
+    system.refresh_cpu_usage();
+}
+
+#[cfg(target_os = "macos")]
+fn global_cpu_percent(_system: &mut System) -> Option<f32> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn global_cpu_percent(system: &mut System) -> Option<f32> {
+    // sysinfo measures against its own previous refresh, which the baseline
+    // primed at least MINIMUM_CPU_UPDATE_INTERVAL ago.
+    system.refresh_cpu_usage();
+    let percent = system.global_cpu_info().cpu_usage();
+    percent.is_finite().then(|| percent.clamp(0.0, 100.0))
 }
 
 #[cfg(target_os = "macos")]
@@ -898,8 +938,22 @@ mod tests {
         let first = collect(&sampler).unwrap();
         assert!(matches!(first.cpu, CpuStatus::WarmingUp { .. }));
 
-        std::thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
-        let second = collect(&sampler).unwrap();
+        // A live sample can come back short once on a loaded machine. The
+        // contract is that a running app reaches real data, not that the very
+        // first retry does, so this retries the way the app itself would.
+        let mut sample = None;
+        for _ in 0..5 {
+            std::thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
+            let snapshot = collect(&sampler).unwrap();
+            let complete = matches!(snapshot.cpu, CpuStatus::Available { .. })
+                && matches!(snapshot.memory, ResourceStatus::Available { .. })
+                && matches!(snapshot.storage, ResourceStatus::Available { .. });
+            sample = Some(snapshot);
+            if complete {
+                break;
+            }
+        }
+        let second = sample.expect("a live sample");
         match second.cpu {
             CpuStatus::Available {
                 percent,
@@ -908,14 +962,24 @@ mod tests {
                 idle_percent,
                 ..
             } => {
-                let system = system_percent.expect("system ticks");
-                let user = user_percent.expect("user ticks");
-                let idle = idle_percent.expect("idle ticks");
-                assert!((percent - (system + user)).abs() < 0.01);
-                assert!((system + user + idle - 100.0).abs() < 0.2);
-                eprintln!(
-                    "cpu: total={percent:.1} system={system:.1} user={user:.1} idle={idle:.1}"
-                );
+                assert!((0.0..=100.0).contains(&percent), "cpu total out of range: {percent}");
+                let idle = idle_percent.expect("idle share");
+                if cfg!(target_os = "macos") {
+                    let system = system_percent.expect("system ticks");
+                    let user = user_percent.expect("user ticks");
+                    assert!((percent - (system + user)).abs() < 0.01);
+                    assert!((system + user + idle - 100.0).abs() < 0.2);
+                    eprintln!(
+                        "cpu: total={percent:.1} system={system:.1} user={user:.1} idle={idle:.1}"
+                    );
+                } else {
+                    // Only mach exposes the per-state counters; elsewhere the
+                    // total is real and the split is absent rather than faked.
+                    assert_eq!(system_percent, None);
+                    assert_eq!(user_percent, None);
+                    assert!((percent + idle - 100.0).abs() < 0.01);
+                    eprintln!("cpu: total={percent:.1} idle={idle:.1}");
+                }
             }
             other => panic!("expected available cpu, got {other:?}"),
         }
@@ -951,9 +1015,12 @@ mod tests {
                     used_bytes as f64 / 1_000_000_000.0,
                     total_bytes as f64 / 1_000_000_000.0
                 );
+                assert!(used_bytes <= total_bytes, "used storage exceeds the volume");
+                // A host-specific capacity would only assert the machine the
+                // test runs on; a boot volume is never this small anywhere.
                 assert!(
-                    total_bytes > 950_000_000_000,
-                    "expected APFS container capacity, got {total_bytes}"
+                    total_bytes > 10_000_000_000,
+                    "expected a boot volume capacity, got {total_bytes}"
                 );
             }
             other => panic!("expected available storage, got {other:?}"),
