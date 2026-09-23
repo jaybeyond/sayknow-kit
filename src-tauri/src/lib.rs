@@ -898,7 +898,7 @@ fn emit_and_persist_ocp_log(app: &AppHandle, line: impl AsRef<str>) {
 
 #[cfg(target_os = "windows")]
 fn exe_name(name: &str) -> String {
-    format!("{}.exe", name)
+    format!("{name}.exe")
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -958,7 +958,7 @@ fn node_archive_url() -> String {
     #[cfg(not(target_os = "windows"))]
     return format!("https://nodejs.org/dist/{NODE_VERSION}/{base}.tar.gz");
     #[cfg(target_os = "windows")]
-    return format!("https://nodejs.org/dist/{}/{}.zip", NODE_VERSION, base);
+    return format!("https://nodejs.org/dist/{NODE_VERSION}/{base}.zip");
 }
 
 fn private_node_bin_dir() -> Result<PathBuf, String> {
