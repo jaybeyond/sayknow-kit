@@ -45,6 +45,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: ${{ matrix.target }}
+          # The pinned toolchain ships without clippy unless it is asked for,
+          # and the lint gate below is only a gate if the linter exists.
+          components: clippy
 
       # protoc generates the Cursor agent protocol types in build.rs; the
       # build fails with an install hint without it.
