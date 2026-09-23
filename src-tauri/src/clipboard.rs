@@ -177,7 +177,7 @@ fn cap_entries(s: &mut ClipboardState) {
             unpinned_room -= 1;
         }
     }
-    kept.sort_by(|a, b| b.ts.cmp(&a.ts));
+    kept.sort_by_key(|e| std::cmp::Reverse(e.ts));
     s.entries = kept;
 }
 

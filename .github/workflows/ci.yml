@@ -88,6 +88,11 @@ jobs:
           if (bad.length) { console.error("version mismatch:", vs); process.exit(1); }
           console.log("versions aligned:", pkg);
           '
+      # The lint that caught IOKit's matching dictionary being declared as a
+      # CFString. Warnings are denied so the next one cannot pile up unseen.
+      - name: Rust lint (clippy)
+        run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+
       - name: Rust tests (--locked)
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 

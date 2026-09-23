@@ -268,7 +268,7 @@ async fn run_turn(
                             transport::send_message(&mut send, &reply).await?;
                         }
                         Action::Exec(exec) => {
-                            for reply in exec_host.handle(exec).await {
+                            for reply in exec_host.handle(*exec).await {
                                 transport::send_message(&mut send, &reply).await?;
                             }
                         }

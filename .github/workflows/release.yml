@@ -355,7 +355,9 @@ jobs:
         run: pnpm build
 
       - name: Rust quality gates
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        run: |
+          cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Build installers without writing a GitHub Release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0

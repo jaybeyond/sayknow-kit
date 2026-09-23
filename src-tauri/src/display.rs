@@ -210,7 +210,7 @@ mod iokit_backlight {
     impl Drop for BacklightService {
         fn drop(&mut self) {
             unsafe {
-                CFRelease(self.key as *const ());
+                CFRelease(self.key);
                 IOObjectRelease(self.service);
             }
         }
@@ -429,7 +429,6 @@ mod skylight {
     use std::ffi::c_void;
     use std::sync::OnceLock;
 
-    type CgDirectDisplayId = u32;
     type CgError = i32;
     type CgsConfigureDisplayEnabled = unsafe extern "C" fn(*mut c_void, u32, bool) -> i32;
 
@@ -462,12 +461,12 @@ mod skylight {
                 fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
             }
             const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
-            let p = dlsym(RTLD_DEFAULT, b"CGSConfigureDisplayEnabled\0".as_ptr() as *const i8);
+            let p = dlsym(RTLD_DEFAULT, c"CGSConfigureDisplayEnabled".as_ptr());
             if p.is_null() {
                 log::info!("CGSConfigureDisplayEnabled is not available on this macOS");
                 return None;
             }
-            Some(std::mem::transmute(p))
+            Some(std::mem::transmute::<*mut c_void, CgsConfigureDisplayEnabled>(p))
         })
     }
 
@@ -665,12 +664,6 @@ mod gamma_dim {
         read_table(display).is_some()
     }
 
-    /// The system backlight level 0.0-1.0, straight from the registry.
-    /// This is the value the keyboard keys change.
-    pub fn system_level() -> Option<f64> {
-        super::iokit_backlight::system_backlight_level()
-    }
-
     /// Current slider value = the gamma offset alone. The slider is 0-100%
     /// of the AVAILABLE light: 100% means no dimming (whatever the backlight
     /// gives, we show all of it), 0% is fully dark, and the system backlight
@@ -686,16 +679,6 @@ mod gamma_dim {
         (factor * 100.0).round().clamp(0.0, 100.0) as u8
     }
 
-    /// Scale the CAPTURED ORIGINAL by the factor — never the live table.
-    ///
-    /// The first version multiplied the current table on every set, so each
-    /// drag compounded: 40% then 60% landed at orig×0.4×0.4×0.6… and the
-    /// slider could only ever make the screen darker, no matter which way it
-    /// moved. That is exactly the reported one-directional bug.
-    pub fn set_percent(display: CgDirectDisplayId, percent: u8) -> bool {
-        set_gamma_offset(display, percent as f64 / 100.0)
-    }
-
     /// Slider entry: percent is how much of the available light to show.
     /// 100% = gamma 1.0 (no dimming), 0% = gamma 0.0 (fully dark). The
     /// system backlight is a base the user sets with F1/F2; our slider only
@@ -709,11 +692,11 @@ mod gamma_dim {
             // First touch of this panel: whatever is running now (Night Shift,
             // True Tone) becomes the base we scale and later restore.
             let mut originals = ORIGINAL.lock().unwrap();
-            if !originals.contains_key(&display) {
+            if let std::collections::btree_map::Entry::Vacant(e) = originals.entry(display) {
                 let Some((red, green, blue)) = read_table(display) else {
                     return false;
                 };
-                originals.insert(display, Original { red, green, blue });
+                e.insert(Original { red, green, blue });
             }
             let o = &originals[&display];
             let factor = factor as f32;
@@ -807,8 +790,6 @@ pub mod brightness_tap {
     type CfRunLoopRef = *mut ();
     type CfRunLoopSourceRef = *mut ();
     type CfStringRef = *const ();
-    type MachPort = u32;
-
     type CGEventTapProxy = *const ();
     type CGEventType = u32;
     type CGEventRef = *mut ();
@@ -877,7 +858,6 @@ pub mod brightness_tap {
         ) -> CfRunLoopSourceRef;
         fn CFRunLoopGetCurrent() -> CfRunLoopRef;
         fn CFRunLoopAddSource(rl: CfRunLoopRef, source: CfRunLoopSourceRef, mode: CfStringRef);
-        fn CFRunLoopRun();
         static kCFRunLoopDefaultMode: CfStringRef;
     }
 
@@ -900,7 +880,7 @@ pub mod brightness_tap {
             #[link_name = "objc_msgSend"]
             fn msg_send_d1(ev: *const AnyObject, sel: Sel) -> isize;
         }
-        let cls = objc_getClass(b"NSEvent\0".as_ptr() as *const std::ffi::c_char);
+        let cls = objc_getClass(c"NSEvent".as_ptr());
         if cls.is_null() {
             return None;
         }
@@ -942,7 +922,7 @@ pub mod brightness_tap {
                 // Schedule the gamma reset on the NEXT main-runloop pass.
                 unsafe {
                     dispatch_async_f(
-                        &_dispatch_main_q as *const () as *mut (),
+                        &_dispatch_main_q as *const DispatchQueue as *mut (),
                         std::ptr::null_mut(),
                         do_gamma_reset,
                     );
@@ -975,17 +955,14 @@ pub mod brightness_tap {
     // dlsym("dispatch_get_main_queue") returns NULL while the underlying
     // symbol resolves fine.
     extern "C" {
-        static _dispatch_main_q: ();
+        /// Opaque: only its address is ever used, and `()` is not FFI-safe.
+        static _dispatch_main_q: DispatchQueue;
         fn dispatch_async_f(queue: *mut (), context: *mut (), work: extern "C" fn(*mut ()));
     }
-    pub(super) fn dispatch_async_main(context: *mut (), work: extern "C" fn(*mut ())) {
-        unsafe {
-            dispatch_async_f(
-                &_dispatch_main_q as *const () as *mut (),
-                context,
-                work,
-            );
-        }
+
+    #[repr(C)]
+    struct DispatchQueue {
+        _opaque: [u8; 0],
     }
 
     /// Runs on the main queue (main runloop) AFTER the tap callback has
@@ -1070,7 +1047,7 @@ pub fn restore_builtin_gamma() {}
 #[cfg(target_os = "macos")]
 fn builtin_gamma_supported() -> bool {
     cg_builtin_id()
-        .map(|id| gamma_dim::supported(id))
+        .map(gamma_dim::supported)
         .unwrap_or(false)
 }
 
@@ -1175,7 +1152,7 @@ fn resolve_cg_id(preferred: Option<u32>, identity: Option<&str>) -> Option<u32> 
         use core_graphics::*;
         let online = cg_display_ids(true);
         if let Some(id) = preferred {
-            if online.iter().any(|online_id| *online_id == id)
+            if online.contains(&id)
                 || unsafe { CGDisplayIsOnline(id) != 0 }
             {
                 return Some(id);
@@ -1737,7 +1714,7 @@ mod ddc_worker {
     }
 
     fn ddc_error(error: impl ToString) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, error.to_string())
+        io::Error::other(error.to_string())
     }
 
     fn refresh_if_missing(displays: &mut Vec<CachedDisplay>, id: &str) {
@@ -1991,8 +1968,7 @@ mod ddc_worker {
             ));
         };
         if !panel_gamma_set(cg_id, value) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "software brightness rejected by CoreGraphics",
             ));
         }
@@ -2282,8 +2258,7 @@ mod ddc_worker {
             };
             cached.cg_id = Some(cg_id);
             if !set_display_enabled(cg_id, true, cached.saved_origin) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "failed to reconnect the display",
                 ));
             }
@@ -2319,8 +2294,7 @@ mod ddc_worker {
         dim_panel_backlight_best_effort(cached, 0);
         let _ = set_panel_vcp_best_effort(cached, VCP_CONTRAST, 0);
         if !panel_gamma_set(cg_id, 0) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "software blackout rejected by CoreGraphics",
             ));
         }
@@ -2349,8 +2323,7 @@ mod ddc_worker {
         // factor would leave a DDC panel permanently software-dimmed after
         // every power cycle.
         if !panel_gamma_set(cg_id, 100) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "software wake rejected by CoreGraphics",
             ));
         }
@@ -2361,8 +2334,7 @@ mod ddc_worker {
             // gamma factor we just cleared, so put the remembered level
             // there instead of leaving the panel at full blast.
             if !panel_gamma_set(cg_id, restore) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "software wake rejected by CoreGraphics",
                 ));
             }
@@ -2763,7 +2735,7 @@ pub fn set_builtin_backlight(app: tauri::AppHandle, value: i64) -> Result<u8, St
             let _ = window.show();
             let _ = window.set_focus();
         }
-        return Ok(actual);
+        Ok(actual)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2780,7 +2752,7 @@ pub fn request_accessibility_permission() -> bool {
     {
         let trusted = crate::accessibility_backlight::is_trusted(true);
         probe("request_accessibility_permission", _probe_started);
-        return trusted;
+        trusted
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2795,7 +2767,7 @@ pub fn reset_accessibility_permission() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     {
         crate::accessibility_backlight::reset_grant()?;
-        return Ok(crate::accessibility_backlight::is_trusted(true));
+        Ok(crate::accessibility_backlight::is_trusted(true))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2839,7 +2811,7 @@ pub fn accessibility_status() -> AccessibilityStatus {
                 std::env::current_exe().ok(),
             );
         });
-        return status;
+        status
     }
     #[cfg(not(target_os = "macos"))]
     {

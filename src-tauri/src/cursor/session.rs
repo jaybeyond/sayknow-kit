@@ -15,10 +15,14 @@ use super::request::BlobStore;
 /// What the driver should do with a server message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    /// Write this client message back on the same stream.
-    Send(pb::AgentClientMessage),
+    /// Write this client message back on the same stream. Boxed: this variant
+    /// is two orders of magnitude larger than the streaming text ones, and
+    /// every delta would otherwise carry its footprint.
+    Send(Box<pb::AgentClientMessage>),
     /// Run an exec request; the driver answers asynchronously.
-    Exec(pb::ExecServerMessage),
+    /// Run an exec request; the driver answers asynchronously. Boxed for the
+    /// same reason as `Send`.
+    Exec(Box<pb::ExecServerMessage>),
     /// Assistant text arrived.
     Delta(String),
     /// Model reasoning text arrived.
@@ -158,14 +162,14 @@ impl Session {
             }
         };
 
-        vec![Action::Send(pb::AgentClientMessage {
+        vec![Action::Send(Box::new(pb::AgentClientMessage {
             message: Some(pb::agent_client_message::Message::KvClientMessage(
                 pb::KvClientMessage {
                     id,
                     message: Some(reply),
                 },
             )),
-        })]
+        }))]
     }
 
     /// The context handshake is answered here; everything else is handed to
@@ -175,9 +179,12 @@ impl Session {
 
         match exec.message {
             Some(E::RequestContextArgs(_)) => {
-                vec![Action::Send(request_context_reply(exec.id, exec.exec_id))]
+                vec![Action::Send(Box::new(request_context_reply(
+                    exec.id,
+                    exec.exec_id,
+                )))]
             }
-            Some(_) => vec![Action::Exec(exec)],
+            Some(_) => vec![Action::Exec(Box::new(exec))],
             None => Vec::new(),
         }
     }
@@ -522,7 +529,7 @@ mod tests {
             let message = pb::AgentServerMessage::decode(f.payload.as_slice()).expect("decodes");
             for action in session.handle(message) {
                 match action {
-                    Action::Send(reply) => written.push(reply),
+                    Action::Send(reply) => written.push(*reply),
                     Action::Delta(text) => deltas.push(text),
                     Action::Done => done = true,
                     _ => {}

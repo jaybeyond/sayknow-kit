@@ -747,12 +747,7 @@ fn find_running_ocp_port(user_base_url: Option<&str>) -> Option<u16> {
             }
         }
     }
-    for p in candidates {
-        if port_open(p) && looks_like_ocp(p) {
-            return Some(p);
-        }
-    }
-    None
+    candidates.into_iter().find(|&p| port_open(p) && looks_like_ocp(p))
 }
 
 /// Pick a port we can bind ourselves: prefer 3456, then the next free in
@@ -2156,11 +2151,10 @@ pub fn run() {
                                         win.is_focused().unwrap_or(true),
                                         shown_at,
                                         state.shown_at.load(Ordering::Relaxed),
-                                    ) {
-                                        if win.hide().is_ok() {
+                                    )
+                                        && win.hide().is_ok() {
                                             state.popover_open.store(false, Ordering::Relaxed);
                                         }
-                                    }
                                 });
                             });
                         }

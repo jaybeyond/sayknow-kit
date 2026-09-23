@@ -348,7 +348,7 @@ impl ExecHost {
 
         let written = std::path::Path::new(&path)
             .parent()
-            .map(|parent| std::fs::create_dir_all(parent))
+            .map(std::fs::create_dir_all)
             .unwrap_or(Ok(()))
             .and_then(|_| std::fs::write(&path, &bytes));
 
@@ -631,7 +631,6 @@ impl ExecHost {
                         command: args.command.clone(),
                         working_directory: args.working_directory.clone(),
                         pid: Some(pid),
-                        ..Default::default()
                     },
                 )
             }

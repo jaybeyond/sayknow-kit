@@ -131,6 +131,9 @@ fn percent_decode(raw: &str) -> String {
 /// when it is taken we fall back to an ephemeral port and report the real one
 /// so the caller can advertise a matching `redirect_uri`.
 #[tauri::command]
+// The parameter list is the IPC signature the webview calls by name; grouping
+// it into a struct would rename every field on the JavaScript side.
+#[allow(clippy::too_many_arguments)]
 pub fn oauth_callback_start(
     app: AppHandle,
     state: tauri::State<'_, OAuthCallbackState>,

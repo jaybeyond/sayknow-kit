@@ -122,8 +122,7 @@ where
             continue;
         }
         if !celsius.is_finite()
-            || celsius < MIN_PLAUSIBLE_CELSIUS
-            || celsius > MAX_PLAUSIBLE_CELSIUS
+            || !(MIN_PLAUSIBLE_CELSIUS..=MAX_PLAUSIBLE_CELSIUS).contains(&celsius)
         {
             continue;
         }

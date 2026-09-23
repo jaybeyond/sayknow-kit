@@ -611,6 +611,9 @@ fn global_cpu_percent(system: &mut System) -> Option<f32> {
 }
 
 #[cfg(target_os = "macos")]
+// libc deprecates mach_host_self in favour of the mach2 crate; the symbol is
+// still exported and correct, and one host port is not worth a dependency.
+#[allow(deprecated)]
 fn read_cpu_ticks() -> Option<CpuTicks> {
     unsafe {
         let mut info = std::mem::MaybeUninit::<libc::host_cpu_load_info>::uninit();
@@ -643,6 +646,7 @@ fn read_cpu_ticks() -> Option<CpuTicks> {
 /// `used = total - available`. Activity Monitor matches this much more closely
 /// than `sysinfo::System::used_memory()`.
 #[cfg(target_os = "macos")]
+#[allow(deprecated)] // mach_host_self, as above.
 fn macos_memory_status(sampled_at_ms: u64) -> Option<ResourceStatus> {
     unsafe {
         let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::uninit();
@@ -1035,7 +1039,11 @@ mod tests {
                 assert_eq!(provenance, SOC_DIE_PROVENANCE);
                 assert!(!adapter_id.is_empty());
                 assert!((5.0..=125.0).contains(&celsius));
-                assert!(cfg!(target_os = "macos"), "only macOS has a die adapter");
+                // Reaching an available die reading anywhere else means the
+                // adapter answered on a platform that has no such sensor.
+                if !cfg!(target_os = "macos") {
+                    panic!("only macOS has a die adapter");
+                }
             }
             TemperatureStatus::Unavailable { ref reason } => {
                 assert_eq!(reason, NO_PACKAGE_SENSOR);
