@@ -754,10 +754,8 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Writes real Control Center brightness; run with SAYKNOW_LIVE_BACKLIGHT=1 -- --ignored"]
     fn live_control_center_backlight() {
-        if std::env::var("SAYKNOW_LIVE_BACKLIGHT").ok().as_deref() != Some("1") {
-            return;
-        }
         let mid = set(60).expect("Control Center 60% write failed");
         assert!((55..=65).contains(&mid), "expected about 60%, got {mid}%");
         let full = set(100).expect("Control Center 100% restore failed");

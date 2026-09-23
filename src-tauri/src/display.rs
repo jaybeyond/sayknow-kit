@@ -2950,11 +2950,9 @@ mod tests {
     /// touches a real display. Exercises the real read/capture/scale/write
     /// chain on the built-in panel and asserts both directions.
     #[test]
+    #[ignore = "Drives real displays; run with SAYKNOW_LIVE_GAMMA=1 -- --ignored"]
     #[cfg(target_os = "macos")]
     fn live_gamma_is_bidirectional() {
-        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
-            return;
-        }
         let Some(d) = cg_builtin_id() else {
             eprintln!("no builtin; skip");
             return;
@@ -3016,11 +3014,9 @@ mod tests {
     /// Live enumeration through the exact list() path; CI-safe (empty on
     /// machines with no DDC displays).
     #[test]
+    #[ignore = "Drives real displays; run with SAYKNOW_LIVE_GAMMA=1 -- --ignored"]
     #[cfg(target_os = "macos")]
     fn live_ddc_enumerate() {
-        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
-            return;
-        }
         for d in list(None) {
             eprintln!(
                 "{} kind={} main={} bright={:?} power={:?} ctrl={} method={}",
@@ -3053,11 +3049,9 @@ mod tests {
     /// The fallback for monitors that never answer DDC: software gamma on the
     /// external panel itself. Opt-in only — it visibly dims the monitor.
     #[test]
+    #[ignore = "Drives real displays; run with SAYKNOW_LIVE_GAMMA=1 -- --ignored"]
     #[cfg(target_os = "macos")]
     fn live_external_gamma_fallback() {
-        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
-            return;
-        }
         let Some(external) = ddc_worker::list(None)
             .into_iter()
             .find(|display| display.kind == "external")
@@ -3085,11 +3079,9 @@ mod tests {
     /// not just against a vector of bytes. Prints what each panel advertises:
     /// that line is the evidence for any monitor that will not wake.
     #[test]
+    #[ignore = "Drives real displays; run with SAYKNOW_LIVE_GAMMA=1 -- --ignored"]
     #[cfg(target_os = "macos")]
     fn live_ddc_advertises_its_power_values() {
-        if std::env::var("SAYKNOW_LIVE_GAMMA").ok().as_deref() != Some("1") {
-            return;
-        }
         for mut display in ddc_hi::Display::enumerate() {
             let id = ddc_id(&display.info, ddc_cg_id(&display));
             let values = display
@@ -3119,11 +3111,9 @@ mod tests {
     /// Physical OFF→ON cycle through the same retained worker handle used by
     /// the app. Opt-in only: this visibly blanks the external monitor.
     #[test]
+    #[ignore = "Power-cycles a real monitor; run with SAYKNOW_LIVE_DDC_POWER=1 -- --ignored"]
     #[cfg(target_os = "macos")]
     fn live_external_power_cycle() {
-        if std::env::var("SAYKNOW_LIVE_DDC_POWER").ok().as_deref() != Some("1") {
-            return;
-        }
         let external = ddc_worker::list(None)
             .into_iter()
             .find(|display| display.kind == "external")
