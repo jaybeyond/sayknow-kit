@@ -236,7 +236,7 @@ jobs:
             if (Object.keys(entry).sort().join(",") !== updaterKeys) throw new Error("updater keys are not exact");
             if (entry.platform !== platform || entry.name !== expectedUpdater[platform]) throw new Error(`unexpected updater payload: ${entry.name}`);
             if (!/^[0-9a-f]{64}$/.test(entry.sha256) || !Number.isInteger(entry.bytes) || entry.bytes <= 0) throw new Error("invalid updater payload");
-            if (!entry.signature.includes("untrusted comment:")) throw new Error(`unsigned updater payload: ${entry.name}`);
+            if (!/^[A-Za-z0-9+/=]+$/.test(entry.signature) || !Buffer.from(entry.signature, "base64").toString("utf8").includes("untrusted comment:")) throw new Error(`unsigned updater payload: ${entry.name}`);
             const payload = path.join(process.env.RUNNER_TEMP, "rehearsal", entry.name);
             if (!fs.existsSync(payload) || fs.statSync(payload).size !== entry.bytes) throw new Error(`updater size mismatch: ${entry.name}`);
             if (crypto.createHash("sha256").update(fs.readFileSync(payload)).digest("hex") !== entry.sha256) throw new Error(`updater digest mismatch: ${entry.name}`);
@@ -703,11 +703,18 @@ jobs:
           // release that cannot update itself.
           const macUpdater = exactlyOne(matches(".app.tar.gz"), "macOS updater payload");
           const winUpdater = exe;
+          // Tauri writes the sidecar as base64 of the minisign signature file,
+          // which is also exactly what latest.json carries, so the check has to
+          // decode before it can claim the payload is signed at all.
+          const isMinisign = (value) => {
+            if (!/^[A-Za-z0-9+/=]+$/.test(value)) return false;
+            return Buffer.from(value, "base64").toString("utf8").includes("untrusted comment:");
+          };
           const signatureFor = (source) => {
             const sig = `${source}.sig`;
             if (!fs.existsSync(sig)) throw new Error(`missing minisign signature for ${path.basename(source)}`);
             const text = fs.readFileSync(sig, "utf8").trim();
-            if (!text.includes("untrusted comment:")) throw new Error(`malformed signature for ${path.basename(source)}`);
+            if (!isMinisign(text)) throw new Error(`malformed signature for ${path.basename(source)}`);
             return text;
           };
           const describeUpdater = (source, name, platform) => {

@@ -30,7 +30,7 @@ const updater = {
     name: "SayKnow-Kit_0.2.9_aarch64.app.tar.gz",
     platform: "darwin-aarch64",
     sha256: digest,
-    signature: "untrusted comment: minisign signature\nRWQ0000",
+    signature: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHNpZ25hdHVyZQpSV1EwMDAwCg==",
   },
 };
 const approval = {
@@ -138,7 +138,7 @@ test("rehearsal binding rejects stale candidate, run, workflow, artifact, postur
       {
         ...approval,
         updater: {
-          "darwin-aarch64": { ...updater["darwin-aarch64"], signature: "untrusted comment: other\nRWQ1111" },
+          "darwin-aarch64": { ...updater["darwin-aarch64"], signature: "dW50cnVzdGVkIGNvbW1lbnQ6IG90aGVyClJXUTExMTEK" },
         },
       },
       rehearsal,
