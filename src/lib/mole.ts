@@ -4,6 +4,8 @@ import { isTauri } from "./runtime"
 export type MoleInfo = {
   path: string
   version: string
+  supported: boolean
+  required_version: string
 }
 
 export type MoleRun = {
@@ -98,10 +100,14 @@ function diskEntry(value: unknown): MoleDiskEntry[] {
 }
 
 export function stripAnsi(text: string): string {
+  // Stripping terminal output means matching the control bytes themselves:
+  // ESC (0x1B) starts CSI/OSC sequences and BEL (0x07) terminates an OSC title.
+  /* eslint-disable no-control-regex */
   return text
     .replace(/\u001B\[[0-9;]*[A-Za-z]/g, "")
     .replace(/\u001B\][^\u0007]*\u0007/g, "")
     .replace(/\r/g, "")
+  /* eslint-enable no-control-regex */
 }
 
 const SIZE = /(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|GiB|MiB|KiB|Gi|Mi|Ki)\b/i

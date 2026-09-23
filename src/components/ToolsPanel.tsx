@@ -433,7 +433,7 @@ function AccessibilityNotice({
 
 function metricLine(label: string, value: string) {
   return (
-    <div className="flex items-baseline justify-between gap-2 text-[11px]">
+    <div key={label} className="flex items-baseline justify-between gap-2 text-[11px]">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-right font-medium tabular-nums">{value}</span>
     </div>
