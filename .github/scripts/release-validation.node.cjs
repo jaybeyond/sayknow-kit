@@ -24,7 +24,20 @@ const artifact = {
   smoke: { format: "dmg", installed: true, launched: true, os_build: "24E263", runner: "macos15-20260801", uninstalled: true },
   version: "0.2.9",
 };
-const approval = { artifacts: [artifact], signing_posture: { macos: "adhoc", windows: "unsigned" } };
+const updater = {
+  "darwin-aarch64": {
+    bytes: 11,
+    name: "SayKnow-Kit_0.2.9_aarch64.app.tar.gz",
+    platform: "darwin-aarch64",
+    sha256: digest,
+    signature: "untrusted comment: minisign signature\nRWQ0000",
+  },
+};
+const approval = {
+  artifacts: [artifact],
+  signing_posture: { macos: "adhoc", windows: "unsigned" },
+  updater,
+};
 const context = {
   candidateSha: artifact.candidate_sha,
   runAttempt: 1,
@@ -39,6 +52,7 @@ const rehearsal = {
   run_id: context.runId,
   schema: "sayknow.rehearsal/v1",
   signing_posture: approval.signing_posture,
+  updater: approval.updater,
   version: context.version,
   workflow_sha256: context.workflowSha256,
 };
@@ -93,7 +107,7 @@ test("checksum parser rejects malformed and duplicate entries", () => {
   assert.throws(() => parseChecksums(`${digest}  artifact.dmg\n${digest}  artifact.dmg\n`));
 });
 
-test("rehearsal binding rejects stale candidate, run, workflow, artifact, and posture", () => {
+test("rehearsal binding rejects stale candidate, run, workflow, artifact, posture, and updater payload", () => {
   validateRehearsalBinding(approval, rehearsal, context);
   for (const [key, value] of [
     ["candidate_sha", "d".repeat(40)],
@@ -104,6 +118,33 @@ test("rehearsal binding rejects stale candidate, run, workflow, artifact, and po
   }
   assert.throws(() => validateRehearsalBinding({ ...approval, artifacts: [] }, rehearsal, context));
   assert.throws(() => validateRehearsalBinding({ ...approval, signing_posture: { macos: "developer-id", windows: "unsigned" } }, rehearsal, context));
+  // What the app installs by itself is bound as tightly as what a human
+  // downloads: a swapped payload, digest or signature is not approved.
+  assert.throws(() => validateRehearsalBinding({ ...approval, updater: {} }, rehearsal, context));
+  assert.throws(() =>
+    validateRehearsalBinding(
+      {
+        ...approval,
+        updater: {
+          "darwin-aarch64": { ...updater["darwin-aarch64"], sha256: "f".repeat(64) },
+        },
+      },
+      rehearsal,
+      context,
+    ),
+  );
+  assert.throws(() =>
+    validateRehearsalBinding(
+      {
+        ...approval,
+        updater: {
+          "darwin-aarch64": { ...updater["darwin-aarch64"], signature: "untrusted comment: other\nRWQ1111" },
+        },
+      },
+      rehearsal,
+      context,
+    ),
+  );
 });
 
 test("ruleset validation rejects missing review policy, extra refs, and unauthorized bypass", () => {

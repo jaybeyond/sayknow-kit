@@ -56,6 +56,8 @@ rustls-pki-types = "1"
 webpki-roots = "1"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "v5"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # Cancelling a turn must kill the whole process group a shell spawned, not
 # just the direct child; that needs a raw `kill(-pgid)`.

@@ -139,7 +139,7 @@ jobs:
           const approval = JSON.parse(raw);
           if (!raw.equals(Buffer.from(canonicalize(approval)))) throw new Error("approval manifest is not canonical JSON");
           const keys = (value) => Object.keys(value).sort().join(",");
-          if (keys(approval) !== "approval,artifacts,candidate_sha,manifest_sha256,rehearsal,repository,schema,signing_posture,version") throw new Error("approval manifest keys are not exact");
+          if (keys(approval) !== "approval,artifacts,candidate_sha,manifest_sha256,rehearsal,repository,schema,signing_posture,updater,version") throw new Error("approval manifest keys are not exact");
           if (approval.schema !== "sayknow.release-approval/v1") throw new Error("invalid approval schema");
           if (approval.repository !== process.env.REPOSITORY || approval.version !== process.env.VERSION || approval.candidate_sha !== process.env.CANDIDATE_SHA) throw new Error("approval identity mismatch");
           if (keys(approval.rehearsal) !== "completed_at,run_attempt,run_id,workflow" || approval.rehearsal.workflow !== "release.yml" || !Number.isInteger(approval.rehearsal.run_id) || approval.rehearsal.run_id <= 0 || !Number.isInteger(approval.rehearsal.run_attempt) || approval.rehearsal.run_attempt <= 0) throw new Error("invalid rehearsal identity");
@@ -170,7 +170,7 @@ jobs:
           const crypto = require("crypto");
           const fs = require("fs");
           const path = require("path");
-          const { hasExactLines, parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
+          const { hasExactLines, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset } = require("./.github/scripts/release-validation.cjs");
           const approval = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/approval.json`, "utf8"));
           const run = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-run.json`, "utf8"));
           const jobs = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rehearsal-jobs.json`, "utf8")).jobs;
@@ -223,12 +223,44 @@ jobs:
           }
           if (expected.size) throw new Error("artifact set is incomplete");
           if (expectedNames.size) throw new Error("artifact names are incomplete");
+          // Updater payloads: the same binding as the installers, plus the
+          // minisign signature the running app verifies before it writes
+          // anything, and the endpoint document that points at them.
+          const updaterKeys = "bytes,name,platform,sha256,signature";
+          const expectedUpdater = {
+            "darwin-aarch64": `SayKnow-Kit_${process.env.VERSION}_aarch64.app.tar.gz`,
+            "windows-x86_64": `SayKnow-Kit_${process.env.VERSION}_x64-setup.exe`,
+          };
+          if (keys(approval.updater) !== Object.keys(expectedUpdater).sort().join(",")) throw new Error("updater platform set is not exact");
+          for (const [platform, entry] of Object.entries(approval.updater)) {
+            if (Object.keys(entry).sort().join(",") !== updaterKeys) throw new Error("updater keys are not exact");
+            if (entry.platform !== platform || entry.name !== expectedUpdater[platform]) throw new Error(`unexpected updater payload: ${entry.name}`);
+            if (!/^[0-9a-f]{64}$/.test(entry.sha256) || !Number.isInteger(entry.bytes) || entry.bytes <= 0) throw new Error("invalid updater payload");
+            if (!entry.signature.includes("untrusted comment:")) throw new Error(`unsigned updater payload: ${entry.name}`);
+            const payload = path.join(process.env.RUNNER_TEMP, "rehearsal", entry.name);
+            if (!fs.existsSync(payload) || fs.statSync(payload).size !== entry.bytes) throw new Error(`updater size mismatch: ${entry.name}`);
+            if (crypto.createHash("sha256").update(fs.readFileSync(payload)).digest("hex") !== entry.sha256) throw new Error(`updater digest mismatch: ${entry.name}`);
+            const sidecar = fs.readFileSync(`${payload}.sig`, "utf8").trim();
+            if (sidecar !== entry.signature) throw new Error(`updater signature file mismatch: ${entry.name}`);
+          }
+          const endpointRaw = fs.readFileSync(path.join(process.env.RUNNER_TEMP, "rehearsal", "latest.json"), "utf8");
+          const endpoint = JSON.parse(endpointRaw);
+          if (Object.keys(endpoint).sort().join(",") !== "platforms,pub_date,version" || endpoint.version !== process.env.VERSION || !isUtcRfc3339(endpoint.pub_date)) throw new Error("invalid updater endpoint document");
+          if (keys(endpoint.platforms) !== Object.keys(expectedUpdater).sort().join(",")) throw new Error("updater endpoint platform set is not exact");
+          for (const [platform, entry] of Object.entries(approval.updater)) {
+            const advertised = endpoint.platforms[platform];
+            if (Object.keys(advertised).sort().join(",") !== "signature,url") throw new Error("updater endpoint keys are not exact");
+            if (advertised.signature !== entry.signature) throw new Error(`endpoint signature mismatch: ${platform}`);
+            if (advertised.url !== `https://github.com/${process.env.REPOSITORY}/releases/download/v${process.env.VERSION}/${entry.name}`) throw new Error(`endpoint url mismatch: ${platform}`);
+          }
           const rehearsalDirectory = path.join(process.env.RUNNER_TEMP, "rehearsal");
           const expectedFiles = new Set([
             ...approval.artifacts.map((artifact) => artifact.name),
+            ...Object.values(approval.updater).flatMap((entry) => [entry.name, `${entry.name}.sig`]),
             "BUILD-PROVENANCE.txt",
             "REHEARSAL-MANIFEST.json",
             "SHA256SUMS.txt",
+            "latest.json",
           ]);
           const actualFiles = fs.readdirSync(rehearsalDirectory).sort();
           if (JSON.stringify(actualFiles) !== JSON.stringify([...expectedFiles].sort())) throw new Error("rehearsal artifact file set is not exact");
@@ -363,6 +395,12 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.target == 'aarch64-apple-darwin' && '-' || '' }}
+          # Updater payloads are minisign-signed here. The key never leaves the
+          # runner, and a build without it produces no updater artifacts at all,
+          # which the verify step below turns into a failure rather than a
+          # release that silently cannot update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }}
 
@@ -438,6 +476,8 @@ jobs:
           name: bundle-macos-aarch64
           path: |
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             ${{ runner.temp }}/sayknow-smoke-macos.json
           if-no-files-found: error
           retention-days: 14
@@ -449,6 +489,7 @@ jobs:
           name: bundle-windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 14
@@ -654,6 +695,57 @@ jobs:
             describe(exe, `SayKnow-Kit_${process.env.VERSION}_x64-setup.exe`, "windows-x64", "exe", "x64", nsisSmoke),
             describe(msi, `SayKnow-Kit_${process.env.VERSION}_x64_en-US.msi`, "windows-x64", "msi", "x64", msiSmoke),
           ];
+          // Updater payloads are a second, independent group: minisign-signed
+          // by the key in tauri.conf.json and carrying no smoke evidence, since
+          // nothing installs them by hand. A build that produced none means the
+          // signing key never reached the bundler — fail instead of shipping a
+          // release that cannot update itself.
+          const macUpdater = exactlyOne(matches(".app.tar.gz"), "macOS updater payload");
+          const winUpdater = exe;
+          const signatureFor = (source) => {
+            const sig = `${source}.sig`;
+            if (!fs.existsSync(sig)) throw new Error(`missing minisign signature for ${path.basename(source)}`);
+            const text = fs.readFileSync(sig, "utf8").trim();
+            if (!text.includes("untrusted comment:")) throw new Error(`malformed signature for ${path.basename(source)}`);
+            return text;
+          };
+          const describeUpdater = (source, name, platform) => {
+            fs.copyFileSync(source, path.join(output, name));
+            fs.writeFileSync(path.join(output, `${name}.sig`), `${signatureFor(source)}\n`);
+            return {
+              bytes: fs.statSync(source).size,
+              name,
+              platform,
+              sha256: sha256(source),
+              signature: signatureFor(source),
+            };
+          };
+          const updater = {
+            "darwin-aarch64": describeUpdater(
+              macUpdater,
+              `SayKnow-Kit_${process.env.VERSION}_aarch64.app.tar.gz`,
+              "darwin-aarch64",
+            ),
+            "windows-x86_64": describeUpdater(
+              winUpdater,
+              `SayKnow-Kit_${process.env.VERSION}_x64-setup.exe`,
+              "windows-x86_64",
+            ),
+          };
+          // The endpoint the app polls. Platform keys are Tauri's, and each url
+          // points at the asset of this very release.
+          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${process.env.VERSION}`;
+          const latest = {
+            version: process.env.VERSION,
+            pub_date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+            platforms: Object.fromEntries(
+              Object.entries(updater).map(([platform, entry]) => [
+                platform,
+                { signature: entry.signature, url: `${base}/${entry.name}` },
+              ]),
+            ),
+          };
+          fs.writeFileSync(path.join(output, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);
           const rehearsal = {
             artifacts,
             candidate_sha: process.env.CANDIDATE_SHA,
@@ -662,6 +754,7 @@ jobs:
             run_id: Number(process.env.RUN_ID),
             schema: "sayknow.rehearsal/v1",
             signing_posture: { macos: "adhoc", windows: "unsigned" },
+            updater,
             version: process.env.VERSION,
           };
           fs.writeFileSync(path.join(output, "REHEARSAL-MANIFEST.json"), canonicalize(rehearsal));

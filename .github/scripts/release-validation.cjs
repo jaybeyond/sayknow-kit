@@ -82,6 +82,11 @@ function validateRehearsalBinding(approval, rehearsal, context) {
   if (JSON.stringify(rehearsal.signing_posture) !== JSON.stringify(approval.signing_posture)) {
     throw new Error("approved signing posture differs from rehearsal");
   }
+  // The updater payloads are what a running app installs by itself, so they
+  // are bound to the approval exactly like the installers a human downloads.
+  if (JSON.stringify(rehearsal.updater) !== JSON.stringify(approval.updater)) {
+    throw new Error("approved updater payloads differ from rehearsal");
+  }
 }
 
 module.exports = { canonicalize, hasExactLines, isUtcRfc3339, parseChecksums, validateRehearsalBinding, validateRuleset };

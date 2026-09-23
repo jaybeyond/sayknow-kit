@@ -161,3 +161,40 @@ export async function refreshUpdateStatus(force = false): Promise<void> {
   if (!current) return
   await checkForUpdate(current, { force })
 }
+
+export type InstallProgress =
+  | { phase: "downloading"; downloaded: number; total: number | null }
+  | { phase: "installing" }
+
+/**
+ * Downloads and installs the update the endpoint advertises, then relaunches.
+ *
+ * The payload is verified against the minisign public key compiled into the
+ * app before anything is written, so this path does not inherit the installers'
+ * ad-hoc/unsigned posture. A machine that cannot verify simply fails here and
+ * the release page stays the way out.
+ */
+export async function installUpdate(
+  onProgress?: (progress: InstallProgress) => void,
+): Promise<void> {
+  const { check } = await import("@tauri-apps/plugin-updater")
+  const update = await check()
+  if (!update) throw new Error("no_signed_update_available")
+
+  let downloaded = 0
+  let total: number | null = null
+  await update.downloadAndInstall((event) => {
+    if (event.event === "Started") {
+      total = event.data.contentLength ?? null
+      onProgress?.({ phase: "downloading", downloaded: 0, total })
+    } else if (event.event === "Progress") {
+      downloaded += event.data.chunkLength
+      onProgress?.({ phase: "downloading", downloaded, total })
+    } else if (event.event === "Finished") {
+      onProgress?.({ phase: "installing" })
+    }
+  })
+
+  const { relaunch } = await import("@tauri-apps/plugin-process")
+  await relaunch()
+}

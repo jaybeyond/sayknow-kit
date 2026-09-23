@@ -1936,6 +1936,11 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        // Updates are minisign-verified against the key baked into
+        // tauri.conf.json, which is what makes installing an ad-hoc signed
+        // build in place defensible at all.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             pinned: AtomicBool::new(false),
             ocp: Mutex::new(OcpChild(None)),

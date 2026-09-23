@@ -51,6 +51,18 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "infoPlist": "Info.plist"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyMkIyMUM0QkVDNzkzMjgKUldRb2s4ZSt4Q0VyWW16QWhBNjR3eWRoSEo0cjdscTJlVjFoUWZUSTU2M0JFdFlSbytLTTIrTmQK",
+      "endpoints": [
+        "https://github.com/jaybeyond/sayknow-kit/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

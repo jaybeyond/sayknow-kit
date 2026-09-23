@@ -1,18 +1,23 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { UpdateStatus } from "@/lib/update"
 
 const mocks = vi.hoisted(() => ({
   status: { state: "idle" } as UpdateStatus,
   check: vi.fn(),
   openExternal: vi.fn(),
+  installUpdate: vi.fn(),
 }))
 
 vi.mock("@/hooks/useUpdateStatus", () => ({
   useUpdateStatus: () => ({ status: mocks.status, check: mocks.check }),
 }))
 vi.mock("@/lib/runtime", () => ({ isTauri: () => true, openExternal: mocks.openExternal }))
+vi.mock("@/lib/update", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/update")>()),
+  installUpdate: mocks.installUpdate,
+}))
 
 import { UpdateRow } from "./UpdateRow"
 
@@ -22,6 +27,10 @@ const labels: Record<string, string> = {
   "update.upToDate": "Up to date",
   "update.failed": "Update check failed",
   "update.available": "Get version {version}",
+  "update.install": "Install now",
+  "update.installing": "Downloading…",
+  "update.restarting": "Installing and restarting",
+  "update.installFailed": "Install failed",
 }
 const t = (key: string) => labels[key] ?? key
 
@@ -77,5 +86,51 @@ describe("About panel release check", () => {
     const { container } = render(<UpdateRow supported={false} t={t} />)
 
     expect(container.firstChild).toBeNull()
+  })
+
+  it("installs the signed payload in place and reports download progress", async () => {
+    mocks.status = {
+      state: "outdated",
+      current: "0.2.29",
+      latest: "0.2.30",
+      url: "https://example.test/v0.2.30",
+    }
+    let report!: (p: { phase: "downloading"; downloaded: number; total: number | null }) => void
+    mocks.installUpdate.mockImplementation(
+      (onProgress: (p: { phase: "downloading"; downloaded: number; total: number | null }) => void) => {
+        report = onProgress
+        return new Promise<void>(() => {})
+      },
+    )
+    render(<UpdateRow supported t={t} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Install now" }))
+    expect(mocks.installUpdate).toHaveBeenCalledOnce()
+
+    await act(async () => report({ phase: "downloading", downloaded: 25, total: 100 }))
+    expect(screen.getByRole("button", { name: "25%" })).toBeTruthy()
+    // A check must not race an install that is already writing the app.
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Check for updates" }).disabled,
+    ).toBe(true)
+  })
+
+  it("keeps the release page reachable when the signed install cannot be done", async () => {
+    mocks.status = {
+      state: "outdated",
+      current: "0.2.29",
+      latest: "0.2.30",
+      url: "https://example.test/v0.2.30",
+    }
+    mocks.installUpdate.mockRejectedValue(new Error("no_signed_update_available"))
+    render(<UpdateRow supported t={t} />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Install now" }))
+    })
+
+    expect(screen.getByText(/no_signed_update_available/)).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: /Get version 0\.2\.30/ }))
+    expect(mocks.openExternal).toHaveBeenCalledWith("https://example.test/v0.2.30")
   })
 })
