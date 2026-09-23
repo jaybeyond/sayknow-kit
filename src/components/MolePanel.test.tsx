@@ -43,6 +43,7 @@ const labels: Record<string, string> = {
   "tools.mole.running": "Running",
   "tools.mole.title": "Clean",
   "tools.mole.unsupported": "Audited for Mole {required} only. Installed: {found}.",
+  "tools.mole.detecting": "Loading…",
 }
 const t = (key: string) => labels[key] ?? key
 
@@ -90,5 +91,13 @@ describe("MolePanel", () => {
     expect(screen.getByText("Audited for Mole 1.38.1 only. Installed: 1.39.0.")).toBeTruthy()
     expect(screen.getByText("brew upgrade mole")).toBeTruthy()
     expect(screen.queryByRole("button")).toBeNull()
+  })
+
+  it("says it is loading, not which binary it is hunting for", () => {
+    mocks.state.info = "loading"
+    render(<MolePanel active t={t} />)
+
+    expect(screen.getByText("Loading…")).toBeTruthy()
+    expect(screen.queryByText(/Mole/)).toBeNull()
   })
 })
