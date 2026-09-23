@@ -157,6 +157,12 @@ mod iokit_backlight {
     type IoReturn = i32;
     type CfAllocatorRef = *const ();
     type CfStringRef = *const ();
+    /// `IOServiceMatching` hands back a matching **dictionary**, not a string.
+    /// Naming it CFStringRef here declared the same symbol with a different
+    /// signature than `battery_macos` does, which the compiler warns about and
+    /// which invites handing the wrong CF type to the wrong call. Both blocks
+    /// now name the one true type from `core_foundation`.
+    use core_foundation::dictionary::CFDictionaryRef;
     type CfStringEncoding = u32;
     const KCF_STRING_ENCODING_UTF8: CfStringEncoding = 0x0800_0100;
 
@@ -164,10 +170,10 @@ mod iokit_backlight {
     extern "C" {
         fn IOServiceGetMatchingServices(
             main_port: u32,
-            matching: CfStringRef,
+            matching: CFDictionaryRef,
             existing: *mut IoIterator,
         ) -> IoReturn;
-        fn IOServiceMatching(name: *const c_char) -> CfStringRef;
+        fn IOServiceMatching(name: *const c_char) -> CFDictionaryRef;
         fn IOIteratorNext(iterator: IoIterator) -> IoObject;
         fn IOObjectRelease(object: IoObject) -> IoReturn;
         fn IODisplayGetFloatParameter(
@@ -883,6 +889,10 @@ pub mod brightness_tap {
     /// — arity-specific aliases are what the objc crates themselves use.
     unsafe fn nx_data1(event: CGEventRef) -> Option<i64> {
         use objc2::runtime::{AnyObject, Sel};
+        // Each alias is the same symbol at a different arity on purpose, which
+        // is exactly what this lint reports; the crash above is what happens
+        // when the arities are merged into one variadic declaration instead.
+        #[allow(clashing_extern_declarations)]
         extern "C" {
             fn objc_getClass(name: *const std::ffi::c_char) -> *mut AnyObject;
             #[link_name = "objc_msgSend"]

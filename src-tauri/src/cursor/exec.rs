@@ -1027,7 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_success_carries_stdout_and_exit_zero() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
@@ -1050,7 +1050,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failing_command_is_a_failure_not_an_error() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
@@ -1071,7 +1071,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_hung_command_times_out_instead_of_hanging_the_turn() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ShellArgs(
                 pb::ShellArgs {
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_then_read_round_trips_through_the_filesystem() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let path = std::env::temp_dir()
             .join(format!("cursor-write-{}.txt", uuid::Uuid::new_v4()))
             .to_string_lossy()
@@ -1133,7 +1133,7 @@ mod tests {
 
     #[tokio::test]
     async fn reading_a_missing_file_reports_not_found() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let msgs = host
             .handle(exec(pb::exec_server_message::Message::ReadArgs(
                 pb::ReadArgs {
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[tokio::test]
     async fn unsupported_capabilities_answer_instead_of_going_silent() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
 
         let mcp = host
             .handle(exec(pb::exec_server_message::Message::McpArgs(
@@ -1294,7 +1294,7 @@ mod tests {
 
     #[tokio::test]
     async fn background_shells_accept_stdin_and_die_on_shutdown() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
 
         let spawned = host
             .handle(exec(
@@ -1340,7 +1340,7 @@ mod tests {
 
     #[tokio::test]
     async fn writing_to_an_unknown_shell_is_an_error_not_a_panic() {
-        let (mut host, mut streamed) = host();
+        let (mut host, _streamed) = host();
         let msgs = host
             .handle(exec(
                 pb::exec_server_message::Message::WriteShellStdinArgs(pb::WriteShellStdinArgs {
