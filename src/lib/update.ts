@@ -151,3 +151,13 @@ export function checkForUpdate(
   inFlight = run
   return run
 }
+
+/**
+ * Throttled check that resolves the running version itself, so any surface —
+ * signed in or not — can start one without knowing the version.
+ */
+export async function refreshUpdateStatus(force = false): Promise<void> {
+  const current = await appVersion()
+  if (!current) return
+  await checkForUpdate(current, { force })
+}

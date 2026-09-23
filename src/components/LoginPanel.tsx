@@ -23,6 +23,7 @@ import type { Settings } from "@/hooks/useSettings"
 import type { UILocaleSetting } from "@/i18n"
 import { useT } from "@/i18n"
 import { openExternal } from "@/lib/runtime"
+import { useUpdateStatus } from "@/hooks/useUpdateStatus"
 
 type Props = {
   update: (patch: Partial<Settings>) => void
@@ -31,6 +32,7 @@ type Props = {
 
 export function LoginPanel({ update, uiLocale }: Props) {
   const { t } = useT(uiLocale)
+  const { status: updateStatus } = useUpdateStatus()
   const [provider, setProvider] = useState<ProviderId>("openrouter")
   const [baseURL, setBaseURL] = useState<string>(OPENROUTER_BASE)
   const [key, setKey] = useState("")
@@ -259,6 +261,20 @@ export function LoginPanel({ update, uiLocale }: Props) {
       <p className="mt-2.5 text-center text-[10px] text-muted-foreground">
         {t("login.keychainNote")}
       </p>
+
+      {/* Signed out, the gear and its badge are not on screen at all, so the
+          release check would otherwise never reach the one user most likely
+          running an old build. */}
+      {updateStatus.state === "outdated" && (
+        <button
+          type="button"
+          onClick={() => openExternal(updateStatus.url)}
+          className="mt-1.5 inline-flex w-full items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {t("update.available").replace("{version}", updateStatus.latest)}
+          <ExternalLink className="h-2.5 w-2.5" />
+        </button>
+      )}
 
       {/* Silence unused-import warning during dev. */}
       <span className="hidden">{PROVIDER_PRESETS.openrouter.label}</span>

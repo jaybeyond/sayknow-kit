@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react"
 import {
-  appVersion,
-  checkForUpdate,
   getSnapshot,
+  refreshUpdateStatus,
   subscribe,
   type UpdateStatus,
 } from "@/lib/update"
 
 /**
- * Shared release-check state. Mounting starts a throttled check, so opening the
- * popover is enough to learn about a new release; the explicit button forces one.
+ * Shared release-check state. Mounting starts a throttled check, so reaching
+ * any surface that shows it — the popover, the sign-in screen, or the About
+ * panel — is enough to learn about a new release; the button forces one.
  */
 export function useUpdateStatus(): {
   status: UpdateStatus
@@ -17,11 +17,7 @@ export function useUpdateStatus(): {
 } {
   const status = useSyncExternalStore(subscribe, getSnapshot)
 
-  const check = useCallback(async (force = false) => {
-    const current = await appVersion()
-    if (!current) return
-    await checkForUpdate(current, { force })
-  }, [])
+  const check = useCallback((force = false) => refreshUpdateStatus(force), [])
 
   useEffect(() => {
     void check()
