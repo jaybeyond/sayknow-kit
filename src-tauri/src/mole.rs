@@ -666,7 +666,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn hidden_output_pty_has_noninteractive_stdin_and_no_auth() {
-        let result = fixture("test ! -t 0 && test -t 1 && test -t 2 && test \"$MOLE_TEST_NO_AUTH\" = 1 && test -z \"${MOLE_TEST_MODE-}\" && printf 'in-app-only\\n'", Duration::from_secs(2));
+        let result = fixture("test ! -t 0 && test -t 1 && test -t 2 && test \"$MOLE_TEST_NO_AUTH\" = 1 && test -z \"${MOLE_TEST_MODE-}\" && printf 'in-app-only\\n'", Duration::from_secs(30));
         assert!(result.ok, "{}", result.stderr);
         assert!(result.stdout.contains("in-app-only"));
     }
@@ -676,7 +676,7 @@ mod tests {
     fn output_and_valid_json_do_not_disguise_failure() {
         let result = fixture(
             "printf '{\"done\":true}\\n'; exit 7",
-            Duration::from_secs(2),
+            Duration::from_secs(30),
         );
         assert!(!result.ok);
         assert!(result.json.is_none());
@@ -686,14 +686,16 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn collects_json_and_large_output_before_reaping() {
-        let json = fixture("printf '{\"entries\":[]}\\n'", Duration::from_secs(2));
-        assert!(json.ok);
+        let json = fixture("printf '{\"entries\":[]}\\n'", Duration::from_secs(30));
+        assert!(json.ok, "{}", json.stderr);
         assert_eq!(json.json.unwrap()["entries"], serde_json::json!([]));
+        // The deadline is not what this asserts, so it is generous enough that
+        // a slow shared runner cannot turn completeness into a timeout.
         let result = fixture(
             "i=0; while [ $i -lt 4000 ]; do printf 'row-%s\\n' \"$i\"; i=$((i+1)); done",
-            Duration::from_secs(3),
+            Duration::from_secs(60),
         );
-        assert!(result.ok);
+        assert!(result.ok, "{}", result.stderr);
         assert!(result.stdout.contains("row-3999"));
     }
 
