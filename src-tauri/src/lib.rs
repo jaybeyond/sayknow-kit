@@ -2179,6 +2179,7 @@ pub fn run() {
             // out. restore_disconnected_displays also runs at next launch
             // because a crash never reaches here.
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                crate::mole::shutdown();
                 crate::display::restore_disconnected_displays();
                 crate::display::restore_builtin_gamma();
             }

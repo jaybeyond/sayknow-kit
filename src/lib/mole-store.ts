@@ -51,13 +51,7 @@ let state: MoleStore = {
 }
 
 const listeners = new Set<() => void>()
-const lines: Record<SessionId, string[]> = {
-  disk: [],
-  cache: [],
-  tune: [],
-}
-let current: SessionId | null = null
-let unlisten: (() => void) | null = null
+let activeOperation: Promise<void> | null = null
 
 function emit() {
   for (const listener of listeners) listener()
@@ -100,30 +94,32 @@ export async function detect(): Promise<void> {
   }
 }
 
-export async function run(id: SessionId, action: string): Promise<void> {
+async function executeRun(id: SessionId, action: string): Promise<void> {
   set({ busy: id })
-  current = id
-  lines[id] = []
+  const runLines: string[] = []
+  let unlisten: (() => void) | undefined
+  let acceptingLines = true
   patchSession(id, { progress: [], result: null, error: null, lastAction: action })
-  unlisten?.()
   try {
-    const { listen } = await import("@tauri-apps/api/event")
-    unlisten = await listen<string>("mole:line", (event) => {
-      const line = stripAnsi(event.payload).trim()
-      if (!line || current !== id || isJsonJunk(line)) return
-      lines[id] = [...lines[id].slice(-40), line]
-      patchSession(id, {
-        progress: lines[id],
-        items: parseCleanPreview(lines[id].join("\n")),
+    try {
+      const { listen } = await import("@tauri-apps/api/event")
+      unlisten = await listen<string>("mole:line", (event) => {
+        const line = stripAnsi(event.payload).trim()
+        if (!acceptingLines || !line || isJsonJunk(line)) return
+        runLines.push(line)
+        if (runLines.length > 40) runLines.shift()
+        patchSession(id, {
+          progress: [...runLines],
+          items: parseCleanPreview(runLines.join("\n")),
+        })
       })
-    })
-  } catch {
-    /* web preview has no event bus */
-  }
-  try {
+    } catch {
+      /* web preview has no event bus */
+    }
+
     const outcome: MoleRun = await runMoleAction(action)
     const text = `${outcome.stdout}\n${outcome.stderr}`
-    if (!outcome.ok && !outcome.json) {
+    if (!outcome.ok) {
       patchSession(id, {
         error: outcome.stderr || outcome.stdout || "mole_failed",
         progress: [],
@@ -140,24 +136,53 @@ export async function run(id: SessionId, action: string): Promise<void> {
   } catch (e) {
     patchSession(id, { error: String(e), progress: [] })
   } finally {
-    unlisten?.()
-    unlisten = null
-    if (current === id) current = null
-    set({ busy: state.busy === id ? null : state.busy })
+    acceptingLines = false
+    try {
+      unlisten?.()
+    } finally {
+      set({ busy: null })
+    }
   }
 }
 
+function admit(operation: () => Promise<void>): Promise<void> {
+  if (activeOperation) return activeOperation
+
+  let resolve!: () => void
+  let reject!: (reason: unknown) => void
+  const admitted = new Promise<void>((next, fail) => {
+    resolve = next
+    reject = fail
+  })
+  activeOperation = admitted
+  void operation().then(
+    () => {
+      if (activeOperation === admitted) activeOperation = null
+      resolve()
+    },
+    (error) => {
+      if (activeOperation === admitted) activeOperation = null
+      reject(error)
+    },
+  )
+  return admitted
+}
+
+export function run(id: SessionId, action: string): Promise<void> {
+  return admit(() => executeRun(id, action))
+}
+
 /** Header refresh re-runs the last non-destructive scan in each session. */
-export async function refreshScans(): Promise<void> {
-  const jobs: Promise<void>[] = []
-  if (state.sessions.disk.analyze || state.sessions.disk.lastAction === "analyze") {
-    jobs.push(run("disk", "analyze"))
-  }
-  if (state.sessions.cache.items.length > 0 || state.sessions.cache.lastAction) {
-    jobs.push(run("cache", "clean-preview"))
-  }
-  if (state.sessions.tune.items.length > 0 || state.sessions.tune.lastAction) {
-    jobs.push(run("tune", "optimize-preview"))
-  }
-  await Promise.all(jobs)
+export function refreshScans(): Promise<void> {
+  return admit(async () => {
+    if (state.sessions.disk.analyze || state.sessions.disk.lastAction === "analyze") {
+      await executeRun("disk", "analyze")
+    }
+    if (state.sessions.cache.items.length > 0 || state.sessions.cache.lastAction) {
+      await executeRun("cache", "clean-preview")
+    }
+    if (state.sessions.tune.items.length > 0 || state.sessions.tune.lastAction) {
+      await executeRun("tune", "optimize-preview")
+    }
+  })
 }

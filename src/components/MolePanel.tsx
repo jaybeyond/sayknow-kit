@@ -50,10 +50,29 @@ export function MolePanel({ t, active }: Props) {
     )
   }
 
+  // The backend only audited its noninteractive contract against one release,
+  // so an unaudited Mole is reported here instead of failing on the first run.
+  if (!info.supported) {
+    return (
+      <section className="rounded-lg border bg-muted/30 p-2.5 text-[11px]">
+        <div className="mb-1.5 font-medium">{t("tools.mole.title")}</div>
+        <p className="text-muted-foreground">
+          {t("tools.mole.unsupported")
+            .replace("{required}", info.required_version)
+            .replace("{found}", info.version)}
+        </p>
+        <pre className="mt-2 overflow-x-auto rounded-md bg-background/70 p-2 text-[10px]">
+          brew upgrade mole
+        </pre>
+      </section>
+    )
+  }
+
   return (
     <div className="space-y-2">
       <SessionCard
         busy={busy === "disk"}
+        disabled={busy !== null}
         icon={HardDrive}
         t={t}
         title={t("tools.mole.session.disk")}
@@ -65,6 +84,7 @@ export function MolePanel({ t, active }: Props) {
       />
       <SessionCard
         busy={busy === "cache"}
+        disabled={busy !== null}
         icon={Trash2}
         t={t}
         title={t("tools.mole.session.cache")}
@@ -78,6 +98,7 @@ export function MolePanel({ t, active }: Props) {
       />
       <SessionCard
         busy={busy === "tune"}
+        disabled={busy !== null}
         icon={Sparkles}
         t={t}
         title={t("tools.mole.session.tune")}
@@ -95,6 +116,7 @@ export function MolePanel({ t, active }: Props) {
 
 function SessionCard({
   busy,
+  disabled,
   hint,
   icon: Icon,
   kind,
@@ -107,6 +129,7 @@ function SessionCard({
   title,
 }: {
   busy: boolean
+  disabled: boolean
   hint: string
   icon: typeof HardDrive
   kind: "disk" | "preview"
@@ -128,7 +151,7 @@ function SessionCard({
       <div className="flex flex-wrap gap-1.5">
         <Button
           className="h-7 text-[11px] active:scale-[0.98]"
-          disabled={busy}
+          disabled={disabled}
           onClick={onScan}
           size="sm"
           variant="secondary"
@@ -139,7 +162,7 @@ function SessionCard({
         {onRun && runLabel && (
           <Button
             className="h-7 text-[11px] active:scale-[0.98]"
-            disabled={busy}
+            disabled={disabled}
             onClick={onRun}
             size="sm"
             variant="outline"
@@ -163,19 +186,9 @@ function SessionCard({
 
 function ProgressBlock({ lines, t }: { lines: string[]; t: (k: string) => string }) {
   const last = lines[lines.length - 1] ?? t("tools.mole.running")
-  const pct = Math.min(95, 8 + lines.length * 4)
   return (
     <div className="mt-2">
-      <div className="mb-1 flex items-baseline justify-between gap-2 text-[10px]">
-        <span className="text-muted-foreground">{t("tools.mole.progress")}</span>
-        <span className="tabular-nums">{pct}%</span>
-      </div>
-      <div className="mb-1 h-1.5 overflow-hidden rounded-full bg-background">
-        <div
-          className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <div className="mb-1 text-[10px] text-muted-foreground">{t("tools.mole.progress")}</div>
       <p className="truncate text-[10px] text-muted-foreground">{last}</p>
     </div>
   )
