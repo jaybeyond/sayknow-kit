@@ -68,8 +68,13 @@ impl Drop for RunPermit<'_> {
     }
 }
 
+/// Where a Homebrew or manual install of Mole can live. This is deliberately
+/// not `$PATH`: the process runs cleanup with the user's files, and a shell
+/// profile that prepends a writable directory would otherwise pick which
+/// binary that is. The version gate only reads a banner, so it is no defence
+/// against a lookalike.
 fn search_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = [
+    [
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
         "/usr/local/bin",
@@ -81,38 +86,27 @@ fn search_dirs() -> Vec<PathBuf> {
     ]
     .into_iter()
     .map(PathBuf::from)
-    .collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path).filter(|p| p.is_absolute()) {
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
-            }
-        }
-    }
-    dirs
+    .collect()
+}
+
+/// A binary anyone on the machine can rewrite is not one to run cleanup with.
+#[cfg(unix)]
+fn is_trusted_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = metadata.permissions().mode();
+    metadata.is_file() && mode & 0o111 != 0 && mode & 0o002 == 0
+}
+
+#[cfg(not(unix))]
+fn is_trusted_executable(metadata: &std::fs::Metadata) -> bool {
+    metadata.is_file()
 }
 
 fn mole_bin() -> Option<PathBuf> {
     search_dirs()
         .into_iter()
         .map(|dir| dir.join("mo"))
-        .find(|path| {
-            let Ok(metadata) = path.metadata() else {
-                return false;
-            };
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                metadata.is_file()
-            }
-        })
+        .find(|path| path.metadata().is_ok_and(|m| is_trusted_executable(&m)))
 }
 
 fn mole_command(path: &Path, args: &[&str]) -> Result<Command, String> {
@@ -611,6 +605,63 @@ mod tests {
         println!("Hidden PTY metadata: {} ({})", info.path, info.version);
         assert!(RUN_STATE.lock().unwrap().pid.is_none());
         assert!(!RUN_STATE.lock().unwrap().busy);
+    }
+
+
+    #[test]
+    fn lookup_is_fixed_system_paths_and_never_the_user_path() {
+        let dirs = search_dirs();
+        assert_eq!(
+            dirs,
+            [
+                "/opt/homebrew/bin",
+                "/opt/homebrew/sbin",
+                "/usr/local/bin",
+                "/usr/local/sbin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>()
+        );
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        assert!(!dirs.iter().any(|dir| dir.components().any(|c| {
+            matches!(c, std::path::Component::Normal(name) if name == ".local")
+        })));
+        if let Some(home) = home {
+            assert!(!dirs.iter().any(|dir| dir.starts_with(&home)));
+        }
+        let cmd = mole_command(Path::new("/usr/local/bin/mo"), &["--version"]).unwrap();
+        let env = cmd.get_envs().collect::<std::collections::HashMap<_, _>>();
+        let path = env[std::ffi::OsStr::new("PATH")].unwrap();
+        assert_eq!(
+            path,
+            std::env::join_paths(search_dirs()).unwrap().as_os_str()
+        );
+        assert_ne!(path, std::env::var_os("PATH").unwrap_or_default());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn world_writable_binaries_are_not_trusted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sayknow-mole-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mo");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        assert!(is_trusted_executable(&std::fs::metadata(&path).unwrap()));
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o777);
+        std::fs::set_permissions(&path, perms).unwrap();
+        assert!(!is_trusted_executable(&std::fs::metadata(&path).unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
