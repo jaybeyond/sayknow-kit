@@ -5,23 +5,7 @@
     <link rel="icon" type="image/png" href="/sayo-logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SayKnow Kit</title>
-    <script>
-      (function () {
-        try {
-          var params = new URLSearchParams(window.location.search);
-          if (params.get("window") === "settings") {
-            document.documentElement.classList.add("settings-window");
-          }
-          var saved = localStorage.getItem("sayknow:theme");
-          var mode = saved || "system";
-          var dark =
-            mode === "dark" ||
-            (mode === "system" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches);
-          if (dark) document.documentElement.classList.add("dark");
-        } catch (_) {}
-      })();
-    </script>
+    <script type="module" src="/src/theme-boot.ts"></script>
   </head>
   <body>
     <div id="root"></div>
