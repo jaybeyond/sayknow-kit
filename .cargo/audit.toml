@@ -1,0 +1,28 @@
+# cargo-audit configuration. CI and the release workflow both run
+# `cargo audit --file src-tauri/Cargo.lock` from the repository root, so this is
+# the single place the ignore list lives — no duplicated CLI flags to drift.
+#
+# Every entry below is a crate we cannot move off, with the reason it is not
+# reachable in a shipped SayKnow Kit build. Release builds only
+# aarch64-apple-darwin and x86_64-pc-windows-msvc (.github/workflows/release.yml),
+# so the Linux-only GTK/Wayland half of the lockfile never compiles.
+[advisories]
+ignore = [
+  # yaml-rust / serde_yaml: pulled in by ddc-hi, the monitor DDC crate. Both are
+  # unmaintained upstream and ddc-hi has no maintained replacement, so these stay
+  # ignored until that dependency moves.
+  "RUSTSEC-2018-0005",
+  "RUSTSEC-2024-0320",
+  # quick-xml 0.39: the fix is 0.41+. plist is already on 1.10.1/quick-xml 0.42,
+  # so the only remaining 0.39 consumer is wayland-scanner — a Linux-only
+  # build-time proc-macro that parses the Wayland protocol XML vendored inside
+  # the crate. It is never compiled for the macOS or Windows artifacts and never
+  # sees attacker-supplied XML.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # rkyv 0.7: an optional dependency of rust_decimal (reached via byte-unit).
+  # The rkyv feature is not enabled — `cargo tree -i rkyv -e all --target all`
+  # resolves to nothing — so no rkyv code is built or linked. The fix is a
+  # semver-major 0.8 bump that only rust_decimal can make.
+  "RUSTSEC-2026-0235",
+]

@@ -95,14 +95,16 @@ jobs:
       # CFString. Warnings are denied so the next one cannot pile up unseen.
       - name: Rust lint (clippy)
         run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
-      # Advisory gate on the locked graph. yaml-rust/serde_yaml come from
-      # ddc-hi (monitor DDC) and have no maintained replacement; they stay
-      # ignored until that crate moves. cargo-audit is pointed at the
-      # src-tauri lockfile — the repo root has none.
+      # Advisory gate on the locked graph. The ignore list and the reason for
+      # every entry live in .cargo/audit.toml, which cargo-audit reads from the
+      # working directory, so CI and release cannot drift apart. cargo-audit is
+      # pointed at the src-tauri lockfile — the repo root has none. The pin is
+      # 0.22.2 because 0.21.x cannot parse CVSS 4.0 advisories and dies on the
+      # current database instead of auditing.
       - name: Rust advisory audit
         run: |
-          cargo install cargo-audit --locked --version 0.21.2
-          cargo audit --file src-tauri/Cargo.lock --ignore RUSTSEC-2018-0005 --ignore RUSTSEC-2024-0320
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file src-tauri/Cargo.lock
 
       - name: Rust tests (--locked)
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml

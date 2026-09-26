@@ -389,11 +389,14 @@ jobs:
       - name: Frontend production build
         run: pnpm build
 
+      # The advisory ignore list lives in .cargo/audit.toml so this gate and CI
+      # read the same file. 0.22.2 is the first pin that parses CVSS 4.0
+      # advisories; 0.21.x fails to load the current database at all.
       - name: Rust quality gates
         run: |
           cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
-          cargo install cargo-audit --locked --version 0.21.2
-          cargo audit --file src-tauri/Cargo.lock --ignore RUSTSEC-2018-0005 --ignore RUSTSEC-2024-0320
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file src-tauri/Cargo.lock
           cargo test --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Build installers without writing a GitHub Release
