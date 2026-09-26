@@ -719,6 +719,12 @@ function PromptSection({
 }
 
 
+const ABOUT_LINKS = [
+  { labelKey: "settings.about.repo", url: "https://github.com/jaybeyond/sayknow-kit" },
+  { labelKey: "settings.about.openrouter", url: "https://openrouter.ai/keys" },
+  { labelKey: "settings.about.deepl", url: "https://www.deepl.com/your-account" },
+] as const
+
 /* ─────────── Section: About ─────────── */
 function AboutSection({ settings }: { settings: Settings }) {
   const { t } = useT(settings.uiLocale)
@@ -770,30 +776,27 @@ function AboutSection({ settings }: { settings: Settings }) {
 
       <Separator />
 
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={() => openExternal("https://github.com/jaybeyond/sayknow-kit")}
-          className="inline-flex items-center gap-1 text-sm text-foreground hover:text-foreground/80"
-        >
-          {t("settings.about.repo")}
-          <ExternalLink className="h-3 w-3" />
-        </button>
-        <br />
-        <button
-          type="button"
-          onClick={() => openExternal("https://openrouter.ai/keys")}
-          className="inline-flex items-center gap-1 text-sm text-foreground hover:text-foreground/80"
-        >
-          {t("settings.about.openrouter")}
-          <ExternalLink className="h-3 w-3" />
-        </button>
+      {/* One link per external service the app talks to. DeepL is a
+          translation engine of its own, not an OpenRouter model, so its
+          account needs its own way in. */}
+      <div className="flex flex-col items-start gap-2">
+        {ABOUT_LINKS.map(({ labelKey, url }) => (
+          <button
+            key={url}
+            type="button"
+            onClick={() => openExternal(url)}
+            className="inline-flex items-center gap-1 text-sm text-foreground hover:text-foreground/80"
+          >
+            {t(labelKey)}
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        ))}
       </div>
 
       <Separator />
 
-      {/* The tray icon no longer pops a quit menu, so this is where quitting
-          lives. Without it the app could only be force-quit. */}
+      {/* The in-app way out for anyone already looking at the app; the tray's
+          right-click menu quits too. */}
       <Button
         variant="outline"
         size="sm"

@@ -67,3 +67,12 @@ describe("tray quit label", () => {
     }
   })
 })
+describe("about page links", () => {
+  it("labels every external account link in every locale", () => {
+    for (const locale of UI_LOCALES) {
+      for (const key of ["settings.about.repo", "settings.about.openrouter", "settings.about.deepl"]) {
+        expect(UI_STRINGS[locale][key], `${locale}:${key}`).toBeTruthy()
+      }
+    }
+  })
+})
