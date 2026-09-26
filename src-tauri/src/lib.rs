@@ -2079,6 +2079,8 @@ pub fn run() {
             clipboard::delete_clipboard_entry,
             clipboard::toggle_clipboard_pin,
             clipboard::set_clipboard_entry_note,
+            clipboard::create_clipboard_memo,
+            clipboard::update_clipboard_memo,
             clipboard::clear_clipboard_history,
             clipboard::wipe_clipboard_history,
             clipboard::set_clipboard_capture,

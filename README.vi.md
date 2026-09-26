@@ -29,7 +29,7 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 - 🌞 **Tab công cụ** — trên macOS điều khiển độ sáng (DDC/CI cho màn ngoài; IOKit cho đèn nền màn tích hợp nếu được hỗ trợ). Trên các máy Mac mới được hỗ trợ nhưng không có IOKit, ứng dụng dùng tự động hóa Trợ năng của Trung tâm điều khiển. IOKit và tự động hóa này chỉ dành cho macOS; khả năng DDC tùy phần cứng.
 - 📊 **Trạng thái hệ thống** — CPU, bộ nhớ và ổ đĩa hệ thống; trên macOS (Apple Silicon) còn hiển thị nhiệt độ SoC đọc bằng cảm biến không cần quyền nâng cao. Trên Windows hoặc khi không có cảm biến đáng tin cậy, giá trị hiển thị là “không khả dụng”.
 - 📊 **Mức dùng (trong tab công cụ)** — đọc trực tiếp nhật ký phiên mà Claude Code, Codex và SayKnow CLI đã ghi cục bộ. Hiển thị khối tính phí 5 giờ (thời gian còn lại, tốc độ tiêu thụ) cùng phần trăm 5 giờ và hàng tuần thật do CLI ghi lại, kèm giờ reset. Cửa sổ đã reset bị gạch ngang và không bao giờ được vẽ như mức hiện tại. Không cần mạng, không cần đăng nhập thêm
-- 📋 **Tab lịch sử clipboard** — thu thập nền, tìm kiếm cả nội dung lẫn ghi chú, ghim, gửi sang dịch và xoá hai mức. Chuỗi rỗng, dạng OTP và khối khoá PEM không bao giờ được lưu
+- 📋 **Tab lịch sử clipboard** — thu thập nền, ghi nhớ tự viết nằm chung danh sách, tìm kiếm cả nội dung lẫn ghi chú, ghim, gửi sang dịch và xoá hai mức. Chuỗi rỗng, dạng OTP và khối khoá PEM không bao giờ được lưu
 - 💬 **Tab Chat** — hỏi-đáp gọn trong cùng cửa sổ, thanh bên đa cuộc trò chuyện, theo từng tin nhắn: tạo lại / chỉnh sửa / sao chép / dừng
 - 🤖 **Đa nhà cung cấp** — OpenRouter / OCP / bất kỳ endpoint nào tương thích OpenAI
 - 📦 **Cài OCP một chạm** — ứng dụng tự chạy `git clone → npm install → setup.mjs`, hiển thị log trực tiếp

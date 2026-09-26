@@ -1,10 +1,14 @@
-// Background clipboard history capture.
+// Background clipboard history capture, plus user-written memos.
 //
 // macOS doesn't expose system-wide clipboard history to third-party apps, so
 // we poll the system pasteboard every POLL_INTERVAL_MS and build our own
 // ring buffer. Entries are deduplicated by content hash, capped at
 // `max_entries`, and persisted as JSON under the app data dir so history
 // survives restarts.
+//
+// Memos share the same list and store but are authored in the app rather than
+// captured. They get a random id (their text is editable, so a content hash
+// would change under them) and, like pinned clips, are never auto-removed.
 
 use std::fs;
 use std::path::PathBuf;
@@ -20,6 +24,16 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 const DEFAULT_MAX_ENTRIES: usize = 100;
 const POLL_INTERVAL_MS: u64 = 800;
 
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    /// Captured from the system clipboard.
+    #[default]
+    Clip,
+    /// Written by the user inside the app.
+    Memo,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ClipEntry {
     pub id: String,
@@ -32,6 +46,17 @@ pub struct ClipEntry {
     /// deserialize cleanly without the field.
     #[serde(default)]
     pub note: Option<String>,
+    /// `#[serde(default)]` so stores written before memos existed load every
+    /// entry as a clip.
+    #[serde(default)]
+    pub kind: EntryKind,
+}
+
+impl ClipEntry {
+    /// Pinned clips and memos survive the max-entries cap and "clear unpinned".
+    fn survives_auto_removal(&self) -> bool {
+        self.pinned || self.kind == EntryKind::Memo
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -156,21 +181,21 @@ fn snapshot(handle: &ClipboardHandle) -> (Vec<ClipEntry>, usize) {
     (s.entries.clone(), s.max_entries)
 }
 
-/// Enforce the max-entries cap while always keeping pinned items. Pinned
-/// items don't count against the cap (so a user who pinned 200 things doesn't
+/// Enforce the max-entries cap while always keeping pinned items and memos.
+/// Those don't count against the cap (so a user who pinned 200 things doesn't
 /// lose them when the cap is 100 — they just won't get new unpinned slots
 /// until they unpin some).
 fn cap_entries(s: &mut ClipboardState) {
     if s.entries.len() <= s.max_entries {
         return;
     }
-    let pinned_count = s.entries.iter().filter(|e| e.pinned).count();
-    let mut unpinned_room = s.max_entries.saturating_sub(pinned_count);
+    let kept_count = s.entries.iter().filter(|e| e.survives_auto_removal()).count();
+    let mut unpinned_room = s.max_entries.saturating_sub(kept_count);
     // entries is newest-first, so iterating in order naturally keeps recent
     // unpinned items and drops older ones.
     let mut kept: Vec<ClipEntry> = Vec::with_capacity(s.entries.len().min(s.max_entries));
     for e in s.entries.drain(..) {
-        if e.pinned {
+        if e.survives_auto_removal() {
             kept.push(e);
         } else if unpinned_room > 0 {
             kept.push(e);
@@ -235,6 +260,7 @@ pub fn spawn_poller(app: AppHandle, handle: Arc<ClipboardHandle>) {
             ts: now_ms(),
             pinned: false,
             note: None,
+            kind: EntryKind::Clip,
         };
 
         // Deduplicate: if the same content is already in history, move it to
@@ -338,6 +364,76 @@ pub fn set_clipboard_entry_note(
     Ok(())
 }
 
+/// Build a fresh memo. Blank text (after trimming) is not a memo.
+fn new_memo(text: &str, ts: i64) -> Option<ClipEntry> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(ClipEntry {
+        id: format!("memo-{}", uuid::Uuid::new_v4()),
+        preview: make_preview(text),
+        text: text.to_string(),
+        ts,
+        pinned: false,
+        note: None,
+        kind: EntryKind::Memo,
+    })
+}
+
+/// Replace a memo's text and float it to the top. Only memos are editable: a
+/// clip's id is the hash of its text, so rewriting it would break dedup.
+fn edit_memo(entries: &mut Vec<ClipEntry>, id: &str, text: &str, ts: i64) -> Result<ClipEntry, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("memo text is empty".into());
+    }
+    let pos = entries
+        .iter()
+        .position(|e| e.id == id && e.kind == EntryKind::Memo)
+        .ok_or_else(|| format!("no memo with id {id}"))?;
+    let mut memo = entries.remove(pos);
+    memo.text = text.to_string();
+    memo.preview = make_preview(text);
+    memo.ts = ts;
+    entries.insert(0, memo.clone());
+    Ok(memo)
+}
+
+#[tauri::command]
+pub fn create_clipboard_memo(
+    app: AppHandle,
+    handle: tauri::State<'_, Arc<ClipboardHandle>>,
+    text: String,
+) -> Result<ClipEntry, String> {
+    let memo = new_memo(&text, now_ms()).ok_or("memo text is empty")?;
+    {
+        let mut s = handle.state.lock().unwrap();
+        s.entries.insert(0, memo.clone());
+    }
+    let (entries, max) = snapshot(&handle);
+    save_persisted(&app, &entries, max);
+    let _ = app.emit("clipboard:new", &memo);
+    Ok(memo)
+}
+
+#[tauri::command]
+pub fn update_clipboard_memo(
+    app: AppHandle,
+    handle: tauri::State<'_, Arc<ClipboardHandle>>,
+    id: String,
+    text: String,
+) -> Result<ClipEntry, String> {
+    let memo = {
+        let mut s = handle.state.lock().unwrap();
+        edit_memo(&mut s.entries, &id, &text, now_ms())?
+    };
+    let (entries, max) = snapshot(&handle);
+    save_persisted(&app, &entries, max);
+    let _ = app.emit("clipboard:new", &memo);
+    Ok(memo)
+}
+
 #[tauri::command]
 pub fn toggle_clipboard_pin(
     app: AppHandle,
@@ -362,7 +458,7 @@ pub fn clear_clipboard_history(
 ) -> Result<(), String> {
     {
         let mut s = handle.state.lock().unwrap();
-        s.entries.retain(|e| e.pinned);
+        s.entries.retain(ClipEntry::survives_auto_removal);
     }
     let (entries, max) = snapshot(&handle);
     save_persisted(&app, &entries, max);
@@ -413,4 +509,110 @@ pub fn set_clipboard_max_entries(
     let (entries, final_max) = snapshot(&handle);
     save_persisted(&app, &entries, final_max);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(text: &str, ts: i64, pinned: bool) -> ClipEntry {
+        ClipEntry {
+            id: hash_text(text),
+            text: text.into(),
+            preview: make_preview(text),
+            ts,
+            pinned,
+            note: None,
+            kind: EntryKind::Clip,
+        }
+    }
+
+    #[test]
+    fn stores_written_before_memos_load_entries_as_clips() {
+        let raw = r#"{"entries":[{"id":"x","text":"hi","preview":"hi","ts":1,"pinned":false}]}"#;
+        let parsed: PersistedState = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.entries[0].kind, EntryKind::Clip);
+        assert_eq!(parsed.entries[0].note, None);
+    }
+
+    #[test]
+    fn memo_kind_round_trips_as_lowercase() {
+        let memo = new_memo("buy milk", 5).unwrap();
+        let json = serde_json::to_string(&memo).unwrap();
+        assert!(json.contains(r#""kind":"memo""#), "{json}");
+        let back: ClipEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, EntryKind::Memo);
+    }
+
+    #[test]
+    fn new_memo_trims_and_rejects_blank_text() {
+        assert!(new_memo("   \n\t", 1).is_none());
+        let memo = new_memo("  line one\nline two \n", 7).unwrap();
+        assert_eq!(memo.text, "line one\nline two");
+        assert_eq!(memo.ts, 7);
+        assert!(memo.id.starts_with("memo-"));
+        assert_ne!(memo.id, new_memo("line one\nline two", 7).unwrap().id);
+    }
+
+    #[test]
+    fn edit_memo_rewrites_text_keeps_id_and_floats_to_top() {
+        let memo = new_memo("draft", 1).unwrap();
+        let id = memo.id.clone();
+        let mut entries = vec![clip("newer clip", 3, false), memo];
+
+        let edited = edit_memo(&mut entries, &id, " final ", 9).unwrap();
+        assert_eq!(edited.id, id);
+        assert_eq!(edited.text, "final");
+        assert_eq!(edited.preview, "final");
+        assert_eq!(edited.ts, 9);
+        assert_eq!(entries[0].id, id);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn edit_memo_refuses_blank_text_and_clips() {
+        let memo = new_memo("keep me", 1).unwrap();
+        let memo_id = memo.id.clone();
+        let c = clip("a clip", 2, false);
+        let clip_id = c.id.clone();
+        let mut entries = vec![c, memo];
+
+        assert!(edit_memo(&mut entries, &memo_id, "  ", 5).is_err());
+        assert!(edit_memo(&mut entries, &clip_id, "rewrite", 5).is_err());
+        assert!(edit_memo(&mut entries, "missing", "x", 5).is_err());
+        assert_eq!(entries[1].text, "keep me");
+        assert_eq!(entries[0].text, "a clip");
+    }
+
+    #[test]
+    fn cap_keeps_memos_and_pins_outside_the_limit() {
+        let mut s = ClipboardState {
+            entries: vec![
+                clip("c5", 50, false),
+                new_memo("memo", 45).unwrap(),
+                clip("c4", 40, false),
+                clip("pinned", 35, true),
+                clip("c3", 30, false),
+                clip("c2", 20, false),
+            ],
+            max_entries: 3,
+            last_text: None,
+            ignore_text: None,
+        };
+        cap_entries(&mut s);
+        let texts: Vec<&str> = s.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["c5", "memo", "pinned"]);
+    }
+
+    #[test]
+    fn clearing_unpinned_keeps_memos() {
+        let mut entries = vec![
+            clip("loose", 3, false),
+            new_memo("note to self", 2).unwrap(),
+            clip("pinned", 1, true),
+        ];
+        entries.retain(ClipEntry::survives_auto_removal);
+        let texts: Vec<&str> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["note to self", "pinned"]);
+    }
 }

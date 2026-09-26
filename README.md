@@ -42,10 +42,11 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ### Clipboard
 - 📋 **Clipboard history** — everything you copy, captured in the background and searchable across text and notes
+- 🗒️ **Memos** — write sticky notes directly, no copy needed; they sit in the same list as clips, copy on click, filter with `All / Clips / Memos`, and are never auto-removed
 - 📝 **Notes** — annotate an entry so you remember why you kept it
 - 📌 **Pin** — pinned entries survive both the size cap and a clear
 - ➡️ **Send to translate** — push any entry straight into the translate tab
-- 🧹 **Two-tier clear** — drop the unpinned, or wipe everything
+- 🧹 **Two-tier clear** — drop everything except pins and memos, or wipe everything
 - 🔒 **Skips secrets** — blanks, OTP-shaped strings and PEM key blobs are never stored
 
 ### Usage

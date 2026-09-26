@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
-import { clipboardHistory, type ClipEntry } from "@/lib/clipboard-history"
+import { clipboardHistory, isMemo, type ClipEntry } from "@/lib/clipboard-history"
 import { isTauri } from "@/lib/runtime"
 
 export function useClipboardHistory() {
@@ -75,8 +75,36 @@ export function useClipboardHistory() {
     await clipboardHistory.setNote(id, normalized)
   }, [])
 
+  const upsertTop = useCallback((entry: ClipEntry) => {
+    setEntries((prev) => [entry, ...prev.filter((e) => e.id !== entry.id)])
+  }, [])
+
+  /** Returns false when nothing was saved (blank text or backend refused). */
+  const createMemo = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return false
+      const memo = await clipboardHistory.createMemo(text)
+      if (!memo) return false
+      upsertTop(memo)
+      return true
+    },
+    [upsertTop],
+  )
+
+  const updateMemo = useCallback(
+    async (id: string, text: string) => {
+      if (!text.trim()) return false
+      const memo = await clipboardHistory.updateMemo(id, text)
+      if (!memo) return false
+      upsertTop(memo)
+      return true
+    },
+    [upsertTop],
+  )
+
   const clear = useCallback(async () => {
-    setEntries((prev) => prev.filter((e) => e.pinned))
+    // Mirrors Rust: pinned clips and memos survive "clear unpinned".
+    setEntries((prev) => prev.filter((e) => e.pinned || isMemo(e)))
     await clipboardHistory.clear()
   }, [])
 
@@ -99,6 +127,8 @@ export function useClipboardHistory() {
     remove,
     togglePin,
     setNote,
+    createMemo,
+    updateMemo,
     clear,
     wipe,
   }

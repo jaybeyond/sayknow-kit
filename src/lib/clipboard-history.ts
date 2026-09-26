@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core"
 import { isTauri } from "./runtime"
 
+/** `clip` = captured from the system clipboard; `memo` = written in the app. */
+export type ClipKind = "clip" | "memo"
+
 export type ClipEntry = {
   id: string
   text: string
@@ -9,6 +12,12 @@ export type ClipEntry = {
   pinned: boolean
   /** Optional user-authored note. Pass empty string or null to clear. */
   note?: string | null
+  /** Absent in entries persisted before memos existed; treat as `clip`. */
+  kind?: ClipKind
+}
+
+export function isMemo(entry: Pick<ClipEntry, "kind">): boolean {
+  return entry.kind === "memo"
 }
 
 async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
@@ -35,6 +44,13 @@ export const clipboardHistory = {
   },
   async setNote(id: string, note: string | null): Promise<void> {
     await safeInvoke<void>("set_clipboard_entry_note", { id, note })
+  },
+  /** Returns the stored memo, or null when the text is blank or outside Tauri. */
+  async createMemo(text: string): Promise<ClipEntry | null> {
+    return safeInvoke<ClipEntry>("create_clipboard_memo", { text })
+  },
+  async updateMemo(id: string, text: string): Promise<ClipEntry | null> {
+    return safeInvoke<ClipEntry>("update_clipboard_memo", { id, text })
   },
   async clear(): Promise<void> {
     await safeInvoke<void>("clear_clipboard_history")
