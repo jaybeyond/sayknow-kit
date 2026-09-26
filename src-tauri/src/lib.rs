@@ -36,6 +36,7 @@ use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri::Emitter;
+use tauri::menu::{Menu, MenuItem};
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -1501,6 +1502,50 @@ fn set_tray_tooltip(app: AppHandle, tooltip: String) -> Result<(), String> {
     tray.set_tooltip(Some(&tooltip)).map_err(|e| e.to_string())
 }
 
+/// Localize the tray's right-click quit item. The builder can only bake in a
+/// locale-neutral default, so React pushes the resolved i18n string once the
+/// WebView is up, same as the tooltip.
+///
+/// macOS builds the menu per click from TRAY_QUIT_LABEL; the other platforms
+/// keep a real attached menu, and tauri's TrayIcon only exposes `set_menu`, so
+/// there the one-item menu is rebuilt with the new title. The quit id stays the
+/// same, so the handler the builder registered keeps matching it.
+#[tauri::command]
+fn set_tray_quit_label(app: AppHandle, label: String) -> Result<(), String> {
+    if label.trim().is_empty() {
+        return Err("quit label must not be empty".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = &app;
+        let mut current = TRAY_QUIT_LABEL
+            .lock()
+            .map_err(|_| "tray quit label lock poisoned".to_string())?;
+        *current = label;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let tray = app
+            .tray_by_id("sayknow-tray")
+            .ok_or_else(|| "tray not found".to_string())?;
+        tray.set_menu(Some(build_tray_quit_menu(&app, &label)?))
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The one-item quit menu the non-macOS trays attach.
+///
+/// Compiled on every platform even though only the others call it: a macOS
+/// build is the one that gets run here, so type-checking the menu API on it is
+/// what keeps the Windows build from breaking in CI instead.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn build_tray_quit_menu(app: &AppHandle, label: &str) -> Result<Menu<tauri::Wry>, String> {
+    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, label, true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    Menu::with_items(app, &[&quit]).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     // Only allow http(s) URLs — no file://, no scheme injection.
@@ -1522,9 +1567,9 @@ fn relaunch_app(app: AppHandle) {
 
 /// Quit from the app's own UI.
 ///
-/// The tray icon deliberately has no menu: a click there opens the popover and
-/// nothing else. That makes this the only way out, so it must stay wired to
-/// the About panel's quit button.
+/// The tray's right-click menu quits too, but a left click opens the popover,
+/// so this stays wired to the About panel's quit button: it is the way out for
+/// anyone who is already looking at the app.
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     log::info!("quit: requested from the app UI");
@@ -1769,6 +1814,26 @@ fn toggle_window(app: &AppHandle, source: &str) {
 /// on top of the popover the same click just opened.
 static TRAY_LEFT_CLICK_AT_MS: AtomicI64 = AtomicI64::new(0);
 
+/// Label for the tray's quit item. The right-click menu is rebuilt on every
+/// click, so React can push the resolved i18n string at any time and the next
+/// click picks it up. Empty means "use the locale-neutral default".
+static TRAY_QUIT_LABEL: Mutex<String> = Mutex::new(String::new());
+
+/// The tray quit label React has not localized yet.
+const TRAY_QUIT_LABEL_DEFAULT: &str = "Quit SayKnow Kit";
+
+/// Menu-item id for the quit entry on the platforms where the tray menu is a
+/// real attached menu (everything except macOS).
+const TRAY_QUIT_ID: &str = "sayknow-tray-quit";
+
+/// The resolved quit label, falling back to the baked-in default.
+fn tray_quit_label() -> String {
+    match TRAY_QUIT_LABEL.lock() {
+        Ok(label) if !label.trim().is_empty() => label.clone(),
+        _ => TRAY_QUIT_LABEL_DEFAULT.to_string(),
+    }
+}
+
 /// Milliseconds since the epoch, for the echo window above.
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -1781,16 +1846,16 @@ fn now_millis() -> i64 {
 /// click, not a new one. Two deliberate clicks are never this close.
 const TRAY_SECONDARY_ECHO_MS: i64 = 400;
 
-/// Whether a secondary-button event should toggle the popover.
+/// Whether a secondary-button event should pop the quit menu.
 ///
-/// The tray has no menu, so a secondary click is just another click — but only
-/// when it is really ours: on our button, and not the echo of the left click
-/// whose action already ran, which would toggle the popover straight back
-/// closed.
+/// Left click opens the popover, right click pops the quit menu — but only
+/// when the event is really ours: on our button, and not the echo AppKit
+/// delivers right after the left click whose action already ran, which would
+/// throw a menu over the popover that click just opened.
 ///
 /// Split out so the rule is testable without AppKit: the live handler only
 /// gathers the facts and calls this.
-fn should_toggle_on_secondary(inside_button: bool, ms_since_left_click: i64) -> bool {
+fn should_show_quit_menu(inside_button: bool, ms_since_left_click: i64) -> bool {
     if !inside_button {
         return false;
     }
@@ -1801,16 +1866,22 @@ fn should_toggle_on_secondary(inside_button: bool, ms_since_left_click: i64) -> 
 /// macOS 27 status-item scenes swallow clicks that land on tray-icon's
 /// transparent overlay view. Live log: Enter/Move/Leave fire, mouseDown
 /// never does. Remove that overlay and bind the real NSStatusItem button
-/// so a click opens the popover. No menu is ever attached: quitting lives in
-/// the app's About panel instead.
+/// so a left click opens the popover, and pop the quit menu ourselves on a
+/// right click.
+///
+/// The menu is never attached to the status item: AppKit answers *every*
+/// click on an item with a `menu` by opening that menu and never runs the
+/// button's action, which is how a left click used to produce a menu instead
+/// of the popover. tray-icon sets it that way too (`setMenu` in its macOS
+/// backend), so the menu has to stay ours and be popped by hand.
 #[cfg(target_os = "macos")]
 fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol, Sel};
     use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
-    use objc2_app_kit::{NSEvent, NSEventMask};
-    use objc2_foundation::MainThreadMarker;
+    use objc2_app_kit::{NSEvent, NSEventMask, NSMenu};
+    use objc2_foundation::{MainThreadMarker, NSString};
     use std::ptr::NonNull;
 
     struct ClickIvars {
@@ -1834,6 +1905,12 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
                     .tray_positioned
                     .store(true, Ordering::Relaxed);
                 toggle_window(app, "tray-button");
+            }
+
+            #[unsafe(method(sayknowTrayQuit:))]
+            fn quit(&self, _sender: Option<&NSObject>) {
+                log::info!("tray: quit chosen from the right-click menu");
+                self.ivars().app.exit(0);
             }
         }
 
@@ -1869,12 +1946,12 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
                 button.setAction(Some(Sel::register(c"sayknowTrayClicked:")));
                 std::mem::forget(target.clone());
 
-                // Secondary clicks open the popover too. There is no tray menu
-                // any more: quitting lives in the About panel, and a menu
-                // popping out of the menu bar on a stray secondary event was
-                // the whole complaint.
+                // Right click pops a one-item quit menu. It is built fresh per
+                // click so the label tracks the UI locale, and it is never
+                // handed to the status item, which would hijack the left click
+                // as well.
                 let button_for_secondary = button.clone();
-                let app_for_secondary = app.clone();
+                let target_for_secondary = target.clone();
                 let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
                     let event = event.as_ref();
                     let window_match = event
@@ -1895,20 +1972,31 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
                         let since_left =
                             now_millis() - TRAY_LEFT_CLICK_AT_MS.load(Ordering::Relaxed);
 
-                        if should_toggle_on_secondary(inside_button, since_left) {
-                            log::info!("tray: secondary click -> popover");
-                            TRAY_LEFT_CLICK_AT_MS.store(now_millis(), Ordering::Relaxed);
-                            app_for_secondary
-                                .state::<AppState>()
-                                .tray_positioned
-                                .store(true, Ordering::Relaxed);
-                            toggle_window(&app_for_secondary, "tray-secondary");
-                        } else {
-                            log::info!(
-                                "tray: secondary event ignored \
-                                 (inside={inside_button} since_left={since_left}ms)"
+                        if should_show_quit_menu(inside_button, since_left) {
+                            log::info!("tray: secondary click -> quit menu");
+                            let menu = NSMenu::initWithTitle(
+                                NSMenu::alloc(mtm),
+                                &NSString::from_str(""),
                             );
+                            let item = menu.addItemWithTitle_action_keyEquivalent(
+                                &NSString::from_str(&tray_quit_label()),
+                                Some(Sel::register(c"sayknowTrayQuit:")),
+                                &NSString::from_str(""),
+                            );
+                            item.setTarget(Some(&*target_for_secondary));
+                            NSMenu::popUpContextMenu_withEvent_forView(
+                                &menu,
+                                event,
+                                &button_for_secondary,
+                            );
+                            // The menu consumed the click; letting it travel on
+                            // would reach the button action too.
+                            return std::ptr::null_mut();
                         }
+                        log::info!(
+                            "tray: secondary event ignored \
+                             (inside={inside_button} since_left={since_left}ms)"
+                        );
                     }
                     std::ptr::from_ref(event).cast_mut()
                 });
@@ -1922,7 +2010,7 @@ fn strip_tray_click_overlay(app: &AppHandle, tray: &tauri::tray::TrayIcon) {
         }
     });
     match bound {
-        Ok(true) => log::info!("tray: overlay stripped; every click opens the popover"),
+        Ok(true) => log::info!("tray: overlay stripped; left opens the popover, right quits"),
         Ok(false) => log::info!("tray: overlay strip skipped"),
         Err(e) => log::info!("tray: overlay strip failed: {e}"),
     }
@@ -1976,6 +2064,7 @@ pub fn run() {
             open_external,
             quit_app,
             set_tray_tooltip,
+            set_tray_quit_label,
             detect_claude_cli,
             claude_chat,
             detect_ocp_env,
@@ -2074,15 +2163,32 @@ pub fn run() {
             eprintln!("[sayknow] building tray icon...");
             let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
 
-            // No tray menu at all. macOS pops an attached menu on click, and a
-            // menu appearing out of the menu bar is not what a click on this
-            // icon should ever do — quitting lives in the About panel.
-
-            let tray = TrayIconBuilder::with_id("sayknow-tray")
+            // Left click opens the popover; right click offers quit. On macOS
+            // the menu must not be attached here — AppKit opens an attached
+            // status-item menu on *every* click and never runs the button
+            // action, so strip_tray_click_overlay pops it by hand instead.
+            // Everywhere else the platform's own right-click menu is the menu.
+            let tray_builder = TrayIconBuilder::with_id("sayknow-tray")
                 .icon(icon)
                 .icon_as_template(true)
                 .tooltip("SayKnow Kit")
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false);
+
+            #[cfg(not(target_os = "macos"))]
+            let tray_builder = {
+                let quit_menu =
+                    build_tray_quit_menu(app.handle(), TRAY_QUIT_LABEL_DEFAULT)?;
+                tray_builder
+                    .menu(&quit_menu)
+                    .on_menu_event(|app, event| {
+                        if event.id() == TRAY_QUIT_ID {
+                            log::info!("tray: quit chosen from the right-click menu");
+                            app.exit(0);
+                        }
+                    })
+            };
+
+            let tray = tray_builder
                 .on_tray_icon_event(move |tray, event| {
                     let app = tray.app_handle();
                     tauri_plugin_positioner::on_tray_event(app, &event);
@@ -2192,8 +2298,8 @@ pub fn run() {
 mod window_placement_tests {
     use super::{
         is_offscreen, monitor_containing, overlap_area, should_hide_after_blur,
-        should_toggle_on_secondary, tray_anchored_origin, tray_fallback_origin, Rect,
-        TRAY_SECONDARY_ECHO_MS,
+        should_show_quit_menu, tray_anchored_origin, tray_fallback_origin, tray_quit_label, Rect,
+        TRAY_QUIT_LABEL, TRAY_QUIT_LABEL_DEFAULT, TRAY_SECONDARY_ECHO_MS,
     };
 
     /// This machine, in logical points — the space macOS actually positions
@@ -2381,45 +2487,106 @@ mod window_placement_tests {
             toggle.contains("raise_popover("),
             "showing the popover must orderFrontRegardless, not only set_focus"
         );
-        // Built at runtime: a literal here would be found in this very file
-        // and the check would pass on its own text.
-        let pop_up_menu = format!("popUp{}", "ContextMenu_withEvent_forView");
-        assert!(
-            !source.contains(&pop_up_menu),
-            "no menu may pop out of the menu bar: a click on the icon opens the popover"
-        );
-        let attach_menu = format!(".menu(&{})", "menu)");
-        assert!(
-            !source.contains(&attach_menu),
-            "an attached status-item menu is what made macOS open a menu on click"
-        );
         assert!(
             source.contains("fn quit_app("),
-            "with no tray menu, the app UI must still be able to quit"
+            "the About panel's quit button must keep working"
         );
     }
 
     #[test]
-    fn a_left_click_echo_does_not_reopen_the_popover() {
-        // Observed live: the button's own left-click action ran and a
-        // secondary event for the same click arrived milliseconds later.
-        // Acting on it would toggle the popover straight back closed.
-        assert!(!should_toggle_on_secondary(true, 12));
-        assert!(!should_toggle_on_secondary(true, TRAY_SECONDARY_ECHO_MS));
+    fn a_left_click_opens_the_popover_and_a_right_click_pops_the_quit_menu() {
+        let source = include_str!("lib.rs");
+        let click_path = source
+            .split_once("fn strip_tray_click_overlay(")
+            .expect("the macOS click path still exists")
+            .1
+            .split_once("#[cfg(not(target_os = \"macos\"))]")
+            .expect("the macOS click path has an end")
+            .0;
+        assert!(
+            click_path.contains("toggle_window(app, \"tray-button\")"),
+            "a left click on the status item must open the popover"
+        );
+        // Built at runtime: a literal here would be found in this very file and
+        // the check would pass on its own text.
+        let pop_up_menu = format!("popUp{}", "ContextMenu_withEvent_forView");
+        let secondary = click_path
+            .split_once("if should_show_quit_menu(")
+            .expect("the right-click branch still exists")
+            .1;
+        assert!(
+            secondary.contains(&pop_up_menu),
+            "a right click has to pop the quit menu itself"
+        );
+        assert!(
+            !secondary.contains("toggle_window"),
+            "a right click must show the menu, not also toggle the popover"
+        );
+        assert!(
+            click_path.contains("NSEventMask::RightMouseDown"),
+            "only the secondary button may reach the menu path"
+        );
+
+        // An attached status-item menu is what made macOS answer *every* click
+        // with a menu and never run the button action, so the attach has to
+        // stay compiled out on macOS, and the macOS path must never set one
+        // either.
+        let attach_menu = format!(".menu(&{}", "quit_menu)");
+        let gated = source
+            .split_once("#[cfg(not(target_os = \"macos\"))]\n            let tray_builder = {")
+            .expect("the tray menu is attached in a block macOS does not compile")
+            .1
+            .split_once("\n            };")
+            .expect("that block has an end")
+            .0;
+        assert!(
+            gated.contains(&attach_menu),
+            "the menu attach must stay inside the non-macOS block"
+        );
+        let set_menu = format!("set{}", "Menu(");
+        assert!(
+            !click_path.contains(&set_menu),
+            "handing the menu to the status item makes AppKit open it on left click too"
+        );
+        assert!(
+            source.contains("show_menu_on_left_click(false)"),
+            "wherever a menu is attached, the left click must not open it"
+        );
     }
 
     #[test]
-    fn a_real_secondary_click_opens_the_popover() {
-        // Right click is an ordinary click now: it opens the app, never a menu.
-        assert!(should_toggle_on_secondary(true, TRAY_SECONDARY_ECHO_MS + 1));
-        assert!(should_toggle_on_secondary(true, 60_000));
+    fn a_left_click_echo_does_not_pop_the_quit_menu() {
+        // Observed live: the button's own left-click action ran and a
+        // secondary event for the same click arrived milliseconds later.
+        // Acting on it would throw the quit menu over the popover that click
+        // just opened.
+        assert!(!should_show_quit_menu(true, 12));
+        assert!(!should_show_quit_menu(true, TRAY_SECONDARY_ECHO_MS));
+    }
+
+    #[test]
+    fn a_real_secondary_click_pops_the_quit_menu() {
+        assert!(should_show_quit_menu(true, TRAY_SECONDARY_ECHO_MS + 1));
+        assert!(should_show_quit_menu(true, 60_000));
     }
 
     #[test]
     fn a_secondary_click_elsewhere_in_the_menu_bar_is_not_ours() {
         // The menu-bar window hosts every status item, so the window alone
         // cannot decide whose click this was.
-        assert!(!should_toggle_on_secondary(false, 10_000));
+        assert!(!should_show_quit_menu(false, 10_000));
+    }
+
+    #[test]
+    fn the_quit_label_is_the_default_until_react_localizes_it() {
+        // The menu is built per click, so an empty or whitespace push must not
+        // leave the user with a blank menu entry.
+        assert_eq!(tray_quit_label(), TRAY_QUIT_LABEL_DEFAULT);
+        *TRAY_QUIT_LABEL.lock().unwrap() = "   ".to_string();
+        assert_eq!(tray_quit_label(), TRAY_QUIT_LABEL_DEFAULT);
+        *TRAY_QUIT_LABEL.lock().unwrap() = "SayKnow Kit 종료".to_string();
+        assert_eq!(tray_quit_label(), "SayKnow Kit 종료");
+        TRAY_QUIT_LABEL.lock().unwrap().clear();
     }
 
     #[test]

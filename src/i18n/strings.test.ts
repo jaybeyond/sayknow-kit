@@ -59,3 +59,11 @@ describe("display power copy", () => {
     }
   })
 })
+describe("tray quit label", () => {
+  it("exists in every locale, because the tray's right-click menu shows it", () => {
+    for (const locale of UI_LOCALES) {
+      const quit = UI_STRINGS[locale]["tray.quit"]
+      expect(quit, `${locale}:tray.quit`).toBeTruthy()
+    }
+  })
+})

@@ -32,15 +32,18 @@ function MainRoot() {
   const { t } = useT(settings.uiLocale)
   const contentRef = useRef<HTMLDivElement>(null)
 
-  // Push the tray tooltip whenever the UI locale settles. The Rust side only
-  // bakes in a locale-neutral default; this localizes it for all 8 locales.
-  // There is no tray menu to label: clicking the icon opens the popover, and
-  // quitting lives in the About panel.
+  // Push the tray tooltip and the right-click menu's quit label whenever the
+  // UI locale settles. The Rust side only bakes in locale-neutral defaults;
+  // this localizes them for all 8 locales.
   useEffect(() => {
     if (!isTauri() || !loaded) return
     const tagline = t("app.tagline")
     if (tagline) {
       void invoke("set_tray_tooltip", { tooltip: `SayKnow Kit — ${tagline}` }).catch(() => {})
+    }
+    const quit = t("tray.quit")
+    if (quit) {
+      void invoke("set_tray_quit_label", { label: quit }).catch(() => {})
     }
   }, [t, loaded])
 
