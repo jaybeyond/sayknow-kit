@@ -2495,7 +2495,9 @@ mod window_placement_tests {
 
     #[test]
     fn a_left_click_opens_the_popover_and_a_right_click_pops_the_quit_menu() {
-        let source = include_str!("lib.rs");
+        // Windows runners check out CRLF; the multi-line anchors below are
+        // written with LF.
+        let source = include_str!("lib.rs").replace("\r\n", "\n");
         let click_path = source
             .split_once("fn strip_tray_click_overlay(")
             .expect("the macOS click path still exists")
