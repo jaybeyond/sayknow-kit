@@ -2643,3 +2643,41 @@ mod credential_account_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod capability_tests {
+    /// The webview's HTTP plugin scope. Cleartext is only for services on this
+    /// machine (Ollama, LM Studio, OCP, OAuth callbacks); a blanket `http://*`
+    /// would let any page script reach the LAN or the internet unencrypted
+    /// with the app's credentials attached.
+    #[test]
+    fn cleartext_http_is_limited_to_this_machine() {
+        let caps: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("capabilities/default.json is valid JSON");
+        let http = caps["permissions"]
+            .as_array()
+            .expect("permissions is a list")
+            .iter()
+            .find(|p| p["identifier"] == "http:default")
+            .expect("the http plugin is scoped");
+        let urls: Vec<&str> = http["allow"]
+            .as_array()
+            .expect("the http scope has an allow list")
+            .iter()
+            .map(|a| a["url"].as_str().expect("every scope entry has a url"))
+            .collect();
+        for url in &urls {
+            if let Some(rest) = url.strip_prefix("http://") {
+                assert!(
+                    rest.starts_with("localhost:") || rest.starts_with("127.0.0.1:"),
+                    "cleartext http must stay on this machine, found {url}"
+                );
+            }
+        }
+        assert!(
+            urls.contains(&"http://localhost:**") && urls.contains(&"http://127.0.0.1:**"),
+            "local model servers and OAuth callbacks still need loopback http"
+        );
+    }
+}
