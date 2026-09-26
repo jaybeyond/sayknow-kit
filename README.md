@@ -74,7 +74,7 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 📐 **Compact horizontal mode** — 720×240 side-by-side layout, designed to stay open all day
 - 🪟 **Window size toggle** — flip between compact and normal (480×580) from the header
 - 📌 **Pin window** — disable auto-hide when you want it open
-- 📋 **Clipboard auto-fill** — copy text anywhere → press `⌘⇧T` on macOS or `Ctrl+Shift+T` on Windows → it lands in the input
+- 📋 **Clipboard auto-fill** — copy text anywhere → press `⌃⌥S` on macOS or `Ctrl+Alt+Shift+S` on Windows → it lands in the input
 - 🕘 **History** — searchable, pin entries to keep them forever
 - 💰 **Usage tracking** — daily / monthly tokens and cost (USD)
 - 🌓 **Light / dark / system** — auto-follows OS theme
@@ -134,7 +134,7 @@ pnpm tauri build
 
 ### Daily flow
 
-1. Click the tray icon or press `⌘⇧T` on macOS, or `Ctrl+Shift+T` on Windows, to open the popover. Right-click the icon to quit.
+1. Click the tray icon or press `⌃⌥S` on macOS, or `Ctrl+Alt+Shift+S` on Windows, to open the popover. Right-click the icon to quit.
 2. Pick source / target language (or leave source on **Auto-detect**).
 3. Type. After ~1.5s of inactivity, the translation appears below.
 4. Click 📋 to copy.
@@ -149,8 +149,12 @@ Tweak the tone or style after translation:
 
 | Shortcut | Action |
 |---|---|
-| `⌘⇧T` (macOS) | Toggle the popover (global) |
-| `Ctrl+Shift+T` (Windows) | Toggle the popover (global) |
+| `⌃⌥S` (macOS) | Toggle the popover (global) |
+| `Ctrl+Alt+Shift+S` (Windows) | Toggle the popover (global) |
+| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Open straight on Translate / Chat / Clipboard / Tools (global) |
+| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Write a new memo from anywhere (global) |
+| `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Switch tabs |
+| `⌘/` (macOS) / `Ctrl+/` (Windows) | Every shortcut — Settings → Shortcuts |
 | `⌘⏎` (macOS) | Translate immediately (manual mode) |
 | `Ctrl+Enter` (Windows) | Translate immediately (manual mode) |
 
@@ -158,6 +162,7 @@ Tweak the tone or style after translation:
 
 Click ⚙️ in the popover → **Settings** opens a full window with a sidebar:
 - **General** — auto/manual mode, clipboard auto-fill, pin, theme, app language
+- **Shortcuts** — every shortcut, grouped by where it works; flags any global key another app already owns
 - **Connection** — primary model, fallback model, sign out
 - **Glossary** — term pairs ("backend team" → "Backend Team")
 - **System prompt** — edit translate / refine prompts (variables: `{from}`, `{to}`, `{glossary}`)
@@ -166,9 +171,9 @@ Click ⚙️ in the popover → **Settings** opens a full window with a sidebar:
 
 ### Clipboard auto-fill
 
-In **Settings → General**, enable clipboard auto-fill for `⌘⇧T` on macOS or `Ctrl+Shift+T` on Windows. Then:
+In **Settings → General**, enable clipboard auto-fill for `⌃⌥S` on macOS or `Ctrl+Alt+Shift+S` on Windows. Then:
 1. Select text in any app → `⌘C` on macOS or `Ctrl+C` on Windows
-2. Press `⌘⇧T` on macOS or `Ctrl+Shift+T` on Windows → SayKnow Kit opens with that text already in the input
+2. Press `⌃⌥S` on macOS or `Ctrl+Alt+Shift+S` on Windows → SayKnow Kit opens with that text already in the input
 3. In auto mode, it translates 1.5s later
 
 ## Security

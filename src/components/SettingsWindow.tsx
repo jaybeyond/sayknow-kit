@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   Info,
+  Keyboard,
   LogOut,
   Pin,
   Plug,
@@ -35,6 +36,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { ModelPicker } from "./ModelPicker"
 import { ProviderPicker } from "./ProviderPicker"
 import { GlossaryEditor } from "./GlossaryEditor"
+import { ShortcutsList } from "./ShortcutsList"
 import { useModels } from "@/hooks/useModels"
 import type { Settings } from "@/hooks/useSettings"
 import { UpdateRow } from "./UpdateRow"
@@ -59,6 +61,7 @@ import {
   type DeeplUsage,
 } from "@/lib/deepl"
 import { translationMemory } from "@/lib/translation-memory"
+import { formatCombo, shortcut } from "@/lib/shortcuts"
 
 type Props = {
   settings: Settings
@@ -74,10 +77,29 @@ type Props = {
 
 type Section =
   | "general"
+  | "shortcuts"
   | "connection"
   | "glossary"
   | "prompt"
   | "about"
+
+const SECTIONS: readonly Section[] = ["general", "shortcuts", "connection", "glossary", "prompt", "about"]
+
+function isSection(v: string): v is Section {
+  return (SECTIONS as readonly string[]).includes(v)
+}
+
+function initialSection(): Section {
+  const requested = new URLSearchParams(window.location.search).get("section") ?? ""
+  return isSection(requested) ? requested : "general"
+}
+
+/** The keys that open the popover with the clipboard pulled in, for prose. */
+function autofillKeys(): string {
+  return [shortcut("global.toggle"), shortcut("global.translate")]
+    .map((s) => formatCombo(s.combo))
+    .join(" / ")
+}
 
 export function SettingsWindow({
   settings,
@@ -89,7 +111,27 @@ export function SettingsWindow({
   refreshOAuth,
 }: Props) {
   const { t } = useT(settings.uiLocale)
-  const [section, setSection] = useState<Section>("general")
+  const [section, setSection] = useState<Section>(initialSection)
+
+  // The popover's ⌘/ opens this window straight at the shortcuts page; when
+  // the window already exists the section arrives as an event instead.
+  useEffect(() => {
+    if (!isTauri()) return
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("settings:section", (event) => {
+        if (isSection(event.payload)) setSection(event.payload)
+      }).then((un) => {
+        if (cancelled) un()
+        else unlisten = un
+      }),
+    )
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
   const { models, loading: modelsLoading } = useModels(
     settings.apiKey,
     settings.baseURL,
@@ -98,6 +140,7 @@ export function SettingsWindow({
 
   const NAV: { id: Section; label: string; icon: typeof SettingsIcon }[] = [
     { id: "general", label: t("settings.section.general"), icon: SettingsIcon },
+    { id: "shortcuts", label: t("settings.section.shortcuts"), icon: Keyboard },
     { id: "connection", label: t("settings.section.connection"), icon: Plug },
     { id: "glossary", label: t("settings.section.glossary"), icon: BookText },
     { id: "prompt", label: t("settings.section.prompt"), icon: Sparkles },
@@ -157,6 +200,12 @@ export function SettingsWindow({
                 setThemeMode={setThemeMode}
               />
             )}
+            {section === "shortcuts" && (
+              <div className="space-y-4">
+                <SectionHeader icon={Keyboard} title={t("settings.section.shortcuts")} />
+                <ShortcutsList uiLocale={settings.uiLocale} />
+              </div>
+            )}
             {section === "connection" && (
               <ConnectionSection
                 settings={settings}
@@ -204,7 +253,7 @@ function GeneralSection({
         title={t("settings.section.general")}
       />
 
-      <Row label={t("settings.mode")} description={t(settings.autoTranslate ? "settings.clipboard.body" : "")}>
+      <Row label={t("settings.mode")} description={settings.autoTranslate ? t("settings.clipboard.body").replace("{keys}", autofillKeys()) : undefined}>
         <div className="grid w-full max-w-[280px] grid-cols-2 gap-1">
           <Button
             size="sm"
@@ -229,7 +278,7 @@ function GeneralSection({
 
       <Row
         label={t("settings.clipboard.title")}
-        description={t("settings.clipboard.body")}
+        description={t("settings.clipboard.body").replace("{keys}", autofillKeys())}
       >
         <Switch
           checked={settings.clipboardOnHotkey}

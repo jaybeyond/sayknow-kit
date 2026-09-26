@@ -41,7 +41,7 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 - 🌐 **OpenRouter BYOK** — combobox con búsqueda en 360+ modelos
 - 🔁 **Modelo de respaldo** — OpenRouter reintenta si el principal falla
 - ⏹ **Detener** — cancela una llamada en curso
-- 📋 **Pegado automático** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) rellena la entrada con el portapapeles
+- 📋 **Pegado automático** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) rellena la entrada con el portapapeles
 - 🕘 **Historial** — buscable, fija entradas para conservarlas
 - 📌 **Fijar ventana** — desactiva el auto-ocultar
 - 📚 **Glosario** — traducciones consistentes para nombres y términos propios
@@ -94,20 +94,25 @@ pnpm tauri build
 
 1. En macOS aparece un icono en la barra de menú; en Windows, en la bandeja del sistema. La aplicación permanece allí y puede abrirse desde el menú.
 2. Haz clic en el icono → introduce la clave de OpenRouter → **Conectar y empezar**. La clave se guarda en el almacén de credenciales del sistema.
-3. Haz clic en el icono o usa `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) para abrir la ventana → escribe → traducción automática 1,5 s después. Clic derecho en el icono para salir.
+3. Haz clic en el icono o usa `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) para abrir la ventana → escribe → traducción automática 1,5 s después. Clic derecho en el icono para salir.
 
 ### Atajos
 
 | Atajo | Acción |
 |---|---|
-| `⌘⇧T` (macOS) | Abrir/cerrar la ventana (global) |
-| `Ctrl+Shift+T` (Windows) | Abrir/cerrar la ventana (global) |
+| `⌃⌥S` (macOS) | Abrir/cerrar la ventana (global) |
+| `Ctrl+Alt+Shift+S` (Windows) | Abrir/cerrar la ventana (global) |
+| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Abrir directamente en Traducir / Chat / Portapapeles / Herramientas (global) |
+| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nuevo apunte desde cualquier lugar (global) |
+| `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Cambiar de pestaña |
+| `⌘/` (macOS) / `Ctrl+/` (Windows) | Todos los atajos — Ajustes → Atajos |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Traducir al instante (modo manual) |
 
 ### Ajustes (ventana aparte)
 
 ⚙️ → **Ajustes** abre una ventana con barra lateral:
 - **General** — modo, portapapeles, pin, tema, idioma de la app
+- **Atajos** — todos los atajos agrupados por dónde funcionan; marca las teclas globales que ya usa otra app
 - **Conexión** — modelo principal/respaldo, cerrar sesión
 - **Glosario** — pares de términos
 - **Prompt del sistema** — editar prompts de traducción/refinar

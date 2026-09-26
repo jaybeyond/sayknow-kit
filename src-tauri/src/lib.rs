@@ -15,6 +15,7 @@ mod mole;
 mod network_metrics;
 mod display;
 mod clipboard;
+mod global_shortcuts;
 mod oauth_callback;
 mod cursor;
 mod cursor_chat;
@@ -39,7 +40,7 @@ use tauri::Emitter;
 use tauri::menu::{Menu, MenuItem};
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
 
@@ -1577,17 +1578,26 @@ fn quit_app(app: AppHandle) {
 }
 
 #[tauri::command]
-fn open_settings(app: AppHandle) -> Result<(), String> {
+fn open_settings(app: AppHandle, section: Option<String>) -> Result<(), String> {
+    // The section lands in a URL, so only a plain identifier is accepted.
+    let section = section.filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
     if let Some(existing) = app.get_webview_window("settings") {
         let _ = existing.show();
         let _ = existing.set_focus();
         let _ = existing.unminimize();
+        if let Some(section) = section {
+            let _ = app.emit_to("settings", "settings:section", section);
+        }
         return Ok(())
     }
+    let url = match section {
+        Some(section) => format!("index.html?window=settings&section={section}"),
+        None => "index.html?window=settings".to_string(),
+    };
     WebviewWindowBuilder::new(
         &app,
         "settings",
-        WebviewUrl::App("index.html?window=settings".into()),
+        WebviewUrl::App(url.into()),
     )
     .title("SayKnow Kit")
     .inner_size(820.0, 580.0)
@@ -1804,6 +1814,24 @@ fn toggle_window(app: &AppHandle, source: &str) {
     // visible now" signal the webview gets, because this window does not
     // always become key.
     let _ = app.emit("sayknow:open", source);
+}
+
+/// A panel shortcut shows the popover already on its panel. When the popover
+/// is up, the webview decides: the same panel again hides it, another panel
+/// switches to it.
+fn dispatch_global_shortcut(app: &AppHandle, id: &str) {
+    let Some(target) = global_shortcuts::target(id) else {
+        toggle_window(app, "shortcut");
+        return;
+    };
+    let showing = app
+        .get_webview_window("main")
+        .is_some_and(|win| popover_is_showing(app, &win));
+    if showing {
+        let _ = app.emit("sayknow:shortcut", target);
+    } else {
+        toggle_window(app, &format!("shortcut:{target}"));
+    }
 }
 
 /// When the status-item button last ran its own left-click action, in
@@ -2086,6 +2114,7 @@ pub fn run() {
             clipboard::set_clipboard_capture,
             clipboard::get_clipboard_capture,
             clipboard::set_clipboard_max_entries,
+            global_shortcuts::get_global_shortcuts,
             display::list_displays,
             display::set_display_brightness,
             display::set_builtin_backlight,
@@ -2138,28 +2167,39 @@ pub fn run() {
             // Tracks the last show() time so the focus-loss handler can ignore
             // the brief blur that fires while the window is being raised.
 
-            // Global shortcut: ⌘⇧T on macOS, Ctrl+Shift+T elsewhere.
-            // SUPER on Windows = Win key, which collides with system shortcuts,
-            // so we deliberately route to CONTROL on non-Apple platforms.
-            #[cfg(target_os = "macos")]
-            let primary_modifier = Modifiers::SUPER;
-            #[cfg(not(target_os = "macos"))]
-            let primary_modifier = Modifiers::CONTROL;
-            let shortcut = Shortcut::new(
-                Some(primary_modifier | Modifiers::SHIFT),
-                Code::KeyT,
-            );
-            let shortcut_for_handler = shortcut;
+            // Global shortcuts (see global_shortcuts.rs for the key choice).
+            // One key the OS refuses — usually because another app owns it —
+            // must not stop the app from starting, so each registers on its
+            // own and the outcome is reported to the shortcuts settings page.
+            let bindings = global_shortcuts::bindings();
+            let bindings_for_handler = bindings.clone();
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, sc, ev| {
-                        if sc == &shortcut_for_handler && ev.state() == ShortcutState::Pressed {
-                            toggle_window(app, "shortcut");
+                        if ev.state() != ShortcutState::Pressed {
+                            return;
+                        }
+                        if let Some((id, _)) = bindings_for_handler.iter().find(|(_, s)| s == sc) {
+                            dispatch_global_shortcut(app, id);
                         }
                     })
                     .build(),
             )?;
-            app.global_shortcut().register(shortcut)?;
+            let mut shortcut_status = Vec::with_capacity(bindings.len());
+            for (id, shortcut) in &bindings {
+                let registered = match app.global_shortcut().register(*shortcut) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        log::warn!("global shortcut {id} not registered: {e}");
+                        false
+                    }
+                };
+                shortcut_status.push(global_shortcuts::ShortcutStatus {
+                    id: (*id).to_string(),
+                    registered,
+                });
+            }
+            app.manage(global_shortcuts::Status(Mutex::new(shortcut_status)));
 
             // Tray icon — use small dedicated 44x44 PNG so it fits the macOS menu bar.
             eprintln!("[sayknow] building tray icon...");

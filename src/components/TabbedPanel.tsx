@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import {
   Clipboard as ClipboardIcon,
   Languages as TranslateIcon,
@@ -35,9 +35,36 @@ import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 import { invoke } from "@tauri-apps/api/core"
 import { isTauri } from "@/lib/runtime"
+import { formatCombo, shortcut, useShortcuts } from "@/lib/shortcuts"
 
 type Tab = "translate" | "chat" | "clipboard" | "tools"
 const TAB_KEY = "active-tab"
+const TABS: readonly Tab[] = ["translate", "chat", "clipboard", "tools"]
+
+/** What a global shortcut asks the popover to show. */
+type ShortcutTarget = Tab | "newMemo"
+
+function isShortcutTarget(v: string): v is ShortcutTarget {
+  return v === "newMemo" || (TABS as readonly string[]).includes(v)
+}
+
+/**
+ * A Radix menu, popover, select, or dialog (or the image lightbox) is open.
+ * Escape belongs to it then, not to hiding the whole window. Radix closes on
+ * the same keydown, but its DOM is still mounted while the event is running.
+ */
+function overlayOpen(): boolean {
+  return !!document.querySelector(
+    '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]',
+  )
+}
+
+function openSettings(section?: string) {
+  if (!isTauri()) return
+  void invoke("open_settings", section ? { section } : {}).catch((e) =>
+    console.error("open_settings failed:", e),
+  )
+}
 
 type Props = {
   settings: Settings
@@ -59,6 +86,15 @@ export function TabbedPanel(props: Props) {
   // up. nonce changes every dispatch so an identical payload still lands.
   const [pendingTranslateInput, setPendingTranslateInput] =
     useState<TranslateInjection | null>(null)
+  // One-shot requests for panels that may mount only because of them; each
+  // panel clears its own once handled.
+  const [autofillRequest, setAutofillRequest] = useState<number | null>(null)
+  const [composeRequest, setComposeRequest] = useState<number | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const tabRef = useRef(tab)
+  useEffect(() => {
+    tabRef.current = tab
+  }, [tab])
   const {
     entries: historyEntries,
     remove: removeHistory,
@@ -81,6 +117,83 @@ export function TabbedPanel(props: Props) {
     setTab(next)
     storage.set(TAB_KEY, next)
   }
+
+  function goTo(target: ShortcutTarget) {
+    if (target === "newMemo") {
+      selectTab("clipboard")
+      setComposeRequest(Date.now())
+      return
+    }
+    selectTab(target)
+    if (target === "translate") setAutofillRequest(Date.now())
+  }
+
+  // Global shortcuts. "sayknow:open" carries how the popover was just shown;
+  // "sayknow:shortcut" arrives while it is already up.
+  useEffect(() => {
+    if (!isTauri()) return
+    let cancelled = false
+    const unlisteners: (() => void)[] = []
+    void import("@tauri-apps/api/event").then(({ listen }) => {
+      const subscriptions = [
+        listen<string>("sayknow:open", (event) => {
+          const source = event.payload
+          if (source === "shortcut") {
+            // The plain toggle keeps the last tab and, on translate, still
+            // pulls in the clipboard as it always has.
+            if (tabRef.current === "translate") setAutofillRequest(Date.now())
+            return
+          }
+          const target = source.startsWith("shortcut:") ? source.slice("shortcut:".length) : ""
+          if (isShortcutTarget(target)) goTo(target)
+        }),
+        listen<string>("sayknow:shortcut", (event) => {
+          const target = event.payload
+          if (!isShortcutTarget(target)) return
+          // Pressing the key of the panel already in front puts it away,
+          // like the plain toggle does.
+          if (target === tabRef.current) {
+            void invoke("hide_window").catch(() => {})
+            return
+          }
+          goTo(target)
+        }),
+      ]
+      for (const sub of subscriptions) {
+        void sub.then((un) => {
+          if (cancelled) un()
+          else unlisteners.push(un)
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+      for (const un of unlisteners) un()
+    }
+    // goTo only touches state setters and storage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useShortcuts({
+    "app.tab.translate": () => selectTab("translate"),
+    "app.tab.chat": () => selectTab("chat"),
+    "app.tab.clipboard": () => selectTab("clipboard"),
+    "app.tab.tools": () => selectTab("tools"),
+    "app.history": () => setHistoryOpen((open) => !open),
+    "app.pin": () => props.update({ pinned: !props.settings.pinned }),
+    "app.compact": () =>
+      props.update({
+        windowMode: props.settings.windowMode === "compact" ? "normal" : "compact",
+      }),
+    "app.settings": () => openSettings(),
+    "app.shortcuts": () => openSettings("shortcuts"),
+    "app.hide": () => {
+      if (overlayOpen()) return false
+      if (isTauri()) void invoke("hide_window").catch(() => {})
+    },
+  })
+
+  const tabHint = (id: string) => formatCombo(shortcut(id).combo)
 
   function sendToTranslate(text: string) {
     setPendingTranslateInput({ text, nonce: Date.now() })
@@ -111,18 +224,21 @@ export function TabbedPanel(props: Props) {
           active={tab === "translate"}
           icon={TranslateIcon}
           label={t("tab.translate")}
+          hint={tabHint("app.tab.translate")}
           onClick={() => selectTab("translate")}
         />
         <TabButton
           active={tab === "chat"}
           icon={MessageSquare}
           label={t("tab.chat")}
+          hint={tabHint("app.tab.chat")}
           onClick={() => selectTab("chat")}
         />
         <TabButton
           active={tab === "clipboard"}
           icon={ClipboardIcon}
           label={t("tab.clipboard")}
+          hint={tabHint("app.tab.clipboard")}
           onClick={() => selectTab("clipboard")}
         />
 
@@ -130,6 +246,7 @@ export function TabbedPanel(props: Props) {
           active={tab === "tools"}
           icon={Wrench}
           label={t("tab.tools")}
+          hint={tabHint("app.tab.tools")}
           onClick={() => selectTab("tools")}
         />
 
@@ -154,11 +271,11 @@ export function TabbedPanel(props: Props) {
                 ? t("header.expand")
                 : t("header.compact")
             }
-            title={
+            title={`${
               props.settings.windowMode === "compact"
                 ? t("header.expand")
                 : t("header.compact")
-            }
+            } (${tabHint("app.compact")})`}
           >
             {props.settings.windowMode === "compact" ? (
               <Maximize2 className="h-3.5 w-3.5" />
@@ -174,9 +291,9 @@ export function TabbedPanel(props: Props) {
             aria-label={
               props.settings.pinned ? t("header.unpin") : t("header.pin")
             }
-            title={
+            title={`${
               props.settings.pinned ? t("header.pinned") : t("header.pin")
-            }
+            } (${tabHint("app.pin")})`}
           >
             {props.settings.pinned ? (
               <Pin className="h-3.5 w-3.5 fill-current" />
@@ -191,6 +308,9 @@ export function TabbedPanel(props: Props) {
             onTogglePin={toggleHistoryPin}
             onClear={clearHistory}
             uiLocale={props.settings.uiLocale}
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
+            shortcutHint={tabHint("app.history")}
           />
           <QuickMenu settings={props.settings} update={props.update} />
         </div>
@@ -209,6 +329,8 @@ export function TabbedPanel(props: Props) {
             <TranslatePanel
               {...props}
               injectedInput={pendingTranslateInput ?? undefined}
+              autofillRequest={autofillRequest}
+              onAutofillHandled={() => setAutofillRequest(null)}
             />
           ) : tab === "chat" ? (
             <ChatPanel settings={props.settings} update={props.update} />
@@ -216,6 +338,8 @@ export function TabbedPanel(props: Props) {
             <ClipboardPanel
               settings={props.settings}
               onSendToTranslate={sendToTranslate}
+              composeRequest={composeRequest}
+              onComposeHandled={() => setComposeRequest(null)}
             />
           ) : (
             <ToolsPanel settings={props.settings} active={tab === "tools"} />
@@ -230,17 +354,20 @@ function TabButton({
   active,
   icon: Icon,
   label,
+  hint,
   onClick,
 }: {
   active: boolean
   icon: typeof MessageSquare
   label: string
+  hint: string
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={`${label} (${hint})`}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition",
         active

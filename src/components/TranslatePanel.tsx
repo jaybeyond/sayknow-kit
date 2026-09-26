@@ -17,8 +17,8 @@ import {
   Eraser,
   X,
 } from "lucide-react"
-import { listen } from "@tauri-apps/api/event"
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager"
+import { useShortcuts } from "@/lib/shortcuts"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
@@ -88,9 +88,21 @@ type Props = {
    * still triggers the effect.
    */
   injectedInput?: TranslateInjection
+  /**
+   * Set (to a fresh value) when a global shortcut opened this tab; the panel
+   * pulls in the clipboard if that setting is on, then reports it handled.
+   */
+  autofillRequest?: number | null
+  onAutofillHandled?: () => void
 }
 
-export function TranslatePanel({ settings, update, injectedInput }: Props) {
+export function TranslatePanel({
+  settings,
+  update,
+  injectedInput,
+  autofillRequest,
+  onAutofillHandled,
+}: Props) {
   const { t } = useT(settings.uiLocale)
   const [input, setInput] = useState("")
   const [output, setOutput] = useState("")
@@ -122,10 +134,14 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
   const lastTranslatedRef = useRef("")
 
 
+  // The tab strip owns the "opened by shortcut" signal because this panel may
+  // not be mounted yet when the popover appears on another tab.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (!isTauri()) return
-    const unlisten = listen<string>("sayknow:open", async (event) => {
-      if (event.payload !== "shortcut" || !settings.clipboardOnHotkey) return
+    if (!autofillRequest) return
+    onAutofillHandled?.()
+    if (!isTauri() || !settings.clipboardOnHotkey) return
+    void (async () => {
       try {
         const text = (await readClipboardText())?.trim() ?? ""
         if (text && text !== input.trim()) {
@@ -134,11 +150,9 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
       } catch {
         /* clipboard empty or denied */
       }
-    })
-    return () => {
-      void unlisten.then((fn) => fn())
-    }
-  }, [settings.clipboardOnHotkey, input])
+    })()
+  }, [autofillRequest])
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // Pull in text injected from the clipboard history tab. nonce changes even
   // for identical text so the user can re-send the same entry repeatedly.
@@ -377,6 +391,27 @@ export function TranslatePanel({ settings, update, injectedInput }: Props) {
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1200)
   }
+
+  useShortcuts({
+    "translate.new": () => {
+      clearSession()
+      inputRef.current?.focus()
+    },
+    "translate.swap": () => {
+      if (rewriteMode || settings.from === "auto") return false
+      swap()
+    },
+    "translate.copy": () => {
+      if (rewriteMode || !output) return false
+      void handleCopy()
+    },
+    "translate.stop": () => {
+      if (!translating && !refining && !rewriteCards.some((c) => c.loading)) return false
+      stopTranslate()
+      rewriteAbort.current?.abort()
+      setRewriteCards((cards) => cards.map((c) => (c.loading ? { ...c, loading: false } : c)))
+    },
+  })
 
   async function refine(instruction: string) {
     if (!output || !input.trim()) return

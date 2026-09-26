@@ -41,7 +41,7 @@ SayKnow Kit fonctionne sur macOS et Windows : il apparaît dans la **barre de me
 - 🌐 **OpenRouter BYOK** — recherche dans 360+ modèles
 - 🔁 **Modèle de secours** — OpenRouter bascule si le principal échoue
 - ⏹ **Arrêter** — annule un appel en cours
-- 📋 **Coller automatiquement** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) remplit l'entrée depuis le presse-papiers
+- 📋 **Coller automatiquement** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) remplit l'entrée depuis le presse-papiers
 - 🕘 **Historique** — recherche, épingler des entrées
 - 📌 **Épingler la fenêtre** — désactive l'auto-masquage
 - 📚 **Glossaire** — traductions cohérentes pour les noms propres
@@ -94,20 +94,25 @@ pnpm tauri build
 
 1. Une icône apparaît dans la barre de menu macOS ou la zone de notification Windows ; l'application y reste accessible.
 2. Cliquez sur l'icône → saisissez la clé OpenRouter → **Connecter & démarrer**. Elle est enregistrée dans le stockage d'identifiants du système.
-3. Cliquez sur l'icône ou utilisez `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) pour ouvrir la fenêtre → tapez → traduction automatique après 1,5 s. Clic droit sur l'icône pour quitter.
+3. Cliquez sur l'icône ou utilisez `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) pour ouvrir la fenêtre → tapez → traduction automatique après 1,5 s. Clic droit sur l'icône pour quitter.
 
 ### Raccourcis
 
 | Raccourci | Action |
 |---|---|
-| `⌘⇧T` (macOS) | Ouvrir/fermer la fenêtre (global) |
-| `Ctrl+Shift+T` (Windows) | Ouvrir/fermer la fenêtre (global) |
+| `⌃⌥S` (macOS) | Ouvrir/fermer la fenêtre (global) |
+| `Ctrl+Alt+Shift+S` (Windows) | Ouvrir/fermer la fenêtre (global) |
+| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Ouvrir directement sur Traduire / Chat / Presse-papiers / Outils (global) |
+| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nouveau mémo depuis n'importe où (global) |
+| `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Changer d'onglet |
+| `⌘/` (macOS) / `Ctrl+/` (Windows) | Tous les raccourcis — Réglages → Raccourcis |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Traduire immédiatement (mode manuel) |
 
 ### Réglages (fenêtre séparée)
 
 ⚙️ → **Réglages** ouvre une fenêtre avec barre latérale :
 - **Général** — mode, presse-papiers, épinglage, thème, langue de l'app
+- **Raccourcis** — tous les raccourcis, groupés par contexte ; signale les touches globales déjà prises par une autre app
 - **Connexion** — modèle principal/secours, déconnexion
 - **Glossaire** — paires de termes
 - **Prompt système** — édition des prompts traduire/affiner

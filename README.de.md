@@ -41,7 +41,7 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 - 🌐 **OpenRouter BYOK** — durchsuchbare Combobox mit 360+ Modellen
 - 🔁 **Fallback-Modell** — OpenRouter wechselt automatisch
 - ⏹ **Stopp** — laufenden Aufruf abbrechen
-- 📋 **Zwischenablage automatisch** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) füllt das Eingabefeld
+- 📋 **Zwischenablage automatisch** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) füllt das Eingabefeld
 - 🕘 **Verlauf** — durchsuchbar, anheften möglich
 - 📌 **Fenster anheften** — Auto-Hide deaktivieren
 - 📚 **Glossar** — konsistente Übersetzung von Eigennamen
@@ -94,20 +94,25 @@ pnpm tauri build
 
 1. Ein Symbol erscheint in der macOS-Menüleiste oder im Windows-Infobereich und bleibt dort verfügbar.
 2. Klicke auf das Symbol → OpenRouter API-Key eingeben → **Verbinden & starten**. Der Schlüssel wird im System-Credential-Speicher abgelegt.
-3. Symbol anklicken oder `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) drücken, um das Fenster zu öffnen → tippen → Auto-Übersetzung nach 1,5 s. Rechtsklick auf das Symbol beendet die App.
+3. Symbol anklicken oder `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) drücken, um das Fenster zu öffnen → tippen → Auto-Übersetzung nach 1,5 s. Rechtsklick auf das Symbol beendet die App.
 
 ### Tastenkürzel
 
 | Kürzel | Aktion |
 |---|---|
-| `⌘⇧T` (macOS) | Fenster global öffnen/schließen |
-| `Ctrl+Shift+T` (Windows) | Fenster global öffnen/schließen |
+| `⌃⌥S` (macOS) | Fenster global öffnen/schließen |
+| `Ctrl+Alt+Shift+S` (Windows) | Fenster global öffnen/schließen |
+| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Direkt mit Übersetzen / Chat / Zwischenablage / Werkzeugen öffnen (global) |
+| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Von überall ein neues Memo (global) |
+| `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Tab wechseln |
+| `⌘/` (macOS) / `Ctrl+/` (Windows) | Alle Tastenkürzel — Einstellungen → Tastenkürzel |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Sofort übersetzen (manueller Modus) |
 
 ### Einstellungen (separates Fenster)
 
 ⚙️ → **Einstellungen** öffnet ein Fenster mit Seitenleiste:
 - **Allgemein** — Modus, Zwischenablage, Anheften, Theme, App-Sprache
+- **Tastenkürzel** — alle Kürzel nach Einsatzort, markiert globale Tasten, die eine andere App belegt
 - **Verbindung** — Haupt-/Fallback-Modell, Abmelden
 - **Glossar** — Begriffspaare
 - **System-Prompt** — Übersetzen/Verfeinern-Prompts editieren

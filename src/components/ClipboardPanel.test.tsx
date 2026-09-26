@@ -212,3 +212,25 @@ describe("ClipboardPanel memos", () => {
     expect(screen.getByRole("radio", { name: "All" }).getAttribute("aria-checked")).toBe("true")
   })
 })
+
+describe("ClipboardPanel shortcuts", () => {
+  // jsdom is not a Mac, so the Mod key is Ctrl here.
+  it("opens the memo composer on Mod+N", () => {
+    render(<ClipboardPanel settings={settings} />)
+    fireEvent.keyDown(window, { code: "KeyN", ctrlKey: true })
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Write a memo" }))
+  })
+
+  it("focuses search on Mod+F", () => {
+    render(<ClipboardPanel settings={settings} />)
+    fireEvent.keyDown(window, { code: "KeyF", ctrlKey: true })
+    expect(document.activeElement).toBe(screen.getByPlaceholderText("clipboard.search"))
+  })
+
+  it("opens the composer for a request from a global shortcut and reports it handled", () => {
+    const handled = vi.fn()
+    render(<ClipboardPanel settings={settings} composeRequest={42} onComposeHandled={handled} />)
+    expect(screen.getByRole("textbox", { name: "Write a memo" })).toBeTruthy()
+    expect(handled).toHaveBeenCalledTimes(1)
+  })
+})

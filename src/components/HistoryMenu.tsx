@@ -19,6 +19,11 @@ type Props = {
   onTogglePin: (id: string) => void
   onClear: () => void
   uiLocale: UILocaleSetting
+  /** Controlled open state, so ⌘Y can toggle the menu. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** Appended to the button tooltip, e.g. "⌘Y". */
+  shortcutHint?: string
 }
 
 export function HistoryMenu({
@@ -28,6 +33,9 @@ export function HistoryMenu({
   onTogglePin,
   onClear,
   uiLocale,
+  open,
+  onOpenChange,
+  shortcutHint,
 }: Props) {
   const { t } = useT(uiLocale)
   const [q, setQ] = useState("")
@@ -44,13 +52,14 @@ export function HistoryMenu({
   }, [entries, q])
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
           className="h-7 w-7"
           aria-label={t("header.history")}
+          title={shortcutHint ? `${t("header.history")} (${shortcutHint})` : t("header.history")}
         >
           <HistoryIcon className="h-3.5 w-3.5" />
         </Button>

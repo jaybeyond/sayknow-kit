@@ -41,7 +41,7 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 - 🌐 **OpenRouter BYOK** — combobox tìm kiếm 360+ model
 - 🔁 **Model dự phòng** — OpenRouter tự chuyển khi model chính lỗi
 - ⏹ **Dừng** — hủy cuộc gọi đang chạy
-- 📋 **Tự lấy clipboard** — `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) tự điền text vào ô nhập
+- 📋 **Tự lấy clipboard** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) tự điền text vào ô nhập
 - 🕘 **Lịch sử** — tìm kiếm, ghim mục để giữ lại vĩnh viễn
 - 📌 **Ghim cửa sổ** — tắt tự ẩn
 - 📚 **Thuật ngữ** (Glossary) — dịch nhất quán tên riêng
@@ -94,20 +94,25 @@ pnpm tauri build
 
 1. Một biểu tượng xuất hiện ở thanh menu macOS hoặc khay hệ thống Windows và luôn sẵn sàng ở đó.
 2. Bấm biểu tượng → nhập OpenRouter API key → **Kết nối & bắt đầu**. Key được lưu trong kho thông tin xác thực hệ thống.
-3. Bấm biểu tượng hoặc nhấn `⌘⇧T` (macOS) / `Ctrl+Shift+T` (Windows) để mở cửa sổ → gõ → tự dịch sau 1,5 giây. Nhấp chuột phải vào biểu tượng để thoát.
+3. Bấm biểu tượng hoặc nhấn `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) để mở cửa sổ → gõ → tự dịch sau 1,5 giây. Nhấp chuột phải vào biểu tượng để thoát.
 
 ### Phím tắt
 
 | Phím tắt | Hành động |
 |---|---|
-| `⌘⇧T` (macOS) | Mở/đóng cửa sổ (toàn cục) |
-| `Ctrl+Shift+T` (Windows) | Mở/đóng cửa sổ (toàn cục) |
+| `⌃⌥S` (macOS) | Mở/đóng cửa sổ (toàn cục) |
+| `Ctrl+Alt+Shift+S` (Windows) | Mở/đóng cửa sổ (toàn cục) |
+| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Mở thẳng tab Dịch / Chat / Bộ nhớ tạm / Công cụ (toàn cục) |
+| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Viết ghi nhớ mới từ mọi nơi (toàn cục) |
+| `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Chuyển tab |
+| `⌘/` (macOS) / `Ctrl+/` (Windows) | Mọi phím tắt — Cài đặt → Phím tắt |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Dịch ngay (chế độ thủ công) |
 
 ### Cài đặt (cửa sổ riêng)
 
 ⚙️ → **Cài đặt** mở cửa sổ có sidebar:
 - **Chung** — chế độ, clipboard, ghim, giao diện, ngôn ngữ
+- **Phím tắt** — mọi phím tắt theo nơi dùng; đánh dấu phím toàn cục đã bị ứng dụng khác chiếm
 - **Kết nối** — model chính/dự phòng, đăng xuất
 - **Thuật ngữ** — cặp từ
 - **System prompt** — chỉnh sửa prompt dịch/tinh chỉnh

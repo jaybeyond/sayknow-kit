@@ -30,6 +30,7 @@ import { useClipboardHistory } from "@/hooks/useClipboardHistory"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
 import { isMemo } from "@/lib/clipboard-history"
+import { formatCombo, shortcut, useShortcuts } from "@/lib/shortcuts"
 import { timeAgo } from "@/lib/history"
 import { cn } from "@/lib/utils"
 
@@ -37,6 +38,9 @@ type Props = {
   settings: Settings
   /** Optional integration: clicking the "send to translate" button. */
   onSendToTranslate?: (text: string) => void
+  /** Set (to a fresh value) when a shortcut asked for a new memo. */
+  composeRequest?: number | null
+  onComposeHandled?: () => void
 }
 
 type KindFilter = "all" | "clip" | "memo"
@@ -46,7 +50,12 @@ type Translate = (key: string) => string
 /** Pseudo-id for the "new memo" composer so it shares the single-editor slot. */
 const NEW_MEMO = "__new_memo__"
 
-export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
+export function ClipboardPanel({
+  settings,
+  onSendToTranslate,
+  composeRequest,
+  onComposeHandled,
+}: Props) {
   const { t } = useT(settings.uiLocale)
   const {
     entries,
@@ -74,6 +83,7 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
   const [pendingMemoDelete, setPendingMemoDelete] = useState<string | null>(null)
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -125,6 +135,33 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
     if (listRef.current) listRef.current.scrollTop = 0
   }
 
+  useShortcuts({
+    "clipboard.newMemo": startNewMemo,
+    "clipboard.search": () => {
+      searchRef.current?.focus()
+      searchRef.current?.select()
+    },
+  })
+
+  // The request comes from the tab strip (a global shortcut), which may have
+  // mounted this panel just for it. The editor opens during render so it is
+  // there on the first paint; the effect only touches the DOM and the parent.
+  const [handledCompose, setHandledCompose] = useState<number | null>(null)
+  if (composeRequest && composeRequest !== handledCompose) {
+    setHandledCompose(composeRequest)
+    setEditingNoteId(null)
+    setNoteDraft("")
+    setMemoEditorId(NEW_MEMO)
+    if (kindFilter === "clip") setKindFilter("all")
+  }
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!composeRequest) return
+    if (listRef.current) listRef.current.scrollTop = 0
+    onComposeHandled?.()
+  }, [composeRequest])
+  /* eslint-enable react-hooks/exhaustive-deps */
+
   async function commitMemo(text: string) {
     const id = memoEditorId
     if (!id) return
@@ -147,6 +184,7 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
         <div className="relative flex-1">
           <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t("clipboard.search")}
@@ -158,7 +196,7 @@ export function ClipboardPanel({ settings, onSendToTranslate }: Props) {
           size="icon"
           className={cn("h-7 w-7", composing && "bg-amber-500/15 text-amber-700 dark:text-amber-300")}
           onClick={() => (composing ? setMemoEditorId(null) : startNewMemo())}
-          title={t("clipboard.newMemo")}
+          title={`${t("clipboard.newMemo")} (${formatCombo(shortcut("clipboard.newMemo").combo)})`}
           aria-label={t("clipboard.newMemo")}
           aria-pressed={composing}
         >

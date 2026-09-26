@@ -41,6 +41,7 @@ import {
 } from "@/lib/chat-image"
 import { AttachmentStrip, ImageLightbox, MessageImages } from "@/components/ChatImages"
 import { cn } from "@/lib/utils"
+import { useShortcuts } from "@/lib/shortcuts"
 
 type Props = {
   settings: Settings
@@ -107,6 +108,17 @@ export function ChatPanel({ settings, update }: Props) {
   }
 
   const canSubmit = (draft.trim().length > 0 || attachments.length > 0) && !sending && !encoding
+
+  useShortcuts({
+    "chat.new": () => {
+      newConversation()
+      setTimeout(() => textareaRef.current?.focus(), 0)
+    },
+    "chat.stop": () => {
+      if (!sending) return false
+      stop()
+    },
+  })
 
   function submit() {
     const text = draft.trim()
