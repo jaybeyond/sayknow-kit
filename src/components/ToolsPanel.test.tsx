@@ -580,7 +580,7 @@ describe("ToolsPanel activity", () => {
   it("draws a graph only for readings this Mac reported", () => {
     mocks.activityState.points = [point(0), point(5_000), point(10_000, { cpu: 35 })]
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
-    const region = screen.getByRole("region", { name: "Last 10 min" })
+    const region = screen.getByRole("region", { name: "Last 1 min" })
     expect(within(region).getByText("CPU")).toBeTruthy()
     expect(within(region).getByText("35%")).toBeTruthy()
     expect(within(region).getByText("Memory")).toBeTruthy()
@@ -603,7 +603,7 @@ describe("ToolsPanel activity", () => {
       by_memory: [],
     }
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
-    const region = screen.getByRole("region", { name: "Last 10 min" })
+    const region = screen.getByRole("region", { name: "Last 1 min" })
     expect(within(region).getByText("cargo").parentElement?.textContent).toContain("412%")
     expect(within(region).getByText("Nothing noticeable")).toBeTruthy()
   })

@@ -1,47 +1,56 @@
 // Geometry for the status panel's small history graphs. Pure, so the shape a
 // run of samples turns into can be tested without rendering anything.
+//
+// Each graph is a fixed strip of SLOTS sample positions, newest at the right
+// edge, like Activity Monitor. A time axis (oldest sample to now) made the
+// plot jump: history only grows while the panel or the monitor is sampling,
+// so reopening after a gap squeezed a few minutes of readings into a sliver
+// between long empty stretches, and every new sample rescaled the whole axis.
 
 export type Sample = { at: number; value: number | null }
 
-const MIN_SPAN_MS = 10 * 60 * 1000
-const MAX_SPAN_MS = 60 * 60 * 1000
+/** Sample positions per graph: at the 3 s refresh, the last six minutes. */
+export const SLOTS = 120
 
-/** The time axis for a history: ending at the newest sample and reaching back
- *  as far as there is data, between ten minutes and an hour. */
-export function historyWindow(times: number[]): { from: number; to: number; minutes: number } | null {
-  if (times.length === 0) return null
-  const to = times[times.length - 1]
-  const span = Math.min(MAX_SPAN_MS, Math.max(MIN_SPAN_MS, to - times[0]))
-  return { from: to - span, to, minutes: Math.round(span / 60_000) }
+/** The samples a graph shows: the newest `SLOTS`, oldest first. */
+export function visibleSamples<T>(points: T[], slots = SLOTS): T[] {
+  return points.length > slots ? points.slice(points.length - slots) : points
 }
 
-/** An SVG path through `samples` on a `from`–`to` time axis and a `0`–`max`
- *  value axis, in a `width`×`height` box with y growing downward. A missing
- *  reading, or two samples further apart than `gapMs`, starts a new segment:
- *  a line drawn across a gap would invent readings nobody took. */
+/** Whole minutes the shown samples span, at least one. */
+export function spanMinutes(times: number[]): number {
+  if (times.length < 2) return 1
+  return Math.max(1, Math.round((times[times.length - 1] - times[0]) / 60_000))
+}
+
+/** An SVG path through `samples` in a `width`×`height` box (y down) with the
+ *  newest sample on the right edge and one slot per sample, so the strip only
+ *  ever scrolls left by one step. Values clamp to `0`–`max`. A missing reading,
+ *  or two samples further apart than `gapMs` (the Mac slept, or nothing was
+ *  sampling), starts a new segment: a line across a gap would invent readings. */
 export function sparklinePath(
   samples: Sample[],
-  from: number,
-  to: number,
   max: number,
   gapMs: number,
+  slots = SLOTS,
   width = 100,
   height = 24,
 ): string {
-  if (to <= from || max <= 0) return ""
-  const x = (at: number) => ((at - from) / (to - from)) * width
+  if (max <= 0 || slots < 2) return ""
+  const shown = visibleSamples(samples, slots)
+  const offset = slots - shown.length
+  const x = (i: number) => ((offset + i) / (slots - 1)) * width
   const y = (value: number) => height - (Math.min(max, Math.max(0, value)) / max) * height
   const parts: string[] = []
   let previous: number | null = null
-  for (const sample of samples) {
-    if (sample.at < from || sample.at > to) continue
+  shown.forEach((sample, i) => {
     if (sample.value === null) {
       previous = null
-      continue
+      return
     }
     const command = previous !== null && sample.at - previous <= gapMs ? "L" : "M"
-    parts.push(`${command}${x(sample.at).toFixed(2)} ${y(sample.value).toFixed(2)}`)
+    parts.push(`${command}${x(i).toFixed(2)} ${y(sample.value).toFixed(2)}`)
     previous = sample.at
-  }
+  })
   return parts.join(" ")
 }

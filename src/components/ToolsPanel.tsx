@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
+import { Fragment, useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import {
   Monitor,
   MonitorOff,
@@ -52,7 +52,7 @@ import {
   type ProcessUsage,
   type TopProcesses,
 } from "@/lib/system-activity-store"
-import { historyWindow, sparklinePath } from "@/lib/sparkline"
+import { spanMinutes, sparklinePath, visibleSamples } from "@/lib/sparkline"
 import { cn } from "@/lib/utils"
 import { brightnessCommand } from "@/lib/brightness-command"
 
@@ -591,7 +591,8 @@ function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetric
 type GraphRow = {
   key: string
   label: string
-  value: string
+  /** One line, or two stacked (network: down, then up). */
+  value: string[]
   max: number
   lines: { values: (number | null)[]; className: string }[]
 }
@@ -604,7 +605,7 @@ function graphRows(points: HistoryPoint[], t: (key: string) => string): GraphRow
   const series = (pick: (p: HistoryPoint) => number | null) => points.map(pick)
   const seen = (values: (number | null)[]) => values.some((v) => v !== null)
   const peak = (values: (number | null)[]) => Math.max(0, ...values.filter((v): v is number => v !== null))
-  const pct = (v: number | null) => (v === null ? "—" : formatPercent(v))
+  const pct = (v: number | null) => [v === null ? "—" : formatPercent(v)]
   const rows: GraphRow[] = []
   const cpu = series((p) => p.cpu)
   if (seen(cpu)) {
@@ -623,7 +624,7 @@ function graphRows(points: HistoryPoint[], t: (key: string) => string): GraphRow
     rows.push({
       key: "temperature",
       label: t("tools.metrics.temperature"),
-      value: latest.temperature === null ? "—" : `${latest.temperature.toFixed(0)} °C`,
+      value: [latest.temperature === null ? "—" : `${latest.temperature.toFixed(0)} °C`],
       max: Math.max(100, peak(temperature)),
       lines: [{ values: temperature, className: "text-primary" }],
     })
@@ -634,7 +635,10 @@ function graphRows(points: HistoryPoint[], t: (key: string) => string): GraphRow
     rows.push({
       key: "network",
       label: t("tools.metrics.network"),
-      value: `↓${latest.download === null ? "—" : formatRate(latest.download)} ↑${latest.upload === null ? "—" : formatRate(latest.upload)}`,
+      value: [
+        `↓ ${latest.download === null ? "—" : formatRate(latest.download)}`,
+        `↑ ${latest.upload === null ? "—" : formatRate(latest.upload)}`,
+      ],
       // Traffic has no ceiling; the busiest moment on screen is the top.
       max: Math.max(1, peak(download), peak(upload)),
       lines: [
@@ -646,28 +650,29 @@ function graphRows(points: HistoryPoint[], t: (key: string) => string): GraphRow
   return rows
 }
 
-function Sparkline({ points, row, from, to }: { points: HistoryPoint[]; row: GraphRow; from: number; to: number }) {
+/** A fixed strip: the same box every row, newest sample on its right edge. */
+function Sparkline({ points, row }: { points: HistoryPoint[]; row: GraphRow }) {
   return (
-    <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="h-6 w-full" aria-hidden="true">
-      {row.lines.map((line, i) => (
-        <path
-          key={i}
-          d={sparklinePath(
-            points.map((p, j) => ({ at: p.at_ms, value: line.values[j] })),
-            from,
-            to,
-            row.max,
-            GAP_MS,
-          )}
-          className={cn("stroke-current", line.className)}
-          fill="none"
-          strokeWidth={1.25}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
-    </svg>
+    <div className="h-7 min-w-0 overflow-hidden rounded bg-background/60 px-1 py-1">
+      <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="block h-full w-full" aria-hidden="true">
+        {row.lines.map((line, i) => (
+          <path
+            key={i}
+            d={sparklinePath(
+              points.map((p, j) => ({ at: p.at_ms, value: line.values[j] })),
+              row.max,
+              GAP_MS,
+            )}
+            className={cn("stroke-current", line.className)}
+            fill="none"
+            strokeWidth={1.25}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+    </div>
   )
 }
 
@@ -708,26 +713,42 @@ function ProcessList({
   )
 }
 
-/** The last hour as small graphs, and who is using the machine right now. */
+/** Recent readings as small graphs, and who is using the machine right now. */
 function ActivitySection({ t }: { t: (key: string) => string }) {
-  const { points, processes } = useSyncExternalStore(subscribeActivity, getActivitySnapshot)
-  const axis = historyWindow(points.map((p) => p.at_ms))
-  const rows = axis && points.length >= 2 ? graphRows(points, t) : []
-  const title = t("tools.activity.history").replace("{minutes}", String(axis?.minutes ?? 10))
+  const { points: all, processes } = useSyncExternalStore(subscribeActivity, getActivitySnapshot)
+  // Only what the strips show, so each row's scale (network's peak) and the
+  // title's span describe the same samples the lines are drawn from.
+  const points = visibleSamples(all)
+  const rows = points.length >= 2 ? graphRows(points, t) : []
+  const title = t("tools.activity.history").replace("{minutes}", String(spanMinutes(points.map((p) => p.at_ms))))
 
   return (
     <section aria-label={title} className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
       <div className="text-xs font-medium">{title}</div>
-      {rows.length === 0 || !axis ? (
+      {rows.length === 0 ? (
         <p className="text-[11px] text-muted-foreground">{t("tools.activity.historyEmpty")}</p>
       ) : (
-        <div className="space-y-1">
+        // One grid for every row: label, graph and value columns line up and
+        // keep their width whatever the numbers read, so nothing shifts as
+        // "9%" becomes "100%" or the network rate grows a digit.
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)_5.5rem] items-center gap-x-2 gap-y-1.5 text-[11px]">
           {rows.map((row) => (
-            <div key={row.key} className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-2 text-[11px]">
+            <Fragment key={row.key}>
               <span className="truncate text-muted-foreground">{row.label}</span>
-              <Sparkline points={points} row={row} from={axis.from} to={axis.to} />
-              <span className="min-w-[3rem] text-right font-medium tabular-nums">{row.value}</span>
-            </div>
+              <Sparkline points={points} row={row} />
+              <span
+                className={cn(
+                  "whitespace-nowrap text-right font-medium tabular-nums",
+                  row.value.length > 1 && "text-[10px] leading-tight",
+                )}
+              >
+                {row.value.map((v, i) => (
+                  <span key={i} className="block">
+                    {v}
+                  </span>
+                ))}
+              </span>
+            </Fragment>
           ))}
         </div>
       )}
