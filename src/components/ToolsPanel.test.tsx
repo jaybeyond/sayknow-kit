@@ -72,7 +72,7 @@ vi.mock("@/i18n", () => ({
       "tools.tabs.label": "Tool sections",
       "tools.tabs.status": "Status",
       "tools.tabs.display": "Displays",
-      "tools.tabs.usage": "Usage",
+      "tools.tabs.usage": "Token usage",
       "tools.tabs.mole": "Clean",
       "tools.refresh": "Refresh",
       "tools.metrics.title": "System status",
@@ -188,7 +188,7 @@ function openDisplayTab() {
 }
 
 function openUsageTab() {
-  fireEvent.click(screen.getByRole("tab", { name: "Usage" }))
+  fireEvent.click(screen.getByRole("tab", { name: "Token usage" }))
 }
 
 afterEach(() => {
@@ -253,7 +253,7 @@ describe("ToolsPanel system metrics", () => {
     openUsageTab()
     const usage = screen.getByRole("region", { name: "Usage" })
     expect(usage.dataset.active).toBe("true")
-    expect(screen.getByRole("tab", { name: "Usage" }).getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByRole("tab", { name: "Token usage" }).getAttribute("aria-selected")).toBe("true")
     fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
     expect(screen.getByRole("tab", { name: "Clean" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByRole("region", { name: "Clean" })).toBeTruthy()
