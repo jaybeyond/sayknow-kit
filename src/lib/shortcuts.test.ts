@@ -48,7 +48,9 @@ describe("shortcut registry", () => {
     for (const locale of UI_LOCALES) {
       for (const s of SHORTCUTS) expect(UI_STRINGS[locale][s.label], `${locale}:${s.label}`).toBeTruthy()
       for (const g of SHORTCUT_GROUPS) expect(UI_STRINGS[locale][`shortcuts.group.${g}`], `${locale}:${g}`).toBeTruthy()
-      expect(UI_STRINGS[locale]["settings.clipboard.body"]).toContain("{keys}")
+      // One plain sentence: the keys live on the shortcuts page, and an
+      // arrow chain of keystrokes read as a procedure to memorise.
+      expect(UI_STRINGS[locale]["settings.clipboard.body"]).not.toMatch(/→|\{keys\}/)
       expect(UI_STRINGS[locale]["settings.clipboard.title"]).not.toContain("⌘⇧T")
     }
   })

@@ -58,6 +58,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "v5"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-notification = "2"
 
 # Cancelling a turn must kill the whole process group a shell spawned, not
 # just the direct child; that needs a raw `kill(-pgid)`.
@@ -72,7 +73,7 @@ core-foundation = "0.9"
 # NX event parsing: the tap callback receives CGEvent, and the NX data1
 # field is only exposed through NSEvent. Already in the graph via wry.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "NSScreen", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "NSScreen", "NSPasteboard", "block2"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject", "NSURL", "NSError", "NSDictionary", "NSValue"] }
 block2 = "0.6"
 

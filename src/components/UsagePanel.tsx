@@ -12,6 +12,7 @@ import {
   formatUsd,
   modelsInWindow,
   recentHours,
+  windowIsCurrent,
   windowsOf,
   type AgentReport,
   type Block,
@@ -455,8 +456,19 @@ function windowLabel(minutes: number, t: (k: string) => string): string {
   return `${minutes}${t("usage.unit.min")}`
 }
 
+/** When a reading was taken, in local time: these refresh within minutes, so
+ *  the date alone hid whether the numbers were from this morning or just now. */
+function formatCapturedAt(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 /** Provider-reported quota windows. Codex writes real percentages into its
- *  logs, so we show those verbatim rather than guessing from token counts. */
+ *  logs, so we show those verbatim rather than guessing from token counts. The
+ *  Claude app records percentages only; its reset times are estimates and say
+ *  so. */
 function RateLimitRows({
   limits,
   t,
@@ -473,28 +485,33 @@ function RateLimitRows({
   // Codex puts the weekly window in `primary` when no 5-hour window applies,
   // so keying off "primary = 5 hours" mislabels the row outright.
   const rows: { label: string; w: RateWindow }[] = []
-  for (const w of [limits.primary, limits.secondary]) {
-    if (w) rows.push({ label: windowLabel(w.window_minutes, t), w })
+  for (const w of [limits.primary, limits.secondary, ...limits.scoped]) {
+    if (!w) continue
+    const label = windowLabel(w.window_minutes, t)
+    rows.push({ label: w.scope ? `${label} · ${w.scope}` : label, w })
   }
 
-  // Every window is judged on its own reset time. Once that has passed the
-  // quota has rolled over, so the recorded percentage describes a window that
-  // no longer exists — it must not be drawn as if it were the current level.
-  const allExpired = rows.every((r) => r.w.resets_at * 1000 < nowMs)
+  // Every window is judged on its own. Once it has renewed, the recorded
+  // percentage describes a window that no longer exists — it must not be drawn
+  // as if it were the current level.
+  const current = (w: RateWindow) => windowIsCurrent(w, limits.captured_at, nowMs)
+  const allExpired = rows.every((r) => !current(r.w))
+  const fromApp = limits.source === "claude_app"
 
   return (
     <div className="rounded-md bg-muted/40 px-2 py-1.5">
       <div className="mb-1 flex items-baseline justify-between gap-2">
         <span className="text-[10px] text-muted-foreground">
           {allExpired ? t("usage.limit.lastSeen") : t("usage.limit.label")}
+          {fromApp ? ` · ${t("usage.limit.fromClaudeApp")}` : ""}
           {limits.plan_type ? ` · ${limits.plan_type}` : ""}
         </span>
-        <span className="text-[10px] text-muted-foreground">
-          {limits.captured_at.slice(0, 10)}
+        <span className="text-[10px] tabular-nums text-muted-foreground">
+          {formatCapturedAt(limits.captured_at)}
         </span>
       </div>
       {rows.map((r) => {
-        const expired = r.w.resets_at * 1000 < nowMs
+        const expired = !current(r.w)
         return (
           <div key={r.label} className="mb-1 last:mb-0">
             <div className="flex items-baseline justify-between gap-2 text-[10px]">
@@ -517,24 +534,34 @@ function RateLimitRows({
               <>
                 <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-border">
                   <div
-                    className="h-full bg-primary"
+                    className={cn(
+                      "h-full",
+                      r.w.used_percent >= 90 ? "bg-destructive" : "bg-primary",
+                    )}
                     style={{ width: `${Math.min(100, r.w.used_percent)}%` }}
                   />
                 </div>
-                <div className="mt-0.5 text-right text-[10px] tabular-nums text-muted-foreground">
-                  {t("usage.limit.resetIn")}{" "}
-                  {formatRemaining(r.w.resets_at * 1000 - nowMs, t)}
-                </div>
+                {/* An unknown reset gets no countdown rather than a made-up one. */}
+                {r.w.resets_at > 0 && (
+                  <div className="mt-0.5 text-right text-[10px] tabular-nums text-muted-foreground">
+                    {r.w.resets_estimated
+                      ? t("usage.limit.resetInAbout")
+                      : t("usage.limit.resetIn")}{" "}
+                    {formatRemaining(r.w.resets_at * 1000 - nowMs, t)}
+                  </div>
+                )}
               </>
             )}
           </div>
         )
       })}
-      {allExpired && (
+      {(allExpired || fromApp) && (
         <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
-          {authExpired
-            ? t("usage.limit.signInHint")
-            : t("usage.limit.refreshHint")}
+          {fromApp
+            ? t("usage.limit.claudeAppHint")
+            : authExpired
+              ? t("usage.limit.signInHint")
+              : t("usage.limit.refreshHint")}
         </p>
       )}
     </div>

@@ -1,26 +1,7 @@
 //! Unprivileged Apple Smart Battery readout, matching SystemInfoKit /
 //! RunCat Neo: IOKit `AppleSmartBattery` (and pack temperature on macOS 27).
 
-use core_foundation::base::TCFType;
-use core_foundation::dictionary::{CFDictionary, CFDictionaryGetValue, CFDictionaryRef};
-use core_foundation::number::CFNumber;
-use core_foundation::string::CFString;
-use std::ffi::CString;
-
-#[link(name = "IOKit", kind = "framework")]
-extern "C" {
-    fn IOServiceMatching(name: *const i8) -> CFDictionaryRef;
-    fn IOServiceGetMatchingService(main_port: u32, matching: CFDictionaryRef) -> u32;
-    fn IORegistryEntryCreateCFProperties(
-        entry: u32,
-        properties: *mut CFDictionaryRef,
-        allocator: *const std::ffi::c_void,
-        options: u32,
-    ) -> i32;
-    fn IOObjectRelease(object: u32) -> i32;
-}
-
-const KERN_SUCCESS: i32 = 0;
+use crate::iokit_macos::{dict_value, float_value, int_value, service_properties, string_value};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BatteryReading {
@@ -106,69 +87,6 @@ pub fn read_battery() -> Option<BatteryReading> {
         cycle_count,
         temperature_celsius,
     })
-}
-
-fn service_properties(name: &str) -> Option<CFDictionary> {
-    let c_name = CString::new(name).ok()?;
-    unsafe {
-        let matching = IOServiceMatching(c_name.as_ptr());
-        if matching.is_null() {
-            return None;
-        }
-        let service = IOServiceGetMatchingService(0, matching);
-        if service == 0 {
-            return None;
-        }
-        let mut properties: CFDictionaryRef = std::ptr::null();
-        let rc = IORegistryEntryCreateCFProperties(service, &mut properties, std::ptr::null(), 0);
-        IOObjectRelease(service);
-        if rc != KERN_SUCCESS || properties.is_null() {
-            return None;
-        }
-        Some(CFDictionary::wrap_under_create_rule(properties))
-    }
-}
-
-fn lookup(dict: &CFDictionary, key: &str) -> *const std::ffi::c_void {
-    let key = CFString::new(key);
-    unsafe {
-        CFDictionaryGetValue(
-            dict.as_concrete_TypeRef(),
-            key.as_concrete_TypeRef() as *const _,
-        )
-    }
-}
-
-fn dict_value(dict: &CFDictionary, key: &str) -> Option<CFDictionary> {
-    let value = lookup(dict, key);
-    if value.is_null() {
-        return None;
-    }
-    unsafe { Some(CFDictionary::wrap_under_get_rule(value as *mut _)) }
-}
-
-fn int_value(dict: &CFDictionary, key: &str) -> Option<i64> {
-    number_value(dict, key)?.to_i64()
-}
-
-fn float_value(dict: &CFDictionary, key: &str) -> Option<f64> {
-    number_value(dict, key)?.to_f64()
-}
-
-fn number_value(dict: &CFDictionary, key: &str) -> Option<CFNumber> {
-    let value = lookup(dict, key);
-    if value.is_null() {
-        return None;
-    }
-    unsafe { Some(CFNumber::wrap_under_get_rule(value as *mut _)) }
-}
-
-fn string_value(dict: &CFDictionary, key: &str) -> Option<String> {
-    let value = lookup(dict, key);
-    if value.is_null() {
-        return None;
-    }
-    unsafe { Some(CFString::wrap_under_get_rule(value as *mut _).to_string()) }
 }
 
 #[cfg(test)]

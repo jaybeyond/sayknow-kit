@@ -46,6 +46,8 @@ const settings: Settings = {
   deeplFormality: "default",
   deeplKey: "",
   workspaceMode: "rewrite",
+  menuBarReadout: "off",
+  systemAlerts: [],
 }
 
 function Harness({

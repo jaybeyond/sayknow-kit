@@ -7,6 +7,7 @@ const REQUIRED_METRIC_KEYS = [
   "tools.metrics.cpuSystem",
   "tools.metrics.cpuUser",
   "tools.metrics.cpuIdle",
+  "tools.metrics.gpu",
   "tools.metrics.memory",
   "tools.metrics.storage",
   "tools.metrics.temperature",
@@ -72,6 +73,42 @@ describe("about page links", () => {
     for (const locale of UI_LOCALES) {
       for (const key of ["settings.about.repo", "settings.about.openrouter", "settings.about.deepl"]) {
         expect(UI_STRINGS[locale][key], `${locale}:${key}`).toBeTruthy()
+      }
+    }
+  })
+})
+describe("system monitor copy", () => {
+  it("names every readout and alert, and carries the reading into each notification", () => {
+    const kinds = ["cpu", "memory", "temperature", "storage", "battery"]
+    const readouts = ["off", "cpu", "memory", "gpu", "temperature"]
+    for (const locale of UI_LOCALES) {
+      const strings = UI_STRINGS[locale]
+      for (const key of [
+        "settings.section.monitor",
+        "monitor.readout.label",
+        "monitor.readout.desc",
+        "monitor.readout.macOnly",
+        "monitor.alerts.label",
+        "monitor.alerts.desc",
+        ...readouts.map((r) => `monitor.readout.${r}`),
+        ...kinds.flatMap((k) => [`monitor.alert.${k}.label`, `monitor.alert.${k}.hint`, `monitor.alert.${k}.title`]),
+      ]) {
+        expect(strings[key], `${locale}:${key}`).toBeTruthy()
+      }
+      for (const kind of kinds) {
+        // The Rust side fills in the reading; a body without the slot would
+        // send an alert that never says how bad it is.
+        expect(strings[`monitor.alert.${kind}.body`], `${locale}:${kind}`).toContain("{value}")
+      }
+    }
+  })
+
+  it("has the activity panel strings in every locale", () => {
+    for (const locale of UI_LOCALES) {
+      const strings = UI_STRINGS[locale]
+      expect(strings["tools.activity.history"], locale).toContain("{minutes}")
+      for (const key of ["historyEmpty", "topCpu", "topMemory", "measuring", "none", "cpuNote"]) {
+        expect(strings[`tools.activity.${key}`], `${locale}:${key}`).toBeTruthy()
       }
     }
   })

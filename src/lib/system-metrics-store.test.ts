@@ -21,9 +21,10 @@ import {
 import type { MetricsSnapshot } from "./system-metrics-store"
 
 const snapshot: MetricsSnapshot = {
-  schema_version: 1,
+  schema_version: 2,
   sampled_at_ms: 1_000,
   cpu: { state: "available", percent: 42.6, system_percent: 12.1, user_percent: 30.5, idle_percent: 57.4, sample_start_ms: 500, sample_end_ms: 1_000 },
+  gpu: { state: "available", percent: 7 },
   memory: {
     state: "available",
     total_bytes: 16 * 1024 ** 3,
@@ -102,10 +103,16 @@ describe("system metrics decoder", () => {
       ...snapshot,
       cpu: { state: "warming_up", reason: "baseline_pending" },
     }).cpu.state).toBe("warming_up")
+    expect(decodeMetricsSnapshot({
+      ...snapshot,
+      gpu: { state: "unavailable", reason: "no_gpu_statistics" },
+    }).gpu).toEqual({ state: "unavailable", reason: "no_gpu_statistics" })
   })
 
   it.each([
-    [{ ...snapshot, schema_version: 2 }, "schema"],
+    [{ ...snapshot, schema_version: 1 }, "schema"],
+    [{ ...snapshot, gpu: { state: "available", percent: 140 } }, "GPU over 100%"],
+    [{ ...snapshot, gpu: { state: "available", percent: 7, device: "agx" } }, "unknown GPU key"],
     [{ ...snapshot, extra: true }, "extra key"],
     [{ ...snapshot, cpu: { ...snapshot.cpu, percent: Number.NaN } }, "non-finite CPU"],
     [{ ...snapshot, cpu: { ...snapshot.cpu, sample_end_ms: 500 } }, "invalid CPU interval"],

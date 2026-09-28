@@ -15,14 +15,18 @@ export type BatteryMetric =
   | { state: "available"; percent: number; is_charging: boolean; adapter_name: string | null; max_capacity_percent: number | null; cycle_count: number | null; temperature_celsius: number | null }
   | { state: "not_installed" }
   | { state: "unavailable"; reason: string }
+export type GpuMetric =
+  | { state: "available"; percent: number }
+  | { state: "unavailable"; reason: string }
 export type NetworkMetric =
   | { state: "available"; interface: string; ip_address: string | null; upload_bytes_per_sec: number; download_bytes_per_sec: number }
   | { state: "warming_up"; reason: string }
   | { state: "unavailable"; reason: string }
 export type MetricsSnapshot = {
-  schema_version: 1
+  schema_version: 2
   sampled_at_ms: number
   cpu: CpuMetric
+  gpu: GpuMetric
   memory: ResourceMetric
   storage: ResourceMetric
   cpu_package_temperature: TemperatureMetric
@@ -165,6 +169,21 @@ function decodeBattery(value: unknown): BatteryMetric {
   }
 }
 
+function decodeGpu(value: unknown): GpuMetric {
+  if (!isRecord(value) || typeof value.state !== "string") throw new Error("invalid gpu metric")
+  if (value.state === "unavailable") return reasonMetric(value, "unavailable")
+  if (
+    value.state !== "available" ||
+    !exactKeys(value, ["state", "percent"]) ||
+    !finiteNumber(value.percent) ||
+    value.percent < 0 ||
+    value.percent > 100
+  ) {
+    throw new Error("invalid available gpu metric")
+  }
+  return { state: "available", percent: value.percent }
+}
+
 function decodeNetwork(value: unknown): NetworkMetric {
   if (!isRecord(value) || typeof value.state !== "string") throw new Error("invalid network metric")
   if (value.state === "warming_up" || value.state === "unavailable") return reasonMetric(value, value.state)
@@ -247,16 +266,17 @@ function decodeTemperature(value: unknown): TemperatureMetric {
 export function decodeMetricsSnapshot(value: unknown): MetricsSnapshot {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ["schema_version", "sampled_at_ms", "cpu", "memory", "storage", "cpu_package_temperature", "battery", "network"]) ||
-    value.schema_version !== 1 ||
+    !exactKeys(value, ["schema_version", "sampled_at_ms", "cpu", "gpu", "memory", "storage", "cpu_package_temperature", "battery", "network"]) ||
+    value.schema_version !== 2 ||
     !safeCount(value.sampled_at_ms)
   ) {
     throw new Error("unsupported system metrics snapshot")
   }
   return {
-    schema_version: 1,
+    schema_version: 2,
     sampled_at_ms: value.sampled_at_ms,
     cpu: decodeCpu(value.cpu),
+    gpu: decodeGpu(value.gpu),
     memory: decodeResource(value.memory, "memory"),
     storage: decodeResource(value.storage, "storage"),
     cpu_package_temperature: decodeTemperature(value.cpu_package_temperature),

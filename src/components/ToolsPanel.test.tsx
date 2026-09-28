@@ -4,6 +4,27 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { Settings } from "@/hooks/useSettings"
 
 const mocks = vi.hoisted(() => ({
+  setActivityActive: vi.fn(),
+  activityState: {
+    points: [] as {
+      at_ms: number
+      cpu: number | null
+      gpu: number | null
+      memory: number | null
+      temperature: number | null
+      upload: number | null
+      download: number | null
+    }[],
+    processes: null as
+      | null
+      | { state: "warming_up" }
+      | {
+          state: "available"
+          by_cpu: { pid: number; name: string; cpu_percent: number; memory_bytes: number }[]
+          by_memory: { pid: number; name: string; cpu_percent: number; memory_bytes: number }[]
+        },
+    error: null as string | null,
+  },
   refreshMetrics: vi.fn(),
   setMetricsActive: vi.fn(),
   scanDisplays: vi.fn(() => Promise.resolve()),
@@ -24,9 +45,10 @@ const mocks = vi.hoisted(() => ({
     status: "stale_with_error" as const,
     refreshing: true,
     snapshot: {
-      schema_version: 1 as const,
+      schema_version: 2 as const,
       sampled_at_ms: 1_000,
       cpu: { state: "available" as const, percent: 42.6, system_percent: 12.1, user_percent: 30.5, idle_percent: 57.4, sample_start_ms: 500, sample_end_ms: 1_000 },
+      gpu: { state: "available" as const, percent: 33 },
       memory: { state: "available" as const, total_bytes: 2_048, used_bytes: 1_024, available_bytes: 1_024, sampled_at_ms: 1_000 },
       storage: { state: "unavailable" as const, reason: "system_volume_unavailable" },
       cpu_package_temperature: { state: "unavailable" as const, reason: "no_verified_package_sensor" },
@@ -58,6 +80,13 @@ vi.mock("@/i18n", () => ({
       "tools.metrics.cpuSystem": "System",
       "tools.metrics.cpuUser": "User",
       "tools.metrics.cpuIdle": "Idle",
+      "tools.metrics.gpu": "GPU",
+      "tools.activity.history": "Last {minutes} min",
+      "tools.activity.historyEmpty": "Collecting readings",
+      "tools.activity.topCpu": "Top apps by CPU",
+      "tools.activity.topMemory": "Top apps by memory",
+      "tools.activity.measuring": "Measuring…",
+      "tools.activity.none": "Nothing noticeable",
       "tools.metrics.memory": "Memory",
       "tools.metrics.storage": "Storage",
       "tools.metrics.temperature": "CPU temperature",
@@ -128,6 +157,12 @@ vi.mock("@/lib/system-metrics-store", () => ({
   formatPercent: (percent: number) => `${Math.round(percent)}%`,
   formatRate: (bytes: number) => `${bytes} B/s`,
 }))
+vi.mock("@/lib/system-activity-store", () => ({
+  GAP_MS: 30_000,
+  getSnapshot: () => mocks.activityState,
+  subscribe: () => () => undefined,
+  setActive: mocks.setActivityActive,
+}))
 vi.mock("@/components/UsagePanel", () => ({
   UsagePanel: ({ active }: { active: boolean }) => (
     <section aria-label="Usage" data-active={String(active)} />
@@ -159,6 +194,8 @@ function openUsageTab() {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  mocks.activityState.points = []
+  mocks.activityState.processes = null
   mocks.scanDisplays.mockImplementation(() => Promise.resolve())
 })
 
@@ -512,5 +549,68 @@ describe("ToolsPanel accessibility notice", () => {
     openDisplayTab()
 
     expect(screen.queryByText("Accessibility permission required")).toBeNull()
+  })
+})
+
+describe("ToolsPanel activity", () => {
+  const point = (at_ms: number, over: Partial<(typeof mocks.activityState.points)[number]> = {}) => ({
+    at_ms,
+    cpu: 20,
+    gpu: null,
+    memory: 60,
+    temperature: null,
+    upload: 100,
+    download: 2_000,
+    ...over,
+  })
+
+  it("polls history only while the status tab is on screen", () => {
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(mocks.setActivityActive).toHaveBeenLastCalledWith(true)
+    openDisplayTab()
+    expect(mocks.setActivityActive).toHaveBeenLastCalledWith(false)
+  })
+
+  it("shows the GPU reading beside the CPU", () => {
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    const region = screen.getByRole("region", { name: "System status" })
+    expect(within(region).getByText("GPU").parentElement?.textContent).toContain("33%")
+  })
+
+  it("draws a graph only for readings this Mac reported", () => {
+    mocks.activityState.points = [point(0), point(5_000), point(10_000, { cpu: 35 })]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    const region = screen.getByRole("region", { name: "Last 10 min" })
+    expect(within(region).getByText("CPU")).toBeTruthy()
+    expect(within(region).getByText("35%")).toBeTruthy()
+    expect(within(region).getByText("Memory")).toBeTruthy()
+    // No GPU statistics and no temperature sensor: no flat line posing as 0.
+    expect(within(region).queryByText("GPU")).toBeNull()
+    expect(within(region).queryByText("CPU temperature")).toBeNull()
+    expect(region.querySelectorAll("svg path").length).toBeGreaterThanOrEqual(3)
+  })
+
+  it("says it is collecting until there are two readings to join", () => {
+    mocks.activityState.points = [point(0)]
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(screen.getByText("Collecting readings")).toBeTruthy()
+  })
+
+  it("lists the heaviest apps, with multi-core CPU above 100%", () => {
+    mocks.activityState.processes = {
+      state: "available",
+      by_cpu: [{ pid: 1, name: "cargo", cpu_percent: 412.4, memory_bytes: 10 }],
+      by_memory: [],
+    }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    const region = screen.getByRole("region", { name: "Last 10 min" })
+    expect(within(region).getByText("cargo").parentElement?.textContent).toContain("412%")
+    expect(within(region).getByText("Nothing noticeable")).toBeTruthy()
+  })
+
+  it("does not invent a list before the first CPU comparison", () => {
+    mocks.activityState.processes = { state: "warming_up" }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(screen.getAllByText("Measuring…")).toHaveLength(2)
   })
 })

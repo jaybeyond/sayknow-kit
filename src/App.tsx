@@ -15,6 +15,7 @@ const SettingsWindow = lazy(() =>
   })),
 )
 import { isTauri } from "./lib/runtime"
+import { monitorConfig } from "./lib/system-monitor"
 
 function isSettingsWindow(): boolean {
   if (typeof window === "undefined") return false
@@ -46,6 +47,17 @@ function MainRoot() {
       void invoke("set_tray_quit_label", { label: quit }).catch(() => {})
     }
   }, [t, loaded])
+
+  // The menu bar readout and system alerts run in Rust even while this window
+  // is hidden, so the choice (and the alert text, in the user's language) is
+  // handed over whenever it changes — including from the settings window,
+  // whose writes reach this one as a storage event.
+  const alertsKey = JSON.stringify(settings.systemAlerts)
+  useEffect(() => {
+    if (!isTauri() || !loaded) return
+    const config = monitorConfig(settings.menuBarReadout, JSON.parse(alertsKey), t)
+    void invoke("set_system_monitor_config", { config }).catch(() => {})
+  }, [t, loaded, settings.menuBarReadout, alertsKey])
 
   useEffect(() => {
     function play() {

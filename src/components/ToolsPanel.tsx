@@ -38,10 +38,21 @@ import {
   formatRate,
   type BatteryMetric,
   type CpuMetric,
+  type GpuMetric,
   type NetworkMetric,
   type ResourceMetric,
   type TemperatureMetric,
 } from "@/lib/system-metrics-store"
+import {
+  GAP_MS,
+  getSnapshot as getActivitySnapshot,
+  setActive as setActivityActive,
+  subscribe as subscribeActivity,
+  type HistoryPoint,
+  type ProcessUsage,
+  type TopProcesses,
+} from "@/lib/system-activity-store"
+import { historyWindow, sparklinePath } from "@/lib/sparkline"
 import { cn } from "@/lib/utils"
 import { brightnessCommand } from "@/lib/brightness-command"
 
@@ -89,6 +100,12 @@ export function ToolsPanel({ settings, active }: Props) {
     setMetricsActive(active)
     return () => setMetricsActive(false)
   }, [active])
+  // Graphs and the process list poll only while they are on screen: walking
+  // the process table is the costliest thing this panel does.
+  useEffect(() => {
+    setActivityActive(active && tab === "status")
+    return () => setActivityActive(false)
+  }, [active, tab])
 
   // Follow the keyboard keys: the built-in slider is an absolute brightness
   // whose system half changes under us. The sync command is pure math on the
@@ -259,7 +276,12 @@ export function ToolsPanel({ settings, active }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-2.5">
-        {tab === "status" && <SystemMetricsSection state={metrics} t={t} />}
+        {tab === "status" && (
+          <div className="space-y-2">
+            <SystemMetricsSection state={metrics} t={t} />
+            <ActivitySection t={t} />
+          </div>
+        )}
 
         {tab === "display" && (
           <div className="space-y-2">
@@ -452,6 +474,10 @@ function cpuLines(cpu: CpuMetric, label: (kind: string) => string): [string, str
   return [[label("cpu"), label("unavailable")]]
 }
 
+function gpuLines(metric: GpuMetric, label: (kind: string) => string): [string, string][] {
+  return [[label("gpu"), metric.state === "available" ? formatPercent(metric.percent) : label("unavailable")]]
+}
+
 function resourceLines(kind: string, metric: ResourceMetric, label: (kind: string) => string): [string, string][] {
   if (metric.state === "available") {
     const base = kind === "storage" ? 1000 : 1024
@@ -510,6 +536,7 @@ function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetric
   const cards = snapshot
     ? [
         cpuLines(snapshot.cpu, label),
+        gpuLines(snapshot.gpu, label),
         resourceLines("memory", snapshot.memory, label),
         resourceLines("storage", snapshot.storage, label),
         temperatureLines(snapshot.cpu_package_temperature, label),
@@ -555,6 +582,171 @@ function SystemMetricsSection({ state, t }: { state: ReturnType<typeof getMetric
       {seconds != null && (
         <p className="mt-1 text-xs text-muted-foreground">{label("updated").replace("{age}", seconds)}</p>
       )}
+    </section>
+  )
+}
+
+type GraphRow = {
+  key: string
+  label: string
+  value: string
+  max: number
+  lines: { values: (number | null)[]; className: string }[]
+}
+
+/** The graph rows worth drawing: a figure this Mac never reported (no GPU
+ *  statistics, no temperature sensor) gets no row rather than a flat line
+ *  that reads as zero. */
+function graphRows(points: HistoryPoint[], t: (key: string) => string): GraphRow[] {
+  const latest = points[points.length - 1]
+  const series = (pick: (p: HistoryPoint) => number | null) => points.map(pick)
+  const seen = (values: (number | null)[]) => values.some((v) => v !== null)
+  const peak = (values: (number | null)[]) => Math.max(0, ...values.filter((v): v is number => v !== null))
+  const pct = (v: number | null) => (v === null ? "—" : formatPercent(v))
+  const rows: GraphRow[] = []
+  const cpu = series((p) => p.cpu)
+  if (seen(cpu)) {
+    rows.push({ key: "cpu", label: t("tools.metrics.cpu"), value: pct(latest.cpu), max: 100, lines: [{ values: cpu, className: "text-primary" }] })
+  }
+  const gpu = series((p) => p.gpu)
+  if (seen(gpu)) {
+    rows.push({ key: "gpu", label: t("tools.metrics.gpu"), value: pct(latest.gpu), max: 100, lines: [{ values: gpu, className: "text-primary" }] })
+  }
+  const memory = series((p) => p.memory)
+  if (seen(memory)) {
+    rows.push({ key: "memory", label: t("tools.metrics.memory"), value: pct(latest.memory), max: 100, lines: [{ values: memory, className: "text-primary" }] })
+  }
+  const temperature = series((p) => p.temperature)
+  if (seen(temperature)) {
+    rows.push({
+      key: "temperature",
+      label: t("tools.metrics.temperature"),
+      value: latest.temperature === null ? "—" : `${latest.temperature.toFixed(0)} °C`,
+      max: Math.max(100, peak(temperature)),
+      lines: [{ values: temperature, className: "text-primary" }],
+    })
+  }
+  const download = series((p) => p.download)
+  const upload = series((p) => p.upload)
+  if (seen(download) || seen(upload)) {
+    rows.push({
+      key: "network",
+      label: t("tools.metrics.network"),
+      value: `↓${latest.download === null ? "—" : formatRate(latest.download)} ↑${latest.upload === null ? "—" : formatRate(latest.upload)}`,
+      // Traffic has no ceiling; the busiest moment on screen is the top.
+      max: Math.max(1, peak(download), peak(upload)),
+      lines: [
+        { values: upload, className: "text-muted-foreground/60" },
+        { values: download, className: "text-primary" },
+      ],
+    })
+  }
+  return rows
+}
+
+function Sparkline({ points, row, from, to }: { points: HistoryPoint[]; row: GraphRow; from: number; to: number }) {
+  return (
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="h-6 w-full" aria-hidden="true">
+      {row.lines.map((line, i) => (
+        <path
+          key={i}
+          d={sparklinePath(
+            points.map((p, j) => ({ at: p.at_ms, value: line.values[j] })),
+            from,
+            to,
+            row.max,
+            GAP_MS,
+          )}
+          className={cn("stroke-current", line.className)}
+          fill="none"
+          strokeWidth={1.25}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </svg>
+  )
+}
+
+function ProcessList({
+  title,
+  processes,
+  pick,
+  format,
+  t,
+}: {
+  title: string
+  processes: TopProcesses | null
+  pick: (p: Extract<TopProcesses, { state: "available" }>) => ProcessUsage[]
+  format: (p: ProcessUsage) => string
+  t: (key: string) => string
+}) {
+  const rows = processes?.state === "available" ? pick(processes) : null
+  return (
+    <div className="min-w-0 rounded-md bg-background/60 px-2 py-1.5">
+      <div className="mb-1 text-[10px] text-muted-foreground">{title}</div>
+      {rows === null ? (
+        <p className="text-[11px] text-muted-foreground">{t("tools.activity.measuring")}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{t("tools.activity.none")}</p>
+      ) : (
+        <ol className="space-y-0.5">
+          {rows.map((p) => (
+            <li key={p.pid} className="flex items-baseline justify-between gap-2 text-[11px]">
+              <span className="min-w-0 truncate" title={p.name}>
+                {p.name}
+              </span>
+              <span className="shrink-0 font-medium tabular-nums">{format(p)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+/** The last hour as small graphs, and who is using the machine right now. */
+function ActivitySection({ t }: { t: (key: string) => string }) {
+  const { points, processes } = useSyncExternalStore(subscribeActivity, getActivitySnapshot)
+  const axis = historyWindow(points.map((p) => p.at_ms))
+  const rows = axis && points.length >= 2 ? graphRows(points, t) : []
+  const title = t("tools.activity.history").replace("{minutes}", String(axis?.minutes ?? 10))
+
+  return (
+    <section aria-label={title} className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+      <div className="text-xs font-medium">{title}</div>
+      {rows.length === 0 || !axis ? (
+        <p className="text-[11px] text-muted-foreground">{t("tools.activity.historyEmpty")}</p>
+      ) : (
+        <div className="space-y-1">
+          {rows.map((row) => (
+            <div key={row.key} className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-2 text-[11px]">
+              <span className="truncate text-muted-foreground">{row.label}</span>
+              <Sparkline points={points} row={row} from={axis.from} to={axis.to} />
+              <span className="min-w-[3rem] text-right font-medium tabular-nums">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-1.5">
+        <ProcessList
+          title={t("tools.activity.topCpu")}
+          processes={processes}
+          pick={(p) => p.by_cpu}
+          // Above 100 on purpose: a process busy on several cores is.
+          format={(p) => `${p.cpu_percent.toFixed(0)}%`}
+          t={t}
+        />
+        <ProcessList
+          title={t("tools.activity.topMemory")}
+          processes={processes}
+          pick={(p) => p.by_memory}
+          format={(p) => formatBytes(p.memory_bytes)}
+          t={t}
+        />
+      </div>
+      <p className="text-[10px] leading-snug text-muted-foreground">{t("tools.activity.cpuNote")}</p>
     </section>
   )
 }

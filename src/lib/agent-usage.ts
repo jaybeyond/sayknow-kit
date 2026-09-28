@@ -16,15 +16,35 @@ export type Bucket = {
 export type RateWindow = {
   used_percent: number
   window_minutes: number
-  /** Unix seconds. */
+  /** Unix seconds; 0 when the source does not say when the window renews. */
   resets_at: number
+  /** `resets_at` was worked out from a history of readings, not reported. */
+  resets_estimated: boolean
+  /** The model family the window is limited to ("Opus"), or null for the plan. */
+  scope: string | null
 }
+
+/** Where the limits were read from. */
+export type LimitSource = "session_log" | "status_line" | "claude_app"
 
 export type RateLimits = {
   captured_at: string
   plan_type: string | null
   primary: RateWindow | null
   secondary: RateWindow | null
+  /** Further windows limited to one model family. */
+  scoped: RateWindow[]
+  source: LimitSource
+}
+
+/** Whether a recorded window still describes the present. A known reset time
+ *  decides it. Without one, a reading is current for at most the length of
+ *  its window: a five-hour percentage from yesterday is about a window that
+ *  has long since renewed. */
+export function windowIsCurrent(w: RateWindow, capturedAt: string, nowMs: number): boolean {
+  if (w.resets_at > 0) return w.resets_at * 1000 > nowMs
+  const capturedMs = Date.parse(capturedAt)
+  return Number.isFinite(capturedMs) && nowMs - capturedMs < w.window_minutes * 60_000
 }
 
 export type AgentReport = {

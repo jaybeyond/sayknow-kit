@@ -11,6 +11,8 @@ mod accessibility_backlight;
 mod thermal_macos;
 #[cfg(target_os = "macos")]
 mod battery_macos;
+#[cfg(target_os = "macos")]
+mod iokit_macos;
 mod mole;
 mod network_metrics;
 mod display;
@@ -21,6 +23,7 @@ mod cursor;
 mod cursor_chat;
 
 mod system_metrics;
+mod system_monitor;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -333,6 +336,19 @@ fn is_offscreen(win: Rect, monitors: &[Rect]) -> bool {
     best * 3 < area * 2
 }
 
+/// True when the popover is up but mostly not on `pointer_display`, the
+/// display the user just clicked or typed on.
+///
+/// Pressing the key or the icon while the popover was open always read as
+/// "close it", even when it was open on another screen. On a desk with
+/// several displays that hid it from a screen the user was not looking at,
+/// showed nothing on the one they were, and took a second press to bring it
+/// over. More than half of it elsewhere means it is not where the user is.
+fn is_on_other_display(win: Rect, pointer_display: Rect) -> bool {
+    let area = win.2 as i64 * win.3 as i64;
+    area > 0 && overlap_area(win, pointer_display) * 2 < area
+}
+
 /// Top-right of `monitor`, just below the menu bar — where a tray popover
 /// belongs when we have to place it ourselves.
 fn tray_fallback_origin(win: Rect, monitor: Rect, scale: f64) -> (i32, i32) {
@@ -343,15 +359,28 @@ fn tray_fallback_origin(win: Rect, monitor: Rect, scale: f64) -> (i32, i32) {
     (x.max(monitor.0), y)
 }
 
-fn ensure_on_screen(win: &tauri::WebviewWindow) {
+/// The window's frame in logical points, the space `Rect` is defined in.
+fn logical_window_rect(win: &tauri::WebviewWindow) -> Option<Rect> {
     // Logical points throughout, for the same reason as the placement above:
     // a pixel coordinate only means something on the display it came from.
     let scale = win.scale_factor().unwrap_or(1.0);
     let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
-        return;
+        return None;
     };
     let pos = pos.to_logical::<f64>(scale);
     let size = size.to_logical::<f64>(scale);
+    Some((
+        pos.x.round() as i32,
+        pos.y.round() as i32,
+        size.width.round() as u32,
+        size.height.round() as u32,
+    ))
+}
+
+fn ensure_on_screen(win: &tauri::WebviewWindow) {
+    let Some(win_rect) = logical_window_rect(win) else {
+        return;
+    };
     let Ok(monitors) = win.available_monitors() else {
         return;
     };
@@ -368,12 +397,6 @@ fn ensure_on_screen(win: &tauri::WebviewWindow) {
             )
         })
         .collect();
-    let win_rect: Rect = (
-        pos.x.round() as i32,
-        pos.y.round() as i32,
-        size.width.round() as u32,
-        size.height.round() as u32,
-    );
     if !is_offscreen(win_rect, &rects) {
         return;
     }
@@ -1596,7 +1619,7 @@ fn open_settings(app: AppHandle, section: Option<String>) -> Result<(), String> 
         Some(section) => format!("index.html?window=settings&section={section}"),
         None => "index.html?window=settings".to_string(),
     };
-    WebviewWindowBuilder::new(
+    let settings = WebviewWindowBuilder::new(
         &app,
         "settings",
         WebviewUrl::App(url.into()),
@@ -1607,6 +1630,7 @@ fn open_settings(app: AppHandle, section: Option<String>) -> Result<(), String> 
     .resizable(true)
     .build()
     .map_err(|e| e.to_string())?;
+    bring_settings_to_active_space(&settings);
     Ok(())
 }
 
@@ -1757,22 +1781,102 @@ fn raise_popover(win: &tauri::WebviewWindow) {
     let _ = win.set_focus();
 }
 
+/// Collection behavior for the popover: on every Space, full-screen ones too.
+///
+/// A window belongs to the Space it was last shown on, and macOS's default
+/// "switch to a Space with open windows for the application" answers raising
+/// it from any other Space by sliding the user's display over to that one.
+/// With many desktops that read as the popover opening somewhere else and
+/// dragging the screen after it. A menu bar popover belongs where the menu bar
+/// is — on every Space, a full-screen app's included, or showing it switches
+/// away from that app. AppKit allows one member of each of these groups and
+/// raises on a conflict, so the rivals are cleared rather than set beside.
+#[cfg(target_os = "macos")]
+fn popover_collection_behavior(
+    current: objc2_app_kit::NSWindowCollectionBehavior,
+) -> objc2_app_kit::NSWindowCollectionBehavior {
+    use objc2_app_kit::NSWindowCollectionBehavior as B;
+    let rivals = B::MoveToActiveSpace.0 | B::FullScreenPrimary.0 | B::FullScreenNone.0;
+    B((current.0 & !rivals) | B::CanJoinAllSpaces.0 | B::FullScreenAuxiliary.0)
+}
+
+/// Collection behavior for the settings window: it comes to the user's Space.
+///
+/// Settings is an ordinary window the user may leave open, so it is not put
+/// on every Space. But opening it from the popover on one desktop while it sat
+/// on another switched the display over to it; moving to the active Space
+/// brings it to the user instead.
+#[cfg(target_os = "macos")]
+fn settings_collection_behavior(
+    current: objc2_app_kit::NSWindowCollectionBehavior,
+) -> objc2_app_kit::NSWindowCollectionBehavior {
+    use objc2_app_kit::NSWindowCollectionBehavior as B;
+    B((current.0 & !B::CanJoinAllSpaces.0) | B::MoveToActiveSpace.0)
+}
+
+/// Rewrite a window's collection behavior on the main thread, where AppKit
+/// requires it, and log the before/after: which Spaces a window follows is
+/// otherwise invisible from outside the process.
+#[cfg(target_os = "macos")]
+fn apply_collection_behavior(
+    win: &tauri::WebviewWindow,
+    adjust: fn(objc2_app_kit::NSWindowCollectionBehavior) -> objc2_app_kit::NSWindowCollectionBehavior,
+) {
+    let target = win.clone();
+    let _ = win.run_on_main_thread(move || {
+        use objc2_app_kit::NSWindow;
+        let Ok(ptr) = target.ns_window() else {
+            return;
+        };
+        if ptr.is_null() {
+            return;
+        }
+        let window = unsafe { &*(ptr as *const NSWindow) };
+        let before = window.collectionBehavior();
+        let after = adjust(before);
+        window.setCollectionBehavior(after);
+        log::info!(
+            "window {}: collectionBehavior {:#x} -> {:#x}",
+            target.label(),
+            before.0,
+            after.0
+        );
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn keep_popover_on_every_space(win: &tauri::WebviewWindow) {
+    apply_collection_behavior(win, popover_collection_behavior);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_popover_on_every_space(_win: &tauri::WebviewWindow) {}
+
+#[cfg(target_os = "macos")]
+fn bring_settings_to_active_space(win: &tauri::WebviewWindow) {
+    apply_collection_behavior(win, settings_collection_behavior);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bring_settings_to_active_space(_win: &tauri::WebviewWindow) {}
+
 fn should_hide_after_blur(pinned: bool, focused: bool, observed_show: i64, latest_show: i64) -> bool {
     !pinned && !focused && observed_show == latest_show
 }
 
-/// Capture the pointer before activation can change the active screen.
-/// AppKit screen frames and mouseLocation share global points (Y upwards).
+/// Where the pointer is: an anchor under its display's menu bar, and that
+/// display's frame, both in the top-left logical points `Rect` uses. AppKit
+/// screen frames and mouseLocation share global points (Y upwards).
 #[cfg(target_os = "macos")]
-fn capture_popover_anchor(app: &AppHandle) {
+fn pointer_anchor() -> Option<(Rect, Rect)> {
     use objc2_app_kit::{NSEvent, NSScreen};
     use objc2_foundation::MainThreadMarker;
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let mtm = MainThreadMarker::new()?;
     let screens = NSScreen::screens(mtm);
-    let Some(primary) = screens.iter().next() else { return };
+    let primary = screens.iter().next()?;
     let desktop_top = primary.frame().origin.y + primary.frame().size.height;
     let mouse = NSEvent::mouseLocation();
-    let anchor = screens.iter().find_map(|screen| {
+    screens.iter().find_map(|screen| {
         let frame = screen.frame();
         if mouse.x < frame.origin.x || mouse.x >= frame.origin.x + frame.size.width
             || mouse.y < frame.origin.y || mouse.y >= frame.origin.y + frame.size.height {
@@ -1784,8 +1888,27 @@ fn capture_popover_anchor(app: &AppHandle) {
         let monitor = (frame.origin.x.round() as i32, top.round() as i32,
             frame.size.width.round() as u32, frame.size.height.round() as u32);
         Some(((mouse.x.round() as i32, menu_bottom.round() as i32, 0, 0), monitor))
-    });
-    *app.state::<AppState>().popover_anchor.lock().unwrap() = anchor;
+    })
+}
+
+/// Capture the pointer before activation can change the active screen.
+#[cfg(target_os = "macos")]
+fn capture_popover_anchor(app: &AppHandle) {
+    *app.state::<AppState>().popover_anchor.lock().unwrap() = pointer_anchor();
+}
+
+/// Whether the popover is on a display other than the one under the pointer.
+#[cfg(target_os = "macos")]
+fn popover_on_other_display(win: &tauri::WebviewWindow) -> bool {
+    let (Some((_, display)), Some(rect)) = (pointer_anchor(), logical_window_rect(win)) else {
+        return false;
+    };
+    is_on_other_display(rect, display)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn popover_on_other_display(_win: &tauri::WebviewWindow) -> bool {
+    false
 }
 
 fn toggle_window(app: &AppHandle, source: &str) {
@@ -1794,8 +1917,10 @@ fn toggle_window(app: &AppHandle, source: &str) {
     };
     let state = app.state::<AppState>();
     let showing = popover_is_showing(app, &win);
-    log::info!("toggle_window source={source} showing={showing}");
-    if showing {
+    // Up on another display is not up for this press: it is brought here.
+    let elsewhere = showing && popover_on_other_display(&win);
+    log::info!("toggle_window source={source} showing={showing} elsewhere={elsewhere}");
+    if showing && !elsewhere {
         let _ = win.hide();
         state.popover_open.store(false, Ordering::Relaxed);
         return;
@@ -1805,10 +1930,10 @@ fn toggle_window(app: &AppHandle, source: &str) {
     safe_move_to_tray(app);
     state.shown_at.store(now_ms(), Ordering::Relaxed);
     raise_popover(&win);
-    // Activating the app can pull the window back to the Space and display
-    // it was last on, which lands the popover on the built-in even though
-    // the icon was clicked on an external menu bar. Place it again now that
-    // the window is up, so the tray we actually clicked wins.
+    // Activating the app can pull the window back to the display it was last
+    // on, which lands the popover on the built-in even though the icon was
+    // clicked on an external menu bar. Place it again now that the window is
+    // up, so the tray we actually clicked wins.
     safe_move_to_tray(app);
     state.popover_open.store(true, Ordering::Relaxed);
     // JS listens for this — it re-runs the reveal animation and auto-fills
@@ -1819,17 +1944,18 @@ fn toggle_window(app: &AppHandle, source: &str) {
 }
 
 /// A panel shortcut shows the popover already on its panel. When the popover
-/// is up, the webview decides: the same panel again hides it, another panel
-/// switches to it.
+/// is up on the user's display, the webview decides: the same panel again
+/// hides it, another panel switches to it. Up on another display, it is
+/// brought over on the shortcut's panel instead.
 fn dispatch_global_shortcut(app: &AppHandle, id: &str) {
     let Some(target) = global_shortcuts::target(id) else {
         toggle_window(app, "shortcut");
         return;
     };
-    let showing = app
+    let showing_here = app
         .get_webview_window("main")
-        .is_some_and(|win| popover_is_showing(app, &win));
-    if showing {
+        .is_some_and(|win| popover_is_showing(app, &win) && !popover_on_other_display(&win));
+    if showing_here {
         let _ = app.emit("sayknow:shortcut", target);
     } else {
         toggle_window(app, &format!("shortcut:{target}"));
@@ -2062,6 +2188,7 @@ pub fn run() {
         // build in place defensible at all.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             pinned: AtomicBool::new(false),
             ocp: Mutex::new(OcpChild(None)),
@@ -2073,6 +2200,7 @@ pub fn run() {
             popover_anchor: Mutex::new(None),
         })
         .manage(system_metrics::SystemMetricsService::new())
+        .manage(system_monitor::MonitorState::default())
         .manage(oauth_callback::OAuthCallbackState::default())
         .manage(cursor_chat::CursorState::default())
         .invoke_handler(tauri::generate_handler![
@@ -2128,8 +2256,11 @@ pub fn run() {
             display::sync_builtin_brightness,
             agent_usage::agent_usage,
             system_metrics::get_system_metrics,
+            system_metrics::get_system_history,
+            system_metrics::get_top_processes,
             mole::detect_mole,
             mole::run_mole_action,
+            system_monitor::set_system_monitor_config,
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");
@@ -2275,6 +2406,16 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             display::start_brightness_sync(app.handle());
 
+            // Menu bar readout and system alerts. Idle until the user turns
+            // one of them on.
+            system_monitor::spawn(app.handle().clone());
+
+            // The popover opens on whichever desktop the user is on, instead
+            // of switching the display to the one it was last shown on.
+            if let Some(win) = app.get_webview_window("main") {
+                keep_popover_on_every_space(&win);
+            }
+
             // Recheck transient blur instead of dropping it: a discarded blur
             // may be the only one delivered after the user clicks elsewhere.
             if let Some(win) = app.get_webview_window("main") {
@@ -2341,7 +2482,7 @@ pub fn run() {
 #[cfg(test)]
 mod window_placement_tests {
     use super::{
-        is_offscreen, monitor_containing, overlap_area, should_hide_after_blur,
+        is_offscreen, is_on_other_display, monitor_containing, overlap_area, should_hide_after_blur,
         should_show_quit_menu, tray_anchored_origin, tray_fallback_origin, tray_quit_label, Rect,
         TRAY_QUIT_LABEL, TRAY_QUIT_LABEL_DEFAULT, TRAY_SECONDARY_ECHO_MS,
     };
@@ -2480,6 +2621,37 @@ mod window_placement_tests {
         let narrow: Rect = (0, 0, 300, 400);
         let (x, _) = tray_fallback_origin((0, 0, 480, 580), narrow, 1.0);
         assert_eq!(x, 0);
+    }
+
+    /// This desk from the placement log: built-in with the menu bar, a wide
+    /// display above it, a portrait one to its right.
+    const DESK_BUILTIN: Rect = (0, 0, 2056, 1329);
+    const DESK_ABOVE: Rect = (-504, -1080, 2560, 1080);
+    const DESK_RIGHT: Rect = (2056, -885, 1080, 1920);
+
+    /// The log that showed it: opened on the display above, then a click on
+    /// the built-in's icon only closed it up there.
+    #[test]
+    fn a_popover_open_on_another_display_is_not_where_the_user_is() {
+        let up_there = (1302, -1050, NORMAL_W, 580);
+        assert!(is_on_other_display(up_there, DESK_BUILTIN));
+        assert!(!is_on_other_display(up_there, DESK_ABOVE));
+        let on_the_right = (2396, -855, NORMAL_W, 580);
+        assert!(is_on_other_display(on_the_right, DESK_ABOVE));
+        assert!(!is_on_other_display(on_the_right, DESK_RIGHT));
+    }
+
+    #[test]
+    fn a_popover_mostly_on_the_pointer_display_counts_as_here() {
+        // 300 of 480 points wide on the built-in, the rest past its right edge.
+        let straddling = (2056 - 300, 40, NORMAL_W, 580);
+        assert!(!is_on_other_display(straddling, DESK_BUILTIN));
+        assert!(is_on_other_display(straddling, DESK_RIGHT));
+    }
+
+    #[test]
+    fn a_window_without_a_size_is_never_moved() {
+        assert!(!is_on_other_display((5000, 5000, 0, 0), DESK_BUILTIN));
     }
 
     #[test]
@@ -2641,6 +2813,43 @@ mod window_placement_tests {
         assert!(!should_hide_after_blur(true, false, 100, 100));
         assert!(!should_hide_after_blur(false, true, 100, 100));
         assert!(!should_hide_after_blur(false, false, 100, 101));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod space_behavior_tests {
+    use super::{popover_collection_behavior, settings_collection_behavior};
+    use objc2_app_kit::NSWindowCollectionBehavior as B;
+
+    fn has(behavior: B, flag: B) -> bool {
+        behavior.0 & flag.0 == flag.0
+    }
+
+    #[test]
+    fn the_popover_is_on_every_space_including_full_screen_ones() {
+        let behavior = popover_collection_behavior(B::Default);
+        assert!(has(behavior, B::CanJoinAllSpaces));
+        assert!(has(behavior, B::FullScreenAuxiliary));
+    }
+
+    /// AppKit raises when two members of one group are set, so the popover's
+    /// flags replace their rivals and leave every other bit as it was.
+    #[test]
+    fn the_popover_clears_the_flags_its_own_ones_exclude() {
+        let before = B(B::MoveToActiveSpace.0 | B::FullScreenPrimary.0 | B::IgnoresCycle.0);
+        let behavior = popover_collection_behavior(before);
+        assert!(!has(behavior, B::MoveToActiveSpace));
+        assert!(!has(behavior, B::FullScreenPrimary));
+        assert!(has(behavior, B::IgnoresCycle));
+        assert!(!has(popover_collection_behavior(B::FullScreenNone), B::FullScreenNone));
+    }
+
+    #[test]
+    fn settings_moves_to_the_active_space_instead_of_joining_all() {
+        let behavior = settings_collection_behavior(B(B::CanJoinAllSpaces.0 | B::FullScreenPrimary.0));
+        assert!(has(behavior, B::MoveToActiveSpace));
+        assert!(!has(behavior, B::CanJoinAllSpaces));
+        assert!(has(behavior, B::FullScreenPrimary));
     }
 }
 

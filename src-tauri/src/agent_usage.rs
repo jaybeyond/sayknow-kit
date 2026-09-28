@@ -66,17 +66,40 @@ impl Bucket {
 
 /// One quota window as the provider reports it. Codex writes these into every
 /// `token_count` event, which makes them the only authoritative limit numbers
-/// available offline — Claude Code and SayKnow CLI log no equivalent, so their
-/// windows have to be derived from timestamps instead.
-#[derive(Clone, Serialize, Deserialize)]
+/// available offline — Claude Code and SayKnow CLI log no equivalent, so
+/// Claude's windows come from a status-line cache or the Claude app's own
+/// history, and SayKnow CLI's have to be derived from timestamps instead.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RateWindow {
     pub used_percent: f64,
     pub window_minutes: u64,
-    /// Unix seconds.
+    /// Unix seconds; 0 when the source does not say when the window renews.
     pub resets_at: i64,
+    /// `resets_at` was worked out from a history of readings rather than
+    /// reported, so the UI must not present it as exact.
+    #[serde(default)]
+    pub resets_estimated: bool,
+    /// The model family a window is limited to, when it is not the whole plan
+    /// (the Claude app tracks separate weekly allowances for Opus and Sonnet).
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+/// Where a set of limits was read from. It decides what the UI can promise:
+/// how fresh the numbers are, and how the user gets newer ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitSource {
+    /// Written by the agent into its own session log (Codex).
+    #[default]
+    SessionLog,
+    /// A Claude Code status line's cached stdin.
+    StatusLine,
+    /// The Claude desktop app's plan-usage history.
+    ClaudeApp,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RateLimits {
     /// Timestamp of the event this snapshot came from. A snapshot is only
     /// meaningful next to its capture time: percentages from a month ago say
@@ -87,6 +110,11 @@ pub struct RateLimits {
     pub primary: Option<RateWindow>,
     /// Long window — 10080 minutes (7 days).
     pub secondary: Option<RateWindow>,
+    /// Further windows limited to one model family.
+    #[serde(default)]
+    pub scoped: Vec<RateWindow>,
+    #[serde(default)]
+    pub source: LimitSource,
 }
 
 /// Sign-in state, when it can be established without touching a secret.
@@ -354,6 +382,8 @@ fn window_from(v: Option<&Value>) -> Option<RateWindow> {
         used_percent: o.get("used_percent")?.as_f64()?,
         window_minutes: o.get("window_minutes").and_then(|x| x.as_u64()).unwrap_or(0),
         resets_at: o.get("resets_at").and_then(|x| x.as_i64()).unwrap_or(0),
+        resets_estimated: false,
+        scope: None,
     })
 }
 
@@ -377,6 +407,8 @@ fn parse_codex_limits(v: &Value) -> Option<RateLimits> {
             .map(str::to_string),
         primary,
         secondary,
+        scoped: Vec::new(),
+        source: LimitSource::SessionLog,
     })
 }
 
@@ -522,6 +554,8 @@ fn claude_window(v: Option<&Value>, window_minutes: u64) -> Option<RateWindow> {
         used_percent: o.get("used_percentage")?.as_f64()?,
         window_minutes,
         resets_at: o.get("resets_at").and_then(|x| x.as_i64()).unwrap_or(0),
+        resets_estimated: false,
+        scope: None,
     })
 }
 
@@ -575,10 +609,246 @@ fn claude_rate_limits(home: &Path) -> Option<RateLimits> {
                 plan_type: None,
                 primary,
                 secondary,
+                scoped: Vec::new(),
+                source: LimitSource::StatusLine,
             },
         ));
     }
     best.map(|(_, rl)| rl)
+}
+
+/// Where the Claude desktop app keeps its plan limits, relative to $HOME.
+const CLAUDE_APP_HISTORY: &str = "Library/Application Support/Claude/plan-usage-history.json";
+/// A month of readings is well under 1 MB; anything far larger is not the
+/// file this reader knows.
+const CLAUDE_APP_MAX_BYTES: u64 = 8 * 1024 * 1024;
+const FIVE_HOURS_SECS: i64 = 5 * 3600;
+const WEEK_SECS: i64 = 7 * 86_400;
+/// Two renewals this close to a whole number of weeks apart are the same
+/// weekly schedule.
+const WEEKLY_PHASE_SLACK_SECS: i64 = 2 * 3600;
+
+/// The windows the app records, by the key it stores each one under.
+struct AppWindow {
+    key: &'static str,
+    minutes: u64,
+    scope: Option<&'static str>,
+}
+
+const APP_WINDOWS: [AppWindow; 4] = [
+    AppWindow { key: "fh", minutes: 300, scope: None },
+    AppWindow { key: "sd", minutes: 10_080, scope: None },
+    AppWindow { key: "so", minutes: 10_080, scope: Some("Opus") },
+    AppWindow { key: "sn", minutes: 10_080, scope: Some("Sonnet") },
+];
+
+/// One reading from the app's history: when, which account, and the percent
+/// used of each window in `APP_WINDOWS` order.
+struct AppSample {
+    at: i64,
+    org: Option<String>,
+    used: [Option<f64>; APP_WINDOWS.len()],
+}
+
+/// Readings oldest first, or None for a file whose layout is not the one this
+/// reader was written against (version 2: `{version, samples: [{t, org, u}]}`,
+/// `t` in milliseconds). An unknown layout is left out rather than guessed at.
+fn claude_app_samples(v: &Value) -> Option<Vec<AppSample>> {
+    if v.get("version")?.as_u64()? != 2 {
+        return None;
+    }
+    let mut samples: Vec<AppSample> = v
+        .get("samples")?
+        .as_array()?
+        .iter()
+        .filter_map(|s| {
+            let ms = s.get("t")?.as_f64().filter(|ms| ms.is_finite() && *ms > 0.0)?;
+            let u = s.get("u")?.as_object()?;
+            let mut used = [None; APP_WINDOWS.len()];
+            for (slot, window) in used.iter_mut().zip(APP_WINDOWS.iter()) {
+                *slot = u
+                    .get(window.key)
+                    .and_then(Value::as_f64)
+                    .filter(|p| p.is_finite())
+                    .map(|p| p.clamp(0.0, 100.0));
+            }
+            Some(AppSample {
+                at: (ms / 1000.0) as i64,
+                org: s.get("org").and_then(Value::as_str).map(str::to_string),
+                used,
+            })
+        })
+        .collect();
+    samples.sort_by_key(|s| s.at);
+    Some(samples)
+}
+
+/// The latest moment the current five-hour window can renew.
+///
+/// The app records percentages only. A window opens with the first request
+/// after the previous one ran out, and within a window the percentage never
+/// falls, so the run of non-zero, non-falling readings that ends with the
+/// latest one is the current window, and it opened no later than that run's
+/// first reading. Five hours after that reading is when it renews at the
+/// latest. The latest rather than a midpoint on purpose: a countdown that ends
+/// while the limit still blocks is worse than one that ends a little late.
+fn session_renewal(samples: &[AppSample], slot: usize) -> Option<i64> {
+    let last = samples.len().checked_sub(1)?;
+    if samples[last].used[slot]? <= 0.0 {
+        // Nothing used: no window is open, so there is nothing to count down.
+        return None;
+    }
+    let mut first = last;
+    while first > 0 {
+        let (prev, cur) = (&samples[first - 1], &samples[first]);
+        let (Some(p), Some(c)) = (prev.used[slot], cur.used[slot]) else {
+            break;
+        };
+        if p <= 0.0 || p > c || cur.at - prev.at >= FIVE_HOURS_SECS {
+            break;
+        }
+        first -= 1;
+    }
+    // A window cannot be older than five hours at its latest reading; a run
+    // longer than that renewed without the reading ever falling.
+    while samples[last].at - samples[first].at >= FIVE_HOURS_SECS {
+        first += 1;
+    }
+    Some(samples[first].at + FIVE_HOURS_SECS)
+}
+
+/// When a renewal seen between two readings most likely happened. Weekly
+/// renewals on real histories land on the hour, so when exactly one hour
+/// boundary falls in the gap it is that hour; otherwise the later reading.
+fn renewal_moment(before: i64, after: i64) -> i64 {
+    let hour = (before.div_euclid(3600) + 1) * 3600;
+    if hour <= after && hour + 3600 > after {
+        hour
+    } else {
+        after
+    }
+}
+
+/// The next weekly renewal after `reading`, from the renewals the history saw.
+///
+/// A weekly allowance renews at a fixed moment each week and shows up as a
+/// drop between two readings. Anthropic also resets allowances off schedule
+/// now and then, so a renewal that another one a whole number of weeks earlier
+/// agrees with is trusted over a newer lone one.
+fn weekly_renewal(samples: &[AppSample], slot: usize, reading: i64) -> Option<i64> {
+    let renewals: Vec<i64> = samples
+        .windows(2)
+        .filter_map(|pair| {
+            let (p, c) = (pair[0].used[slot]?, pair[1].used[slot]?);
+            (c < p).then(|| renewal_moment(pair[0].at, pair[1].at))
+        })
+        .collect();
+    let on_schedule = |moment: i64| {
+        renewals.iter().any(|&other| {
+            let gap = moment - other;
+            let phase = gap.rem_euclid(WEEK_SECS);
+            gap >= WEEK_SECS - WEEKLY_PHASE_SLACK_SECS
+                && (phase <= WEEKLY_PHASE_SLACK_SECS || phase >= WEEK_SECS - WEEKLY_PHASE_SLACK_SECS)
+        })
+    };
+    let anchor = renewals
+        .iter()
+        .rev()
+        .copied()
+        .find(|&moment| on_schedule(moment))
+        .or_else(|| renewals.last().copied())?;
+    let weeks_ahead = (reading - anchor).div_euclid(WEEK_SECS) + 1;
+    Some(anchor + weeks_ahead.max(0) * WEEK_SECS)
+}
+
+/// Plan limits from the Claude app's history, for `account` (Claude Code's
+/// organization) when it is known.
+///
+/// The app can be signed in to a different account than Claude Code, and its
+/// limits then say nothing about the CLI's, so only the matching account's
+/// readings are used. Without a known account the latest reading's account is
+/// followed, so two accounts' histories are never spliced together.
+fn claude_app_limits_from(v: &Value, account: Option<&str>, now: i64) -> Option<RateLimits> {
+    let mut samples = claude_app_samples(v)?;
+    let wanted = account
+        .map(str::to_string)
+        .or_else(|| samples.last().and_then(|s| s.org.clone()));
+    samples.retain(|s| s.org.is_none() || s.org == wanted);
+    let latest = samples.last()?;
+    // A future reading is a clock problem; a week-old one describes no window
+    // that is still open.
+    if latest.at > now + 300 || now - latest.at >= WEEK_SECS {
+        return None;
+    }
+    let windows = APP_WINDOWS.iter().enumerate().filter_map(|(slot, window)| {
+        let used = latest.used[slot]?;
+        let renews = if window.minutes == 300 {
+            session_renewal(&samples, slot)
+        } else {
+            weekly_renewal(&samples, slot, latest.at)
+        };
+        Some(RateWindow {
+            used_percent: used,
+            window_minutes: window.minutes,
+            resets_at: renews.unwrap_or(0),
+            resets_estimated: renews.is_some(),
+            scope: window.scope.map(str::to_string),
+        })
+    });
+    let (mut primary, mut secondary, mut scoped) = (None, None, Vec::new());
+    for window in windows {
+        match (window.scope.is_some(), window.window_minutes) {
+            (false, 300) => primary = Some(window),
+            (false, _) => secondary = Some(window),
+            (true, _) => scoped.push(window),
+        }
+    }
+    if primary.is_none() && secondary.is_none() && scoped.is_empty() {
+        return None;
+    }
+    Some(RateLimits {
+        captured_at: epoch_to_iso(latest.at.max(0) as u64),
+        plan_type: None,
+        primary,
+        secondary,
+        scoped,
+        source: LimitSource::ClaudeApp,
+    })
+}
+
+/// Claude Code's signed-in organization, from the account block it keeps in
+/// `~/.claude.json`. Only the id is read; no credential lives in that block.
+fn claude_code_account(home: &Path) -> Option<String> {
+    let path = home.join(".claude.json");
+    if fs::metadata(&path).ok()?.len() > 32 * 1024 * 1024 {
+        return None;
+    }
+    let v: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    v.get("oauthAccount")?
+        .get("organizationUuid")?
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+/// The Claude desktop app checks the plan's limits itself every few minutes
+/// while it runs and keeps a month of them on disk. That file is read as is:
+/// no sign-in, no request, nothing sent.
+fn claude_app_limits(home: &Path, now: i64) -> Option<RateLimits> {
+    let path = home.join(CLAUDE_APP_HISTORY);
+    if fs::metadata(&path).ok()?.len() > CLAUDE_APP_MAX_BYTES {
+        return None;
+    }
+    let v: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+    claude_app_limits_from(&v, claude_code_account(home).as_deref(), now)
+}
+
+/// The fresher of two readings of the same limits.
+fn newest_limits(a: Option<RateLimits>, b: Option<RateLimits>) -> Option<RateLimits> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.captured_at > a.captured_at { b } else { a }),
+        (a, b) => a.or(b),
+    }
 }
 
 /// Decode a JWT's `exp` claim. Body only — this never validates or uses the
@@ -752,9 +1022,15 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
             None
         };
 
+        // Claude Code logs no limits of its own. A status line's cache has
+        // exact reset times; the Claude app's history is there without any
+        // setup. Whichever was written last describes the plan as it is now.
         if spec.kind == Kind::ClaudeCode && rate_limits.is_none() {
             if let Some(h) = &home {
-                rate_limits = claude_rate_limits(h);
+                rate_limits = newest_limits(
+                    claude_rate_limits(h),
+                    claude_app_limits(h, now_secs() as i64),
+                );
             }
         }
 
@@ -966,5 +1242,233 @@ mod tests {
         // 1783927200 is the five_hour reset in the captured payload.
         assert_eq!(epoch_to_iso(1_783_927_200), "2026-07-13T07:20:00Z");
         assert_eq!(epoch_to_iso(0), "1970-01-01T00:00:00Z");
+    }
+
+    const ACCOUNT: &str = "0f0f0f0f-1111-2222-3333-444444444444";
+    const OTHER_ACCOUNT: &str = "9e9e9e9e-5555-6666-7777-888888888888";
+    /// 2026-09-24T14:00:00Z, a Thursday: the weekly renewal hour seen in the
+    /// history this reader was built against.
+    const THU_14: i64 = 1_790_258_400;
+    const MIN: i64 = 60;
+
+    fn reading(at: i64, org: &str, fh: f64, sd: f64) -> Value {
+        serde_json::json!({ "t": at * 1000, "org": org, "u": { "fh": fh, "sd": sd } })
+    }
+
+    fn history(samples: Vec<Value>) -> Value {
+        serde_json::json!({ "version": 2, "samples": samples })
+    }
+
+    /// Same layout as a real `plan-usage-history.json` entry (the account id is
+    /// replaced): `t` in milliseconds, the account, and whole percentages.
+    #[test]
+    fn a_real_shaped_history_entry_is_read() {
+        let raw = r#"{"version":2,"samples":[{"t":1790589669793,"org":"0f0f0f0f-1111-2222-3333-444444444444","u":{"fh":7,"sd":54}}]}"#;
+        let v: Value = serde_json::from_str(raw).unwrap();
+        let limits = claude_app_limits_from(&v, Some(ACCOUNT), 1_790_589_700).unwrap();
+        assert_eq!(limits.source, LimitSource::ClaudeApp);
+        assert_eq!(limits.captured_at, "2026-09-28T10:01:09Z");
+        let five = limits.primary.unwrap();
+        assert_eq!((five.used_percent, five.window_minutes), (7.0, 300));
+        let week = limits.secondary.unwrap();
+        assert_eq!((week.used_percent, week.window_minutes), (54.0, 10_080));
+        // One reading shows no renewal, so the week's reset is unknown and
+        // must not be presented as a time.
+        assert_eq!((week.resets_at, week.resets_estimated), (0, false));
+    }
+
+    #[test]
+    fn the_session_renews_five_hours_after_its_first_reading() {
+        let start = THU_14 + 3 * 3600;
+        let v = history(vec![
+            reading(start - 15 * MIN, ACCOUNT, 0.0, 10.0),
+            reading(start, ACCOUNT, 4.0, 11.0),
+            reading(start + 15 * MIN, ACCOUNT, 9.0, 12.0),
+            reading(start + 30 * MIN, ACCOUNT, 9.0, 12.0),
+        ]);
+        let five = claude_app_limits_from(&v, Some(ACCOUNT), start + 31 * MIN)
+            .unwrap()
+            .primary
+            .unwrap();
+        assert_eq!(five.used_percent, 9.0);
+        assert_eq!(five.resets_at, start + FIVE_HOURS_SECS);
+        assert!(five.resets_estimated);
+    }
+
+    /// Work that carries on across a renewal never reads zero; the fall from
+    /// 80 to 1 is the renewal, and the window opened after it.
+    #[test]
+    fn a_fall_without_zero_still_starts_a_new_session() {
+        let t = THU_14 + 3 * 3600;
+        let v = history(vec![
+            reading(t, ACCOUNT, 60.0, 10.0),
+            reading(t + 15 * MIN, ACCOUNT, 80.0, 10.0),
+            reading(t + 30 * MIN, ACCOUNT, 1.0, 11.0),
+            reading(t + 45 * MIN, ACCOUNT, 6.0, 11.0),
+        ]);
+        let five = claude_app_limits_from(&v, Some(ACCOUNT), t + 46 * MIN)
+            .unwrap()
+            .primary
+            .unwrap();
+        assert_eq!(five.resets_at, t + 30 * MIN + FIVE_HOURS_SECS);
+    }
+
+    #[test]
+    fn an_unused_session_has_no_countdown() {
+        let v = history(vec![reading(THU_14, ACCOUNT, 0.0, 20.0)]);
+        let five = claude_app_limits_from(&v, Some(ACCOUNT), THU_14 + MIN)
+            .unwrap()
+            .primary
+            .unwrap();
+        assert_eq!((five.used_percent, five.resets_at, five.resets_estimated), (0.0, 0, false));
+    }
+
+    /// A run that climbs for longer than five hours renewed somewhere inside
+    /// it; the window at the latest reading can be no older than five hours.
+    #[test]
+    fn a_session_is_never_older_than_five_hours() {
+        let t = THU_14 + 3600;
+        let v = history(
+            (0..=24)
+                .map(|i| reading(t + i * 15 * MIN, ACCOUNT, 1.0 + i as f64, 10.0))
+                .collect(),
+        );
+        let latest = t + 24 * 15 * MIN;
+        let five = claude_app_limits_from(&v, Some(ACCOUNT), latest)
+            .unwrap()
+            .primary
+            .unwrap();
+        assert!(five.resets_at > latest);
+        assert!(five.resets_at <= latest + FIVE_HOURS_SECS);
+    }
+
+    /// Renewals seen at 13:50→14:05 on consecutive Thursdays, then an
+    /// off-schedule reset the next Wednesday morning: the schedule wins, and
+    /// the next renewal is the following Thursday at 14:00.
+    #[test]
+    fn the_weekly_renewal_follows_the_schedule_not_a_lone_reset() {
+        let bracket = |renewal: i64, before: f64| {
+            vec![
+                reading(renewal - 10 * MIN, ACCOUNT, 0.0, before),
+                reading(renewal + 5 * MIN, ACCOUNT, 0.0, 0.0),
+            ]
+        };
+        let mut samples = bracket(THU_14 - WEEK_SECS, 80.0);
+        samples.extend(bracket(THU_14, 90.0));
+        let off_schedule = THU_14 + 6 * 86_400 - 8 * 3600;
+        samples.push(reading(off_schedule - 3 * MIN, ACCOUNT, 0.0, 40.0));
+        samples.push(reading(off_schedule + 12 * MIN, ACCOUNT, 0.0, 0.0));
+        let latest = off_schedule + 3600;
+        samples.push(reading(latest, ACCOUNT, 0.0, 3.0));
+
+        let week = claude_app_limits_from(&history(samples), Some(ACCOUNT), latest + MIN)
+            .unwrap()
+            .secondary
+            .unwrap();
+        assert_eq!(week.resets_at, THU_14 + WEEK_SECS);
+        assert!(week.resets_estimated);
+    }
+
+    #[test]
+    fn a_renewal_lands_on_the_hour_inside_its_gap() {
+        assert_eq!(renewal_moment(THU_14 - 10 * MIN, THU_14 + 5 * MIN), THU_14);
+        // Several hours in the gap: nothing to pick between, the later reading.
+        assert_eq!(renewal_moment(THU_14 - 5 * 3600, THU_14 + 5 * MIN), THU_14 + 5 * MIN);
+    }
+
+    #[test]
+    fn another_accounts_readings_are_never_used() {
+        let v = history(vec![
+            reading(THU_14, ACCOUNT, 30.0, 40.0),
+            reading(THU_14 + 15 * MIN, OTHER_ACCOUNT, 70.0, 90.0),
+        ]);
+        // Claude Code is signed in to ACCOUNT: the other account's newer
+        // reading is not this CLI's plan.
+        let mine = claude_app_limits_from(&v, Some(ACCOUNT), THU_14 + 16 * MIN).unwrap();
+        assert_eq!(mine.primary.unwrap().used_percent, 30.0);
+        // Unknown CLI account: follow the latest reading's account only.
+        let latest = claude_app_limits_from(&v, None, THU_14 + 16 * MIN).unwrap();
+        assert_eq!(latest.primary.unwrap().used_percent, 70.0);
+        // An account the app never recorded gets nothing rather than a guess.
+        assert!(claude_app_limits_from(&v, Some("elsewhere"), THU_14 + 16 * MIN).is_none());
+    }
+
+    #[test]
+    fn model_scoped_weekly_windows_are_kept_apart() {
+        let v = history(vec![serde_json::json!({
+            "t": THU_14 * 1000, "org": ACCOUNT, "u": { "fh": 5, "sd": 20, "so": 35, "sn": 12 }
+        })]);
+        let limits = claude_app_limits_from(&v, Some(ACCOUNT), THU_14 + MIN).unwrap();
+        let scopes: Vec<(Option<&str>, f64)> = limits
+            .scoped
+            .iter()
+            .map(|w| (w.scope.as_deref(), w.used_percent))
+            .collect();
+        assert_eq!(scopes, vec![(Some("Opus"), 35.0), (Some("Sonnet"), 12.0)]);
+        assert_eq!(limits.secondary.unwrap().scope, None);
+    }
+
+    #[test]
+    fn stale_or_unknown_histories_are_left_out() {
+        let v = history(vec![reading(THU_14, ACCOUNT, 5.0, 5.0)]);
+        assert!(claude_app_limits_from(&v, Some(ACCOUNT), THU_14 + WEEK_SECS).is_none());
+        let unknown = serde_json::json!({ "version": 3, "samples": [reading(THU_14, ACCOUNT, 5.0, 5.0)] });
+        assert!(claude_app_limits_from(&unknown, Some(ACCOUNT), THU_14 + MIN).is_none());
+        let flags = serde_json::json!({ "version": 2, "samples": [{ "t": THU_14 * 1000, "org": ACCOUNT, "u": { "fh": true } }] });
+        assert!(claude_app_limits_from(&flags, Some(ACCOUNT), THU_14 + MIN).is_none());
+    }
+
+    #[test]
+    fn the_fresher_source_wins() {
+        let at = |captured: &str, source| RateLimits {
+            captured_at: captured.to_string(),
+            plan_type: None,
+            primary: None,
+            secondary: None,
+            scoped: Vec::new(),
+            source,
+        };
+        let status = at("2026-09-28T09:00:00Z", LimitSource::StatusLine);
+        let app = at("2026-09-28T10:01:09Z", LimitSource::ClaudeApp);
+        assert_eq!(newest_limits(Some(status.clone()), Some(app)).unwrap().source, LimitSource::ClaudeApp);
+        assert_eq!(newest_limits(Some(status), None).unwrap().source, LimitSource::StatusLine);
+        assert!(newest_limits(None, None).is_none());
+    }
+
+    /// The whole path the command takes: the app's file under Library, Claude
+    /// Code's account in ~/.claude.json, and nothing else configured.
+    #[test]
+    fn claude_app_limits_are_read_off_the_disk() {
+        let base = std::env::temp_dir().join(format!(
+            "sayknow-claude-app-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dir = base.join("Library/Application Support/Claude");
+        fs::create_dir_all(&dir).unwrap();
+        let file = history(vec![
+            reading(THU_14, ACCOUNT, 12.0, 30.0),
+            reading(THU_14 + 15 * MIN, OTHER_ACCOUNT, 99.0, 99.0),
+        ]);
+        fs::write(dir.join("plan-usage-history.json"), file.to_string()).unwrap();
+        let account = serde_json::json!({ "oauthAccount": { "organizationUuid": ACCOUNT } });
+        fs::write(base.join(".claude.json"), account.to_string()).unwrap();
+
+        let limits = claude_app_limits(&base, THU_14 + 20 * MIN).expect("history should be read");
+        assert_eq!(limits.primary.unwrap().used_percent, 12.0);
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Reads this Mac's own Claude app history and prints what the panel would
+    /// show. Read-only; nothing is written or sent.
+    #[test]
+    #[ignore = "Reads the real Claude app history; run with -- --ignored --nocapture"]
+    fn live_claude_app_limits() {
+        let home = home_dir().expect("HOME");
+        let limits = claude_app_limits(&home, now_secs() as i64).expect("Claude app history present");
+        println!("{}", serde_json::to_string_pretty(&limits).unwrap());
     }
 }

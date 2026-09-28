@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import {
+  Activity,
   BookText,
   Check,
   ExternalLink,
@@ -62,7 +63,13 @@ import {
   type DeeplUsage,
 } from "@/lib/deepl"
 import { translationMemory } from "@/lib/translation-memory"
-import { formatCombo, shortcut } from "@/lib/shortcuts"
+import { isMacPlatform } from "@/lib/shortcuts"
+import {
+  MENU_BAR_READOUTS,
+  SYSTEM_ALERT_KINDS,
+  type MenuBarReadout,
+  type SystemAlertKind,
+} from "@/lib/system-monitor"
 
 type Props = {
   settings: Settings
@@ -82,9 +89,10 @@ type Section =
   | "connection"
   | "glossary"
   | "prompt"
+  | "monitor"
   | "about"
 
-const SECTIONS: readonly Section[] = ["general", "shortcuts", "connection", "glossary", "prompt", "about"]
+const SECTIONS: readonly Section[] = ["general", "shortcuts", "connection", "glossary", "prompt", "monitor", "about"]
 
 function isSection(v: string): v is Section {
   return (SECTIONS as readonly string[]).includes(v)
@@ -93,13 +101,6 @@ function isSection(v: string): v is Section {
 function initialSection(): Section {
   const requested = new URLSearchParams(window.location.search).get("section") ?? ""
   return isSection(requested) ? requested : "general"
-}
-
-/** The keys that open the popover with the clipboard pulled in, for prose. */
-function autofillKeys(): string {
-  return [shortcut("global.toggle"), shortcut("global.translate")]
-    .map((s) => formatCombo(s.combo))
-    .join(" / ")
 }
 
 export function SettingsWindow({
@@ -145,6 +146,7 @@ export function SettingsWindow({
     { id: "connection", label: t("settings.section.connection"), icon: Plug },
     { id: "glossary", label: t("settings.section.glossary"), icon: BookText },
     { id: "prompt", label: t("settings.section.prompt"), icon: Sparkles },
+    { id: "monitor", label: t("settings.section.monitor"), icon: Activity },
     { id: "about", label: t("settings.section.about"), icon: Info },
   ]
 
@@ -224,6 +226,9 @@ export function SettingsWindow({
             {section === "prompt" && (
               <PromptSection settings={settings} update={update} />
             )}
+            {section === "monitor" && (
+              <MonitorSection settings={settings} update={update} />
+            )}
             {section === "about" && (
               <AboutSection settings={settings} />
             )}
@@ -254,7 +259,7 @@ function GeneralSection({
         title={t("settings.section.general")}
       />
 
-      <Row label={t("settings.mode")} description={settings.autoTranslate ? t("settings.clipboard.body").replace("{keys}", autofillKeys()) : undefined}>
+      <Row label={t("settings.mode")}>
         <div className="grid w-full max-w-[280px] grid-cols-2 gap-1">
           <Button
             size="sm"
@@ -279,7 +284,7 @@ function GeneralSection({
 
       <Row
         label={t("settings.clipboard.title")}
-        description={t("settings.clipboard.body").replace("{keys}", autofillKeys())}
+        description={t("settings.clipboard.body")}
       >
         <Switch
           checked={settings.clipboardOnHotkey}
@@ -348,6 +353,75 @@ function GeneralSection({
           </SelectContent>
         </Select>
       </Row>
+    </div>
+  )
+}
+
+/* ─────────── Section: System monitor ─────────── */
+function MonitorSection({
+  settings,
+  update,
+}: {
+  settings: Settings
+  update: (p: Partial<Settings>) => void
+}) {
+  const { t } = useT(settings.uiLocale)
+  // Stored prefs may predate the field or come from another build; anything
+  // unrecognised reads as off rather than as a broken control.
+  const readout: MenuBarReadout = (MENU_BAR_READOUTS as readonly string[]).includes(settings.menuBarReadout)
+    ? settings.menuBarReadout
+    : "off"
+  const alerts = Array.isArray(settings.systemAlerts) ? settings.systemAlerts : []
+  const toggle = (kind: SystemAlertKind, on: boolean) =>
+    update({
+      systemAlerts: SYSTEM_ALERT_KINDS.filter((k) => (k === kind ? on : alerts.includes(k))),
+    })
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader icon={Activity} title={t("settings.section.monitor")} />
+
+      <Row
+        label={t("monitor.readout.label")}
+        description={
+          isMacPlatform()
+            ? t("monitor.readout.desc")
+            : `${t("monitor.readout.desc")} ${t("monitor.readout.macOnly")}`
+        }
+      >
+        <Select value={readout} onValueChange={(v) => update({ menuBarReadout: v as MenuBarReadout })}>
+          <SelectTrigger className="w-[180px] text-xs" aria-label={t("monitor.readout.label")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MENU_BAR_READOUTS.map((r) => (
+              <SelectItem key={r} value={r} className="text-xs">
+                {t(`monitor.readout.${r}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Row>
+
+      <Separator />
+
+      <div className="space-y-3">
+        <div>
+          <Label className="text-sm">{t("monitor.alerts.label")}</Label>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("monitor.alerts.desc")}
+          </p>
+        </div>
+        {SYSTEM_ALERT_KINDS.map((kind) => (
+          <Row key={kind} label={t(`monitor.alert.${kind}.label`)} description={t(`monitor.alert.${kind}.hint`)}>
+            <Switch
+              aria-label={t(`monitor.alert.${kind}.label`)}
+              checked={alerts.includes(kind)}
+              onCheckedChange={(v) => toggle(kind, v)}
+            />
+          </Row>
+        ))}
+      </div>
     </div>
   )
 }

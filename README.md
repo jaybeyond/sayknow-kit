@@ -47,13 +47,14 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 📌 **Pin** — pinned entries survive both the size cap and a clear
 - ➡️ **Send to translate** — push any entry straight into the translate tab
 - 🧹 **Two-tier clear** — drop everything except pins and memos, or wipe everything
-- 🔒 **Skips secrets** — blanks, OTP-shaped strings and PEM key blobs are never stored
+- 🔒 **Skips secrets** — blanks, OTP-shaped strings and PEM key blobs are never stored; copies a password manager marks as not to be recorded (macOS) are not even read
 
 ### Usage
 - 📊 **Agent usage** — Claude Code, Codex and SayKnow CLI, read from the session logs they already write locally
 - ⏱ **5-hour blocks** — the billing window subscriptions actually meter on, with time left and burn rate
 - 🚦 **Real quota** — provider-reported 5-hour and weekly percentages with reset times, where the CLI records them
 - 🔍 **Honest staleness** — a window that has already reset is struck through, never drawn as your current level
+- 🧮 **Claude app limits** — reads the 5-hour and weekly limits the Claude desktop app records, with no setup. Only the account Claude Code is signed in to is used; reset times are estimated from that history and say "about"
 - 🔌 **No network** — nothing is uploaded and no extra sign-in is required
 - 🧰 **Lives in Tools** — the usage cards sit in the Tools tab, right under screen brightness
 
@@ -64,6 +65,8 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 🎚️ **One slider for all** — move every display at once, or adjust each on its own
 - 🔍 **Honest readouts** — a monitor that won't report brightness over DDC still adjusts; it just shows —
 - 📊 **System status** — system CPU, memory, and system disk, plus SoC die temperature on macOS (Apple Silicon) read through unprivileged AppleVendor sensors; shown as unavailable on Windows or whenever no trustworthy sensor is present
+- 📈 **Last hour and top apps** — small graphs for CPU, GPU, memory, temperature and network, plus the five apps using the most CPU and memory. History builds up while the Tools tab is open, and also with the window closed if a menu bar readout or alert is on
+- 🔔 **Menu bar readout and alerts** — one figure (CPU, memory, GPU or temperature) next to the menu bar icon on macOS, and notifications for CPU overload, low memory, high temperature, low disk space and low battery. Turned on in Settings → System monitor; only while one is on does the app measure every 5 seconds with the window closed
 - ⌨️ **Keyboard-friendly** — sliders commit on release, so one drag is one command
 ### Providers
 - 🌐 **OpenRouter BYOK** — searchable combobox over 360+ models, automatic fallback model retry
@@ -169,6 +172,7 @@ Click ⚙️ in the popover → **Settings** opens a full window with a sidebar:
 - **Glossary** — term pairs ("backend team" → "Backend Team")
 - **System prompt** — edit translate / refine prompts (variables: `{from}`, `{to}`, `{glossary}`)
 - **Usage** — daily / monthly tokens and cost
+- **System monitor** — menu bar readout, alerts
 - **About** — version, GitHub, OpenRouter
 
 ### Clipboard auto-fill

@@ -19,6 +19,7 @@ import {
 import { ensureAccessToken } from "@/lib/oauth/registry"
 import { OAUTH_REV_KEY } from "@/lib/oauth/store"
 import type { UILocaleSetting } from "@/i18n"
+import type { MenuBarReadout, SystemAlertKind } from "@/lib/system-monitor"
 
 export type GlossaryTerm = { source: string; target: string }
 
@@ -55,6 +56,11 @@ export type Prefs = {
   deeplFormality: "default" | "more" | "less"
   /** Translate tab job: translation, or retone-style rewrite of the same draft. */
   workspaceMode: "translate" | "rewrite"
+  /** Figure shown next to the menu bar icon (macOS). "off" samples nothing
+   *  while the popover is closed. */
+  menuBarReadout: MenuBarReadout
+  /** System alerts the user turned on. */
+  systemAlerts: SystemAlertKind[]
 }
 
 const DEFAULTS: Prefs = {
@@ -75,6 +81,8 @@ const DEFAULTS: Prefs = {
   translateEngine: "llm",
   deeplFormality: "default",
   workspaceMode: "translate",
+  menuBarReadout: "off",
+  systemAlerts: [],
 }
 
 const PREFS_KEY = "prefs"
