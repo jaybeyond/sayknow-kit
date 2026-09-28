@@ -38,7 +38,7 @@ describe("ShortcutsList", () => {
 
   it("shows macOS keycaps on a Mac and spelled-out modifiers elsewhere", () => {
     const { unmount } = render(<ShortcutsList uiLocale="en" mac />)
-    expect(row("global.toggle").querySelector("kbd")?.getAttribute("aria-label")).toBe("⌃ ⌥ S")
+    expect(row("global.toggle").querySelector("kbd")?.getAttribute("aria-label")).toBe("⌃ ⌥ ⌘ S")
     expect(row("app.settings").querySelector("kbd")?.getAttribute("aria-label")).toBe("⌘ ,")
     unmount()
     render(<ShortcutsList uiLocale="en" mac={false} />)

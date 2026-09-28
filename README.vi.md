@@ -46,7 +46,7 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 - 🧠 **Z.AI (GLM)** — dùng GLM qua API trả theo dùng hoặc GLM Coding Plan; mỗi nhà cung cấp giữ key riêng
 - 🔁 **Model dự phòng** — OpenRouter tự chuyển khi model chính lỗi
 - ⏹ **Dừng** — hủy cuộc gọi đang chạy
-- 📋 **Tự lấy clipboard** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) tự điền text vào ô nhập
+- 📋 **Tự lấy clipboard** — `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) tự điền text vào ô nhập
 - 🕘 **Lịch sử** — tìm kiếm, ghim mục để giữ lại vĩnh viễn
 - 📌 **Ghim cửa sổ** — tắt tự ẩn
 - 📚 **Thuật ngữ** (Glossary) — dịch nhất quán tên riêng
@@ -99,16 +99,16 @@ pnpm tauri build
 
 1. Một biểu tượng xuất hiện ở thanh menu macOS hoặc khay hệ thống Windows và luôn sẵn sàng ở đó.
 2. Bấm biểu tượng → nhập OpenRouter API key → **Kết nối & bắt đầu**. Key được lưu trong kho thông tin xác thực hệ thống.
-3. Bấm biểu tượng hoặc nhấn `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) để mở cửa sổ → gõ → tự dịch sau 1,5 giây. Nhấp chuột phải vào biểu tượng để thoát.
+3. Bấm biểu tượng hoặc nhấn `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) để mở cửa sổ → gõ → tự dịch sau 1,5 giây. Nhấp chuột phải vào biểu tượng để thoát.
 
 ### Phím tắt
 
 | Phím tắt | Hành động |
 |---|---|
-| `⌃⌥S` (macOS) | Mở/đóng cửa sổ (toàn cục) |
+| `⌃⌥⌘S` (macOS) | Mở/đóng cửa sổ (toàn cục) |
 | `Ctrl+Alt+Shift+S` (Windows) | Mở/đóng cửa sổ (toàn cục) |
-| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Mở thẳng tab Dịch / Chat / Bộ nhớ tạm / Công cụ (toàn cục) |
-| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Viết ghi nhớ mới từ mọi nơi (toàn cục) |
+| `⌃⌥⌘1`–`⌃⌥⌘4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Mở thẳng tab Dịch / Chat / Bộ nhớ tạm / Công cụ (toàn cục) |
+| `⌃⌥⌘M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Viết ghi nhớ mới từ mọi nơi (toàn cục) |
 | `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Chuyển tab |
 | `⌘/` (macOS) / `Ctrl+/` (Windows) | Mọi phím tắt — Cài đặt → Phím tắt |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Dịch ngay (chế độ thủ công) |

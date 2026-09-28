@@ -1,10 +1,12 @@
 // System-wide shortcuts. The frontend lists the same set in
 // src/lib/shortcuts.ts; the test at the bottom keeps the two in step.
 //
-// ⌃⌥ on macOS: ⌘⇧ letters are nearly all browser shortcuts (⌘⇧T reopens a
-// closed tab, which is what the old ⌘⇧T open key collided with), and ⌃⌥
-// types no characters. Elsewhere Ctrl+Alt is AltGr, so Ctrl+Alt+2 is how a
-// Spanish keyboard types "@"; adding Shift keeps every character reachable.
+// ⌃⌥⌘ on macOS. ⌘⇧ letters are nearly all browser shortcuts (⌘⇧T reopens a
+// closed tab, which the first open key collided with), and plain ⌃⌥ was next:
+// it is VoiceOver's modifier and a common app and input-method chord, so ⌃⌥S
+// was taken elsewhere on real desks. Holding all three of ⌃⌥⌘ is what apps
+// leave alone. Elsewhere Ctrl+Alt is AltGr, so Ctrl+Alt+2 is how a Spanish
+// keyboard types "@"; adding Shift keeps every character reachable.
 
 use std::sync::Mutex;
 
@@ -23,7 +25,7 @@ pub const GLOBAL_SHORTCUTS: &[(&str, Code)] = &[
 
 pub fn modifiers() -> Modifiers {
     if cfg!(target_os = "macos") {
-        Modifiers::CONTROL | Modifiers::ALT
+        Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER
     } else {
         Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT
     }
@@ -107,7 +109,8 @@ mod tests {
         // AltGr arrives as Ctrl+Alt; a hotkey on exactly Ctrl+Alt would eat
         // characters such as "@" on a Spanish layout.
         if cfg!(target_os = "macos") {
-            assert_eq!(modifiers(), Modifiers::CONTROL | Modifiers::ALT);
+            // Not bare ⌃⌥: that chord belongs to VoiceOver and other apps.
+            assert_eq!(modifiers(), Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER);
         } else {
             assert!(modifiers().contains(Modifiers::SHIFT));
         }

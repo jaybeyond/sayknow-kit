@@ -46,7 +46,7 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 - 🧠 **Z.AI (GLM)** — 通过按量付费 API 或 GLM Coding Plan 使用 GLM,每个提供方单独保存密钥
 - 🔁 **备用模型** — 主模型失败时 OpenRouter 自动切换
 - ⏹ **停止** — 立即取消进行中的调用
-- 📋 **剪贴板自动获取** — 在 macOS 按 `⌃⌥S`、Windows 按 `Ctrl+Alt+Shift+S` 打开时,其他应用复制的文本自动填入
+- 📋 **剪贴板自动获取** — 在 macOS 按 `⌃⌥⌘S`、Windows 按 `Ctrl+Alt+Shift+S` 打开时,其他应用复制的文本自动填入
 - 🕘 **翻译历史** — 可搜索,固定项永久保留
 - 📌 **窗口固定** — 关闭自动隐藏
 - 📚 **术语库**(Glossary)— 公司名、专有名词一致翻译
@@ -105,16 +105,16 @@ pnpm tauri build
 1. macOS 中图标出现在菜单栏（时钟旁），Windows 中出现在系统托盘（不会显示在 Dock/任务栏）。
 2. 点击图标 → 输入 OpenRouter API 密钥 → **连接并开始**
 3. 密钥自动保存到系统凭据存储（macOS Keychain / Windows Credential Manager）
-4. 点击图标或按 `⌃⌥S`（macOS）/ `Ctrl+Alt+Shift+S`（Windows）打开 → 输入文本 → 1.5 秒后自动翻译（右键点击图标 → 退出）
+4. 点击图标或按 `⌃⌥⌘S`（macOS）/ `Ctrl+Alt+Shift+S`（Windows）打开 → 输入文本 → 1.5 秒后自动翻译（右键点击图标 → 退出）
 
 ### 快捷键
 
 | 快捷键 | 操作 |
 |---|---|
-| `⌃⌥S` (macOS) | 打开/关闭弹窗（全局） |
+| `⌃⌥⌘S` (macOS) | 打开/关闭弹窗（全局） |
 | `Ctrl+Alt+Shift+S` (Windows) | 打开/关闭弹窗（全局） |
-| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | 直接打开到翻译 / 聊天 / 剪贴板 / 工具（全局） |
-| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | 随时新建便签（全局） |
+| `⌃⌥⌘1`–`⌃⌥⌘4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | 直接打开到翻译 / 聊天 / 剪贴板 / 工具（全局） |
+| `⌃⌥⌘M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | 随时新建便签（全局） |
 | `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | 切换标签页 |
 | `⌘/` (macOS) / `Ctrl+/` (Windows) | 全部快捷键 — 设置 → 快捷键 |
 | `⌘⏎` (macOS) | 立即翻译（手动模式） |

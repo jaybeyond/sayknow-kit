@@ -4,15 +4,17 @@
 //
 // Combo tokens, joined by "+":
 //   Mod    ⌘ on macOS, Ctrl elsewhere (in-app shortcuts)
-//   Global the system-wide modifier set: ⌃⌥ on macOS, Ctrl+Alt+Shift elsewhere
+//   Global the system-wide modifier set: ⌃⌥⌘ on macOS, Ctrl+Alt+Shift elsewhere
 //   Ctrl / Alt / Shift  literal modifiers
 //   then exactly one key: A–Z, 0–9, "," "/" "." Enter Escape
 //
 // Global shortcuts are registered by the Rust side (src-tauri/src/global_shortcuts.rs),
 // which keeps its own table; a Rust test fails if the two drift apart.
 //
-// Why ⌃⌥ for global: ⌘⇧ letters are almost all taken by browsers (⌘⇧T is
-// "reopen closed tab"), and ⌃⌥ types no characters on macOS. Windows gets
+// Why ⌃⌥⌘ for global: ⌘⇧ letters are almost all taken by browsers (⌘⇧T is
+// "reopen closed tab"), and bare ⌃⌥ is VoiceOver's modifier and a chord other
+// apps and input methods already use; with ⌘ added nothing else claims it and
+// it still types no characters. Windows gets
 // Ctrl+Alt+Shift because Ctrl+Alt is AltGr there: Ctrl+Alt+2 is how a Spanish
 // keyboard types "@", and a global hotkey on it would swallow the character.
 
@@ -100,7 +102,8 @@ function parse(combo: string, mac: boolean): Parsed {
     else if (part === "Global") {
       p.ctrl = true
       p.alt = true
-      if (!mac) p.shift = true
+      if (mac) p.mod = true
+      else p.shift = true
     } else throw new Error(`unknown modifier ${part} in ${combo}`)
   }
   return p
@@ -162,7 +165,7 @@ export function comboKeys(combo: string, mac = isMacPlatform()): string[] {
   return keys
 }
 
-/** One-line form for tooltips and prose: ⌃⌥S on macOS, Ctrl+Alt+Shift+S elsewhere. */
+/** One-line form for tooltips and prose: ⌃⌥⌘S on macOS, Ctrl+Alt+Shift+S elsewhere. */
 export function formatCombo(combo: string, mac = isMacPlatform()): string {
   return comboKeys(combo, mac).join(mac ? "" : "+")
 }

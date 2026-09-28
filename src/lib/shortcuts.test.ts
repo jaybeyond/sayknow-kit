@@ -55,9 +55,9 @@ describe("shortcut registry", () => {
     }
   })
 
-  it("renders global keys as ⌃⌥ on macOS and Ctrl+Alt+Shift elsewhere", () => {
-    expect(comboKeys(shortcut("global.toggle").combo, true)).toEqual(["⌃", "⌥", "S"])
-    expect(formatCombo(shortcut("global.toggle").combo, true)).toBe("⌃⌥S")
+  it("renders global keys as ⌃⌥⌘ on macOS and Ctrl+Alt+Shift elsewhere", () => {
+    expect(comboKeys(shortcut("global.toggle").combo, true)).toEqual(["⌃", "⌥", "⌘", "S"])
+    expect(formatCombo(shortcut("global.toggle").combo, true)).toBe("⌃⌥⌘S")
     expect(formatCombo(shortcut("global.toggle").combo, false)).toBe("Ctrl+Alt+Shift+S")
   })
 

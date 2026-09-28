@@ -46,7 +46,7 @@ SayKnow Kit fonctionne sur macOS et Windows : il apparaît dans la **barre de me
 - 🧠 **Z.AI (GLM)** — GLM via l'API à l'usage ou le GLM Coding Plan ; chaque fournisseur garde sa propre clé
 - 🔁 **Modèle de secours** — OpenRouter bascule si le principal échoue
 - ⏹ **Arrêter** — annule un appel en cours
-- 📋 **Coller automatiquement** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) remplit l'entrée depuis le presse-papiers
+- 📋 **Coller automatiquement** — `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) remplit l'entrée depuis le presse-papiers
 - 🕘 **Historique** — recherche, épingler des entrées
 - 📌 **Épingler la fenêtre** — désactive l'auto-masquage
 - 📚 **Glossaire** — traductions cohérentes pour les noms propres
@@ -99,16 +99,16 @@ pnpm tauri build
 
 1. Une icône apparaît dans la barre de menu macOS ou la zone de notification Windows ; l'application y reste accessible.
 2. Cliquez sur l'icône → saisissez la clé OpenRouter → **Connecter & démarrer**. Elle est enregistrée dans le stockage d'identifiants du système.
-3. Cliquez sur l'icône ou utilisez `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) pour ouvrir la fenêtre → tapez → traduction automatique après 1,5 s. Clic droit sur l'icône pour quitter.
+3. Cliquez sur l'icône ou utilisez `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) pour ouvrir la fenêtre → tapez → traduction automatique après 1,5 s. Clic droit sur l'icône pour quitter.
 
 ### Raccourcis
 
 | Raccourci | Action |
 |---|---|
-| `⌃⌥S` (macOS) | Ouvrir/fermer la fenêtre (global) |
+| `⌃⌥⌘S` (macOS) | Ouvrir/fermer la fenêtre (global) |
 | `Ctrl+Alt+Shift+S` (Windows) | Ouvrir/fermer la fenêtre (global) |
-| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Ouvrir directement sur Traduire / Chat / Presse-papiers / Outils (global) |
-| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nouveau mémo depuis n'importe où (global) |
+| `⌃⌥⌘1`–`⌃⌥⌘4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Ouvrir directement sur Traduire / Chat / Presse-papiers / Outils (global) |
+| `⌃⌥⌘M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nouveau mémo depuis n'importe où (global) |
 | `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Changer d'onglet |
 | `⌘/` (macOS) / `Ctrl+/` (Windows) | Tous les raccourcis — Réglages → Raccourcis |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Traduire immédiatement (mode manuel) |

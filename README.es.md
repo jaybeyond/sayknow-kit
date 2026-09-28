@@ -46,7 +46,7 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 - 🧠 **Z.AI (GLM)** — GLM con la API de pago por uso o el GLM Coding Plan; cada proveedor guarda su propia clave
 - 🔁 **Modelo de respaldo** — OpenRouter reintenta si el principal falla
 - ⏹ **Detener** — cancela una llamada en curso
-- 📋 **Pegado automático** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) rellena la entrada con el portapapeles
+- 📋 **Pegado automático** — `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) rellena la entrada con el portapapeles
 - 🕘 **Historial** — buscable, fija entradas para conservarlas
 - 📌 **Fijar ventana** — desactiva el auto-ocultar
 - 📚 **Glosario** — traducciones consistentes para nombres y términos propios
@@ -99,16 +99,16 @@ pnpm tauri build
 
 1. En macOS aparece un icono en la barra de menú; en Windows, en la bandeja del sistema. La aplicación permanece allí y puede abrirse desde el menú.
 2. Haz clic en el icono → introduce la clave de OpenRouter → **Conectar y empezar**. La clave se guarda en el almacén de credenciales del sistema.
-3. Haz clic en el icono o usa `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) para abrir la ventana → escribe → traducción automática 1,5 s después. Clic derecho en el icono para salir.
+3. Haz clic en el icono o usa `⌃⌥⌘S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) para abrir la ventana → escribe → traducción automática 1,5 s después. Clic derecho en el icono para salir.
 
 ### Atajos
 
 | Atajo | Acción |
 |---|---|
-| `⌃⌥S` (macOS) | Abrir/cerrar la ventana (global) |
+| `⌃⌥⌘S` (macOS) | Abrir/cerrar la ventana (global) |
 | `Ctrl+Alt+Shift+S` (Windows) | Abrir/cerrar la ventana (global) |
-| `⌃⌥1`–`⌃⌥4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Abrir directamente en Traducir / Chat / Portapapeles / Herramientas (global) |
-| `⌃⌥M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nuevo apunte desde cualquier lugar (global) |
+| `⌃⌥⌘1`–`⌃⌥⌘4` (macOS) / `Ctrl+Alt+Shift+1`–`4` (Windows) | Abrir directamente en Traducir / Chat / Portapapeles / Herramientas (global) |
+| `⌃⌥⌘M` (macOS) / `Ctrl+Alt+Shift+M` (Windows) | Nuevo apunte desde cualquier lugar (global) |
 | `⌘1`–`⌘4` (macOS) / `Ctrl+1`–`4` (Windows) | Cambiar de pestaña |
 | `⌘/` (macOS) / `Ctrl+/` (Windows) | Todos los atajos — Ajustes → Atajos |
 | `⌘⏎` (macOS) / `Ctrl+Enter` (Windows) | Traducir al instante (modo manual) |
