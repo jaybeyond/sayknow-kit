@@ -435,7 +435,9 @@ fn named_entry(account: &str) -> Result<Entry, String> {
     // from the frontend. `oauth_*` covers the browser-login providers, whose
     // suffixes are checked against the registry rather than accepted as any
     // free-form string.
-    let allowed = matches!(account, "deepl_api_key")
+    // `*_api_key` are the key-based providers that keep their own key
+    // (src/lib/openrouter.ts PROVIDER_PRESETS.keyAccount).
+    let allowed = matches!(account, "deepl_api_key" | "nvidia_api_key" | "zai_api_key")
         || account
             .strip_prefix("oauth_")
             .is_some_and(|provider| OAUTH_PROVIDER_ACCOUNTS.contains(&provider));
@@ -2658,6 +2660,22 @@ mod credential_account_tests {
             );
         }
         assert!(named_entry("deepl_api_key").is_ok());
+    }
+
+    #[test]
+    fn every_provider_key_account_the_frontend_uses_is_storable() {
+        // A refused account would make the NVIDIA / z.ai key field look saved
+        // while nothing reached the Keychain.
+        let presets = include_str!("../../src/lib/openrouter.ts");
+        let accounts: Vec<&str> = presets
+            .split("keyAccount: \"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+        assert_eq!(accounts, ["nvidia_api_key", "zai_api_key"]);
+        for account in accounts {
+            assert!(named_entry(account).is_ok(), "{account} must be storable");
+        }
     }
 
     #[test]

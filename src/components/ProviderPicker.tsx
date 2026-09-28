@@ -4,9 +4,12 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { OAuthProviderCard } from "@/components/OAuthProviderCard"
 import {
+  endpointPreset,
   oauthProviderRef,
   parseOAuthProvider,
   PROVIDER_PRESETS,
+  ZAI_BASE,
+  ZAI_CODING_BASE,
   type EndpointProviderId,
   type ProviderId,
 } from "@/lib/openrouter"
@@ -21,7 +24,13 @@ type Props = {
   baseURL: string
   apiKey?: string
   uiLocale: UILocaleSetting
-  onChange: (next: { provider: ProviderId; baseURL: string; model?: string }) => void
+  onChange: (next: {
+    provider: ProviderId
+    baseURL: string
+    model?: string
+    /** Cleared along with the model: another provider's id means nothing here. */
+    fallbackModel?: string
+  }) => void
   /** Called once when the selected provider becomes reachable without auth.
    * The parent can use this for one-tap login (custom open-mode endpoint). */
   onAutoReachable?: () => void
@@ -30,7 +39,13 @@ type Props = {
   compact?: boolean
 }
 
-const PROVIDER_ORDER: EndpointProviderId[] = ["openrouter", "custom"]
+const PROVIDER_ORDER: EndpointProviderId[] = ["openrouter", "nvidia", "zai", "custom"]
+
+/** z.ai bills the same key two ways, each on its own path. */
+const ZAI_PLANS = [
+  { base: ZAI_BASE, label: "provider.zai.plan.api" },
+  { base: ZAI_CODING_BASE, label: "provider.zai.plan.coding" },
+] as const
 
 export function ProviderPicker({
   provider,
@@ -45,12 +60,18 @@ export function ProviderPicker({
   const { t } = useT(uiLocale)
 
   function pick(id: EndpointProviderId) {
+    if (id === provider) return
     const preset = PROVIDER_PRESETS[id]
+    // The previous provider's model id would be rejected here, so switch to
+    // this provider's default and drop the fallback with it.
     onChange({
       provider: id,
-      baseURL: id === provider ? baseURL : preset.baseURL,
+      baseURL: preset.baseURL,
+      ...(preset.defaultModel ? { model: preset.defaultModel, fallbackModel: "" } : {}),
     })
   }
+
+  const activePreset = endpointPreset(provider)
 
   // Probe only providers that are "self-detectable" — a custom endpoint may
   // be a local server that answers `/v1/models` without auth.
@@ -114,6 +135,35 @@ export function ProviderPicker({
         })}
       </div>
 
+      {provider === "zai" && (
+        <div
+          role="radiogroup"
+          aria-label={t("provider.zai.plan.label")}
+          className="grid grid-cols-2 gap-1 rounded-md bg-muted/50 p-0.5"
+        >
+          {ZAI_PLANS.map((plan) => {
+            const selected = baseURL === plan.base
+            return (
+              <button
+                key={plan.base}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => onChange({ provider, baseURL: plan.base })}
+                className={cn(
+                  "rounded px-2 py-1 text-[11px] transition-colors duration-150 active:scale-[0.98]",
+                  selected
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(plan.label)}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <div>
         <Label className="text-[10px] text-muted-foreground">
           {t("provider.baseURL")}
@@ -125,9 +175,9 @@ export function ProviderPicker({
           }
           readOnly={provider !== "custom"}
           placeholder={
-            provider === "openrouter"
-              ? "https://openrouter.ai/api/v1"
-              : "https://your-endpoint/v1"
+            provider === "custom" || !activePreset
+              ? "https://your-endpoint/v1"
+              : activePreset.baseURL
           }
           className={cn(
             "mt-1 h-8 text-[11px] font-mono",

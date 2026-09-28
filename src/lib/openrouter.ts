@@ -11,6 +11,11 @@ import type { OAuthProvider } from "./oauth/types"
 
 export { httpFetch }
 export const OCP_BASE = "http://127.0.0.1:3456/v1"
+export const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1"
+/** z.ai pay-as-you-go API. */
+export const ZAI_BASE = "https://api.z.ai/api/paas/v4"
+/** z.ai GLM Coding Plan: same key, subscription billing, its own path. */
+export const ZAI_CODING_BASE = "https://api.z.ai/api/coding/paas/v4"
 
 /**
  * Which backend answers a request.
@@ -19,7 +24,7 @@ export const OCP_BASE = "http://127.0.0.1:3456/v1"
  * flow and carry no API key; everything else is an OpenAI-compatible endpoint
  * reached with a key (or unauthenticated, for local servers).
  */
-export type ProviderId = "openrouter" | "ocp" | "custom" | OAuthProviderRef
+export type ProviderId = EndpointProviderId | OAuthProviderRef
 
 /** A provider backed by OAuth credentials rather than an API key. */
 export type OAuthProviderRef = `oauth:${OAuthProvider}`
@@ -45,16 +50,57 @@ export function isOAuthProvider(value: string): value is OAuthProviderRef {
  * OAuth providers are intentionally absent: they have no user-editable base
  * URL and no key field, so they are described by `OAUTH_PROVIDERS` instead.
  */
-export type EndpointProviderId = "openrouter" | "ocp" | "custom"
+export type EndpointProviderId = "openrouter" | "nvidia" | "zai" | "ocp" | "custom"
 
-export const PROVIDER_PRESETS: Record<
-  EndpointProviderId,
-  { label: string; baseURL: string; description: string }
-> = {
+export type ProviderPreset = {
+  label: string
+  baseURL: string
+  description: string
+  /** Chosen when switching to this provider, so the previous provider's model
+   *  id is never sent here. Absent: keep whatever is selected. */
+  defaultModel?: string
+  /** The endpoint rejects requests without a key; no open mode. */
+  requiresKey?: boolean
+  /** Keychain account for this provider's own key. Absent: the shared legacy
+   *  key used by OpenRouter / OCP / Custom. A separate account means switching
+   *  providers does not overwrite the other provider's key. */
+  keyAccount?: string
+  keyPlaceholder?: string
+  /** Where to create a key. */
+  keyUrl?: string
+}
+
+export const PROVIDER_PRESETS: Record<EndpointProviderId, ProviderPreset> = {
   openrouter: {
     label: "OpenRouter",
     baseURL: OPENROUTER_BASE,
     description: "BYOK · 360+ models with one key",
+    defaultModel: "openai/gpt-4o-mini",
+    requiresKey: true,
+    keyPlaceholder: "sk-or-...",
+    keyUrl: "https://openrouter.ai/keys",
+  },
+  nvidia: {
+    label: "NVIDIA",
+    baseURL: NVIDIA_BASE,
+    description: "build.nvidia.com hosted models (DeepSeek, Kimi, Nemotron, ...)",
+    // Checked live against integrate.api.nvidia.com: listed by /v1/models
+    // and not end-of-life (retired models answer 410).
+    defaultModel: "deepseek-ai/deepseek-v4.1-flash",
+    requiresKey: true,
+    keyAccount: "nvidia_api_key",
+    keyPlaceholder: "nvapi-...",
+    keyUrl: "https://build.nvidia.com/settings/api-keys",
+  },
+  zai: {
+    label: "Z.AI",
+    baseURL: ZAI_BASE,
+    description: "GLM models from Zhipu (z.ai), pay-as-you-go or GLM Coding Plan",
+    defaultModel: "glm-5.3-flash",
+    requiresKey: true,
+    keyAccount: "zai_api_key",
+    keyPlaceholder: "API key",
+    keyUrl: "https://z.ai/manage-apikey/apikey-list",
   },
   ocp: {
     label: "OCP (Claude Pro/Max — fast)",
@@ -66,6 +112,71 @@ export const PROVIDER_PRESETS: Record<
     baseURL: "",
     description: "Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, ...)",
   },
+}
+
+/** Endpoint providers are the ones with a preset; anything else is OAuth. */
+export function endpointPreset(provider: string): ProviderPreset | null {
+  return Object.hasOwn(PROVIDER_PRESETS, provider)
+    ? PROVIDER_PRESETS[provider as EndpointProviderId]
+    : null
+}
+
+/**
+ * z.ai model ids, from the chat-completion API reference (docs.z.ai). Shown
+ * until the account's own `/models` answers, so the picker is never empty.
+ */
+export const ZAI_MODELS: OpenRouterModel[] = [
+  { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
+  { id: "glm-5.3", name: "GLM-5.3" },
+  { id: "glm-5.2", name: "GLM-5.2" },
+  { id: "glm-5.1", name: "GLM-5.1" },
+  { id: "glm-5", name: "GLM-5" },
+  { id: "glm-4.7", name: "GLM-4.7" },
+  { id: "glm-4.7-flash", name: "GLM-4.7 Flash (free)" },
+  { id: "glm-4.6", name: "GLM-4.6" },
+  { id: "glm-4.5-air", name: "GLM-4.5 Air" },
+  { id: "glm-4.5-flash", name: "GLM-4.5 Flash (free)" },
+]
+
+/** Which upstream a base URL points at, whatever provider the user picked:
+ *  a Custom entry with the NVIDIA URL needs the same handling. */
+export type EndpointKind = "openrouter" | "nvidia" | "zai" | "other"
+
+export function endpointKind(baseURL: string): EndpointKind {
+  let host: string
+  try {
+    host = new URL(baseURL).hostname
+  } catch {
+    return "other"
+  }
+  if (host === "openrouter.ai") return "openrouter"
+  if (host === "integrate.api.nvidia.com") return "nvidia"
+  if (host === "api.z.ai") return "zai"
+  return "other"
+}
+
+/**
+ * NVIDIA's `/models` also lists embedding, reranking, safety-classifier and
+ * document-parsing models that fail on `/chat/completions`. Drop those so the
+ * picker only offers models that can answer.
+ */
+const NVIDIA_NON_CHAT = /(embed|rerank|retriever|guard|safety|reward|clip|parse|detector|calibration|deplot|kosmos)/
+
+export function isChatModel(kind: EndpointKind, id: string): boolean {
+  return kind !== "nvidia" || !NVIDIA_NON_CHAT.test(id)
+}
+
+/**
+ * z.ai GLM models reason before answering by default, which turns a one-line
+ * translation into a multi-second wait. Per the API reference, GLM-5.3 /
+ * GLM-5.3-Flash can only think (depth set by `reasoning_effort`, lowest
+ * `low`); the other GLM-4.5+ models accept `thinking: disabled`.
+ */
+export function zaiReasoningParams(model: string): Record<string, unknown> {
+  const id = model.toLowerCase()
+  if (id.startsWith("glm-5.3")) return { reasoning_effort: "low" }
+  if (/^glm-(4\.[5-9]|5)/.test(id)) return { thinking: { type: "disabled" } }
+  return {}
 }
 
 /** Hardcoded Claude model list used as a fallback when an OCP-style
@@ -163,15 +274,47 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
   }
 
   const base = trimSlash(opts.baseURL ?? OPENROUTER_BASE)
+  const kind = endpointKind(base)
   const fallback = opts.fallbackModel?.trim()
+  const hasFallback = !!fallback && fallback !== opts.model
+  // Only OpenRouter understands the `models` array. Everywhere else `model`
+  // is required, so the fallback is tried here instead, after the primary
+  // fails for a reason other than the key.
+  if (hasFallback && kind === "openrouter") {
+    return completeOpenAI(base, kind, opts, { models: [opts.model, fallback] }, opts.model)
+  }
+  try {
+    return await completeOpenAI(base, kind, opts, { model: opts.model }, opts.model)
+  } catch (e) {
+    if (!hasFallback || opts.signal?.aborted || isAuthError(e)) throw e
+    return completeOpenAI(base, kind, opts, { model: fallback }, fallback)
+  }
+}
+
+class HttpStatusError extends Error {
+  readonly status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+function isAuthError(e: unknown): boolean {
+  return e instanceof HttpStatusError && (e.status === 401 || e.status === 403)
+}
+
+async function completeOpenAI(
+  base: string,
+  kind: EndpointKind,
+  opts: ChatOptions,
+  modelFields: Record<string, unknown>,
+  model: string,
+): Promise<ChatResult> {
   const body: Record<string, unknown> = {
     messages: opts.messages.map((m) => ({ role: m.role, content: toOpenAIContent(m) })),
     temperature: opts.temperature ?? 0.3,
-  }
-  if (fallback && fallback !== opts.model) {
-    body.models = [opts.model, fallback]
-  } else {
-    body.model = opts.model
+    ...modelFields,
+    ...(kind === "zai" ? zaiReasoningParams(model) : {}),
   }
 
   const res = await httpFetch(`${base}/chat/completions`, {
@@ -179,9 +322,10 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${opts.apiKey}`,
-      // OpenRouter-specific attribution headers. Other providers ignore them.
-      "HTTP-Referer": window.location.origin,
-      "X-Title": "SayKnow Kit",
+      // OpenRouter's app-attribution headers; nobody else needs to see them.
+      ...(kind === "openrouter"
+        ? { "HTTP-Referer": window.location.origin, "X-Title": "SayKnow Kit" }
+        : {}),
     },
     body: JSON.stringify(body),
     signal: opts.signal,
@@ -189,7 +333,8 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    throw new Error(
+    throw new HttpStatusError(
+      res.status,
       `${res.status}: ${text.slice(0, 200) || res.statusText}`,
     )
   }
@@ -203,7 +348,7 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
   if (!content) throw new Error("Empty response from model")
   return {
     content: content.trim(),
-    model: data.model ?? opts.model,
+    model: data.model ?? model,
     usage: data.usage,
   }
 }
@@ -245,11 +390,14 @@ export async function fetchModels(
   })
   if (!res.ok) throw new Error(`models ${res.status}`)
   const data = (await res.json()) as { data?: OpenRouterModel[] }
+  const kind = endpointKind(base)
   // Normalize: OCP/Ollama may return entries without a friendly `name`.
-  return (data.data ?? []).map((m) => ({
-    ...m,
-    name: m.name ?? m.id,
-  }))
+  return (data.data ?? [])
+    .filter((m) => isChatModel(kind, m.id))
+    .map((m) => ({
+      ...m,
+      name: m.name ?? m.id,
+    }))
 }
 
 export const LANGS = [

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { storage } from "@/lib/storage"
 import {
   DEEPL_ACCOUNT,
@@ -8,8 +8,10 @@ import {
   SECRETS_REV_KEY,
 } from "@/lib/secrets"
 import {
+  endpointPreset,
   isOAuthProvider,
   OPENROUTER_BASE,
+  PROVIDER_PRESETS,
   parseOAuthProvider,
   type LangCode,
   type ProviderId,
@@ -79,6 +81,23 @@ const PREFS_KEY = "prefs"
 
 export type Settings = Prefs & { apiKey: string; deeplKey: string }
 
+/** Keychain accounts of the providers that keep their own key. */
+const PROVIDER_KEY_ACCOUNTS: string[] = Object.values(PROVIDER_PRESETS)
+  .map((p) => p.keyAccount)
+  .filter((a): a is string => !!a)
+
+async function readProviderKeys(): Promise<Record<string, string>> {
+  const entries = await Promise.all(
+    PROVIDER_KEY_ACCOUNTS.map(async (account) => [account, await namedSecret.get(account)] as const),
+  )
+  return Object.fromEntries(entries)
+}
+
+/** Where `provider`'s key lives: its own account, or null for the shared one. */
+function keyAccountFor(provider: string): string | null {
+  return endpointPreset(provider)?.keyAccount ?? null
+}
+
 export function useSettings() {
   const [prefs, setPrefs] = useState<Prefs>(() => {
     const saved = storage.get<Partial<Prefs>>(PREFS_KEY)
@@ -96,8 +115,17 @@ export function useSettings() {
     }
     return merged
   })
+  // Shared key for OpenRouter / OCP / Custom, and one per provider with its
+  // own account (NVIDIA, z.ai), so switching back and forth keeps both.
   const [apiKey, setApiKey] = useState<string>("")
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>({})
   const [deeplKey, setDeeplKey] = useState<string>("")
+  // update() is stable across renders; it needs the provider a bare
+  // `{ apiKey }` patch belongs to.
+  const providerRef = useRef(prefs.provider)
+  useEffect(() => {
+    providerRef.current = prefs.provider
+  }, [prefs.provider])
   // A denied or failed Keychain read used to look exactly like "no key saved":
   // an empty field, no message, translation quietly on the LLM. Unsigned
   // rebuilds change the app's identity, so macOS re-asks on every update and
@@ -122,6 +150,9 @@ export function useSettings() {
     void namedSecret
       .get(DEEPL_ACCOUNT)
       .then(setDeeplKey)
+      .catch((e) => setCredentialError(String(e)))
+    void readProviderKeys()
+      .then(setProviderKeys)
       .catch((e) => setCredentialError(String(e)))
   }, [])
 
@@ -164,7 +195,9 @@ export function useSettings() {
       } else if (e.key === "sayknow:" + SECRETS_REV_KEY) {
         void secrets.get().then(setApiKey)
       } else if (e.key === "sayknow:" + DEEPL_REV_KEY) {
+        // Every named account bumps this rev, not only DeepL's.
         void namedSecret.get(DEEPL_ACCOUNT).then(setDeeplKey)
+        void readProviderKeys().then(setProviderKeys)
       } else if (e.key === "sayknow:" + OAUTH_REV_KEY) {
         setOauthRev((n) => n + 1)
       }
@@ -176,8 +209,14 @@ export function useSettings() {
   const update = useCallback((patch: Partial<Settings>) => {
     if (patch.apiKey !== undefined) {
       const next = patch.apiKey
-      setApiKey(next)
-      void secrets.set(next)
+      const account = keyAccountFor(patch.provider ?? providerRef.current)
+      if (account) {
+        setProviderKeys((prev) => ({ ...prev, [account]: next }))
+        void (next ? namedSecret.set(account, next) : namedSecret.clear(account))
+      } else {
+        setApiKey(next)
+        void secrets.set(next)
+      }
     }
     if (patch.deeplKey !== undefined) {
       const next = patch.deeplKey
@@ -195,6 +234,14 @@ export function useSettings() {
   }, [])
 
   const clearKey = useCallback(async () => {
+    // Signing out of a provider with its own key forgets that key only.
+    const account = keyAccountFor(providerRef.current)
+    if (account) {
+      setProviderKeys((prev) => ({ ...prev, [account]: "" }))
+      setPrefs((prev) => ({ ...prev, provider: "openrouter", baseURL: OPENROUTER_BASE }))
+      await namedSecret.clear(account)
+      return
+    }
     setApiKey("")
     // Logging out of OCP/Custom only zeroing apiKey isn't enough — those
     // providers don't require a key (isConnected falls back to baseURL), so
@@ -209,16 +256,18 @@ export function useSettings() {
     await secrets.clear()
   }, [])
 
-  const settings: Settings = { ...prefs, apiKey, deeplKey }
+  const activeAccount = keyAccountFor(prefs.provider)
+  const activeKey = activeAccount ? (providerKeys[activeAccount] ?? "") : apiKey
+  const settings: Settings = { ...prefs, apiKey: activeKey, deeplKey }
 
   // OAuth providers hold no key and no base URL — a live (or refreshable)
-  // token is the whole signal. OpenRouter always needs a key. OCP / Custom can
-  // run in open mode where /models works unauthenticated, so for those a
-  // configured baseURL counts as connected.
+  // token is the whole signal. OpenRouter, NVIDIA and z.ai always need a key.
+  // OCP / Custom can run in open mode where /models works unauthenticated, so
+  // for those a configured baseURL counts as connected.
   const isLoggedIn = isOAuthProvider(prefs.provider)
     ? oauthState?.provider === prefs.provider && oauthState.ready
-    : prefs.provider === "openrouter"
-      ? apiKey.length > 0
+    : endpointPreset(prefs.provider)?.requiresKey
+      ? activeKey.length > 0
       : prefs.baseURL.trim().length > 0
 
   // Sign-in/out inside *this* window does not raise a `storage` event — that

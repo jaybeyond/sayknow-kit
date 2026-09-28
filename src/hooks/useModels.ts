@@ -2,7 +2,9 @@ import { useEffect, useState } from "react"
 import { storage } from "@/lib/storage"
 import {
   CLAUDE_CLI_MODELS,
+  endpointKind,
   fetchModels,
+  ZAI_MODELS,
   parseOAuthProvider,
   type OpenRouterModel,
 } from "@/lib/openrouter"
@@ -30,6 +32,8 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
   // `/models` endpoint, so their catalogue is bundled rather than probed.
   const oauthProvider = provider ? parseOAuthProvider(provider) : null
   const ocpLike = isOcpLike(baseURL)
+  // Known lists shown until (or instead of) the endpoint's own answer.
+  const bundled = ocpLike ? CLAUDE_CLI_MODELS : endpointKind(baseURL) === "zai" ? ZAI_MODELS : null
   const [fetched, setFetched] = useState<OpenRouterModel[]>(() => {
     const cached = storage.get<Cache>(cacheKey(baseURL))
     return cached?.data ?? []
@@ -42,9 +46,9 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
     setLoadedFor(baseURL)
     setFetched(storage.get<Cache>(cacheKey(baseURL))?.data ?? [])
   }
-  // OCP-style endpoints get a known Claude list until the probe returns, so
+  // OCP-style endpoints and z.ai get a known list until the probe returns, so
   // the dropdown is never empty. Derived, so no effect has to seed state.
-  const models = fetched.length > 0 ? fetched : ocpLike ? CLAUDE_CLI_MODELS : []
+  const models = fetched.length > 0 ? fetched : (bundled ?? [])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -70,7 +74,7 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
       .then((list) => {
         // Empty list from OCP / Ollama is common before they're configured —
         // keep the fallback list rather than showing an empty dropdown.
-        if (list.length === 0 && ocpLike) return
+        if (list.length === 0 && bundled) return
         const sorted = [...list].sort((a, b) =>
           (a.name ?? a.id).localeCompare(b.name ?? b.id),
         )
@@ -78,9 +82,9 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
         storage.set(key, { fetchedAt: Date.now(), data: sorted })
       })
       .catch((e) => {
-        // The derived fallback already covers OCP, so a failed probe there is
-        // not an error the user needs to see.
-        if (ocpLike) return
+        // The derived fallback already covers OCP and z.ai, so a failed probe
+        // there is not an error the user needs to see.
+        if (bundled) return
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => setLoading(false))
@@ -88,7 +92,8 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
     return () => {
       cancelled = true
     }
-  }, [apiKey, baseURL, ocpLike])
+    // `bundled` is a module constant or null, so it only changes with baseURL.
+  }, [apiKey, baseURL, ocpLike, bundled])
 
   const [cursorModels, setCursorModels] = useState<OpenRouterModel[] | null>(null)
   useEffect(() => {

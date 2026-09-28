@@ -39,6 +39,8 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 - ⌨️ **手动模式** — 仅在 macOS 按下 `⌘⏎`、Windows 按下 `Ctrl+Enter` 或翻译按钮时调用(节省费用)
 - 🪄 **修订翻译** — 礼貌/随意/更短/商务/直译预设 + 自定义提示词
 - 🌐 **OpenRouter BYOK** — 可搜索 360+ 种模型
+- 🟩 **NVIDIA** — build.nvidia.com 托管模型(DeepSeek、Kimi、Nemotron 等),`nvapi-` 密钥
+- 🧠 **Z.AI (GLM)** — 通过按量付费 API 或 GLM Coding Plan 使用 GLM,每个提供方单独保存密钥
 - 🔁 **备用模型** — 主模型失败时 OpenRouter 自动切换
 - ⏹ **停止** — 立即取消进行中的调用
 - 📋 **剪贴板自动获取** — 在 macOS 按 `⌃⌥S`、Windows 按 `Ctrl+Alt+Shift+S` 打开时,其他应用复制的文本自动填入

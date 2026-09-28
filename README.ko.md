@@ -67,6 +67,8 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 
 ### 프로바이더
 - 🌐 **OpenRouter BYOK** — 360+ 모델 검색 콤보박스, 폴백 모델 자동 재시도
+- 🟩 **NVIDIA** — build.nvidia.com 호스팅 모델(DeepSeek·Kimi·Nemotron 등), `nvapi-` 키
+- 🧠 **Z.AI (GLM)** — 종량제 API 또는 GLM Coding Plan 엔드포인트로 GLM 모델 사용. 제공자마다 키를 따로 키체인에 보관
 - 🤖 **OCP (Open Claude Proxy)** — 로컬 Claude CLI를 OpenAI 호환 API로 노출. **한 번 클릭으로 자동 설치** (git clone → npm install → setup.mjs), 실시간 로그 스트리밍
 - 🔧 **Custom 엔드포인트** — 임의의 OpenAI 호환 베이스 URL 등록 (자체 호스팅, vLLM, LM Studio 등)
 

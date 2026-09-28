@@ -39,6 +39,8 @@ SayKnow Kit は **macOS のメニューバーまたはWindowsのシステムト�
 - ⌨️ **手動モード** — macOSでは `⌘⏎`、Windowsでは `Ctrl+Enter`、または翻訳ボタン押下時のみ呼び出し(コスト節約)
 - 🪄 **再翻訳** — 丁寧 / カジュアル / 短く / ビジネス / 直訳 + 自由プロンプト
 - 🌐 **OpenRouter BYOK** — 360 種類以上のモデルを検索可能
+- 🟩 **NVIDIA** — build.nvidia.com のモデル(DeepSeek・Kimi・Nemotron など)、`nvapi-` キー
+- 🧠 **Z.AI (GLM)** — 従量課金 API または GLM Coding Plan で GLM を利用。キーはプロバイダーごとに保存
 - 🔁 **フォールバックモデル** — メインモデル失敗時に自動切り替え
 - ⏹ **停止** — 進行中の呼び出しを即座に中止
 - 📋 **クリップボード自動取得** — macOSでは `⌃⌥S`、Windowsでは `Ctrl+Alt+Shift+S` で開く時、他アプリでコピーしたテキストを自動入力

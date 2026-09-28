@@ -39,6 +39,8 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 - ⌨️ **Modo manual** — solo con `⌘⏎` (macOS), `Ctrl+Enter` (Windows) o el botón Traducir (ahorra coste)
 - 🪄 **Refinar** — Formal / Casual / Corto / Negocios / Literal + prompt libre
 - 🌐 **OpenRouter BYOK** — combobox con búsqueda en 360+ modelos
+- 🟩 **NVIDIA** — modelos de build.nvidia.com (DeepSeek, Kimi, Nemotron…), clave `nvapi-`
+- 🧠 **Z.AI (GLM)** — GLM con la API de pago por uso o el GLM Coding Plan; cada proveedor guarda su propia clave
 - 🔁 **Modelo de respaldo** — OpenRouter reintenta si el principal falla
 - ⏹ **Detener** — cancela una llamada en curso
 - 📋 **Pegado automático** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) rellena la entrada con el portapapeles

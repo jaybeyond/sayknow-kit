@@ -44,6 +44,7 @@ import type { ThemeMode } from "@/hooks/useTheme"
 import {
   DEFAULT_REFINE_PROMPT,
   DEFAULT_TRANSLATE_PROMPT,
+  endpointPreset,
   isOAuthProvider,
 } from "@/lib/openrouter"
 import {
@@ -924,8 +925,11 @@ function ApiKeyRow({
   // browser sign-in and live in their own Keychain account.
   if (isOAuthProvider(provider)) return null
 
-  const placeholder = provider === "openrouter" ? "sk-or-..." : "API key"
-  const label = provider === "openrouter" ? "OpenRouter API Key" : "API Key"
+  const preset = endpointPreset(provider)
+  const placeholder = preset?.keyPlaceholder ?? "API key"
+  // Custom / OCP share one generic key; the named providers say whose it is.
+  const label =
+    preset && provider !== "custom" && provider !== "ocp" ? `${preset.label} API Key` : "API Key"
 
   return (
     <Row label={label}>

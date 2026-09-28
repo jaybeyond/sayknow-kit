@@ -67,6 +67,8 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - ⌨️ **Keyboard-friendly** — sliders commit on release, so one drag is one command
 ### Providers
 - 🌐 **OpenRouter BYOK** — searchable combobox over 360+ models, automatic fallback model retry
+- 🟩 **NVIDIA** — models hosted on build.nvidia.com (DeepSeek, Kimi, Nemotron …) with an `nvapi-` key
+- 🧠 **Z.AI (GLM)** — GLM models on the pay-as-you-go API or the GLM Coding Plan endpoint; each provider keeps its own key in the Keychain
 - 🤖 **OCP (Open Claude Proxy)** — expose the local Claude CLI as an OpenAI-compatible API. **One-tap install** (clones the repo, `npm install`, `node setup.mjs`) with live log streaming
 - 🔧 **Custom endpoint** — any OpenAI-compatible base URL (self-hosted, vLLM, LM Studio…)
 

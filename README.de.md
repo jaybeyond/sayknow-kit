@@ -39,6 +39,8 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 - ⌨️ **Manueller Modus** — nur mit `⌘⏎` (macOS), `Ctrl+Enter` (Windows) oder dem Übersetzen-Button
 - 🪄 **Verfeinern** — Förmlich / Casual / Kürzer / Geschäftlich / Wörtlich + freier Prompt
 - 🌐 **OpenRouter BYOK** — durchsuchbare Combobox mit 360+ Modellen
+- 🟩 **NVIDIA** — auf build.nvidia.com gehostete Modelle (DeepSeek, Kimi, Nemotron …), `nvapi-`-Key
+- 🧠 **Z.AI (GLM)** — GLM über die nutzungsbasierte API oder den GLM Coding Plan; jeder Anbieter behält seinen eigenen Key
 - 🔁 **Fallback-Modell** — OpenRouter wechselt automatisch
 - ⏹ **Stopp** — laufenden Aufruf abbrechen
 - 📋 **Zwischenablage automatisch** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) füllt das Eingabefeld

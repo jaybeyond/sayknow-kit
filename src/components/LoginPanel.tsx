@@ -13,9 +13,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ProviderPicker } from "./ProviderPicker"
 import {
+  endpointPreset,
   isOAuthProvider,
   OPENROUTER_BASE,
-  PROVIDER_PRESETS,
   verifyKey,
   type ProviderId,
 } from "@/lib/openrouter"
@@ -39,14 +39,22 @@ export function LoginPanel({ update, uiLocale }: Props) {
   const [show, setShow] = useState(false)
   const [status, setStatus] = useState<"idle" | "checking" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
+  // The picked provider's default model, committed together with the key so
+  // the first request does not carry the previous provider's model id.
+  const [modelPatch, setModelPatch] = useState<{ model: string; fallbackModel?: string } | null>(null)
+  const preset = endpointPreset(provider)
+  const needsKey = !!preset?.requiresKey
+  const keyUrl = preset?.keyUrl
 
   function handleProviderChange(next: {
     provider: ProviderId
     baseURL: string
     model?: string
+    fallbackModel?: string
   }) {
     setProvider(next.provider)
     setBaseURL(next.baseURL)
+    if (next.model) setModelPatch({ model: next.model, fallbackModel: next.fallbackModel })
     // An OAuth provider is only selectable once its card holds a live token,
     // so picking one *is* the login — there is no key to type and nothing to
     // verify. Commit it now; waiting for Connect would strand the user on
@@ -63,8 +71,8 @@ export function LoginPanel({ update, uiLocale }: Props) {
 
   function handleAutoReachable() {
     // Auto-login when a custom endpoint is reachable without a key.
-    // OpenRouter is excluded because it always needs a key.
-    if (provider === "openrouter") return
+    // Key-only providers (OpenRouter, NVIDIA, z.ai) are excluded.
+    if (needsKey) return
     if (isOAuthProvider(provider)) return
     if (key.trim()) return // User typed a key — wait for explicit Connect.
     update({
@@ -83,8 +91,8 @@ export function LoginPanel({ update, uiLocale }: Props) {
     }
     if (!baseURL.trim()) return
     // A custom endpoint may not require a key for `/models`. Only enforce it
-    // for OpenRouter.
-    if (provider === "openrouter" && !key.trim()) return
+    // for the providers that always do.
+    if (needsKey && !key.trim()) return
     setStatus("checking")
     setError(null)
     try {
@@ -98,6 +106,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
         provider,
         baseURL: baseURL.trim(),
         apiKey: key.trim(),
+        ...(modelPatch ?? {}),
       })
     } catch (e) {
       setStatus("error")
@@ -166,7 +175,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
       <div className="mt-3">
         <Label htmlFor="api-key" className="text-[11px]">
           {t("login.label")}
-          {provider !== "openrouter" && (
+          {provider !== "openrouter" && preset && (
             <span className="ml-1 text-muted-foreground">
               (API)
             </span>
@@ -176,7 +185,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
           <Input
             id="api-key"
             type={show ? "text" : "password"}
-            placeholder={provider === "openrouter" ? "sk-or-..." : "API key"}
+            placeholder={preset?.keyPlaceholder ?? "API key"}
             autoComplete="off"
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -203,7 +212,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
             isOAuthProvider(provider)
               ? status === "checking"
               : !baseURL.trim() ||
-                (provider === "openrouter" && !key.trim()) ||
+                (needsKey && !key.trim()) ||
                 status === "checking"
           }
           className="mt-2 w-full"
@@ -225,13 +234,13 @@ export function LoginPanel({ update, uiLocale }: Props) {
           </div>
         )}
 
-        {provider === "openrouter" && (
+        {keyUrl && (
           <button
             type="button"
-            onClick={() => openExternal("https://openrouter.ai/keys")}
+            onClick={() => openExternal(keyUrl)}
             className="mt-2 inline-flex w-full items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
           >
-            {t("login.getKey")}
+            {t("login.getKey").replace("{site}", keyUrl.replace(/^https:\/\//, ""))}
             <ExternalLink className="h-2.5 w-2.5" />
           </button>
         )}
@@ -276,8 +285,6 @@ export function LoginPanel({ update, uiLocale }: Props) {
         </button>
       )}
 
-      {/* Silence unused-import warning during dev. */}
-      <span className="hidden">{PROVIDER_PRESETS.openrouter.label}</span>
     </div>
   )
 }

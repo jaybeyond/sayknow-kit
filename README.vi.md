@@ -39,6 +39,8 @@ SayKnow Kit hoạt động trên macOS và Windows: xuất hiện ở **thanh me
 - ⌨️ **Chế độ thủ công** — chỉ khi nhấn `⌘⏎` (macOS), `Ctrl+Enter` (Windows) hoặc nút Dịch
 - 🪄 **Tinh chỉnh** — Lịch sự / Thân mật / Ngắn / Công sở / Sát nghĩa + prompt tự do
 - 🌐 **OpenRouter BYOK** — combobox tìm kiếm 360+ model
+- 🟩 **NVIDIA** — mô hình trên build.nvidia.com (DeepSeek, Kimi, Nemotron…), key `nvapi-`
+- 🧠 **Z.AI (GLM)** — dùng GLM qua API trả theo dùng hoặc GLM Coding Plan; mỗi nhà cung cấp giữ key riêng
 - 🔁 **Model dự phòng** — OpenRouter tự chuyển khi model chính lỗi
 - ⏹ **Dừng** — hủy cuộc gọi đang chạy
 - 📋 **Tự lấy clipboard** — `⌃⌥S` (macOS) / `Ctrl+Alt+Shift+S` (Windows) tự điền text vào ô nhập
