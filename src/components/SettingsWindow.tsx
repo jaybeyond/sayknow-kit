@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import appIcon from "../../src-tauri/icons/icon.png"
 import { useSlidingPill } from "@/hooks/useSlidingPill"
 import {
   Activity,
@@ -163,7 +164,7 @@ export function SettingsWindow({
           data-tauri-drag-region
         >
           <img
-            src="/sayo-logo.png"
+            src={appIcon}
             alt=""
             className="h-9 w-9 shrink-0 object-contain"
           />
@@ -904,8 +905,8 @@ function AboutSection({ settings }: { settings: Settings }) {
       <div className="space-y-3">
         <div className="flex items-center gap-3">
           <img
-            src="/sayo-logo.png"
-            alt="Sayo"
+            src={appIcon}
+            alt="SayKnow Kit app icon"
             className="h-16 w-16 shrink-0 object-contain"
           />
           <div>
