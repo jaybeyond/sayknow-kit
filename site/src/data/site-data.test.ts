@@ -137,9 +137,10 @@ describe("feedback links", () => {
 
   it("point at forms that exist, and the bug form has the version field they fill", () => {
     const dir = new URL("../../../.github/ISSUE_TEMPLATE/", import.meta.url)
+    // A Windows checkout turns these files into CRLF, so match either ending.
     const bug = readFileSync(fileURLToPath(new URL("bug_report.yml", dir)), "utf8")
     readFileSync(fileURLToPath(new URL("feature_request.yml", dir)), "utf8")
-    expect(bug).toMatch(/\n\s+id: version\n/)
+    expect(bug).toMatch(/\r?\n\s+id: version\r?\n/)
   })
 })
 
