@@ -18,7 +18,11 @@ export function useAgentUsage(active: boolean, deeplKey = "") {
     void scanAgentUsage(false, deeplKey)
     const onFocus = () => void scanAgentUsage(false, deeplKey)
     window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
+    const interval = window.setInterval(() => void scanAgentUsage(false, deeplKey), 60_000)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      window.clearInterval(interval)
+    }
   }, [active, supported, deeplKey])
 
   const refresh = useCallback(

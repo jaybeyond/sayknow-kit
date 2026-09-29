@@ -34,6 +34,20 @@ describe("windowIsCurrent", () => {
     expect(windowIsCurrent(session, "2026-09-28T05:00:00Z", NOW)).toBe(false)
   })
 
+  it("never presents a days-old Codex log as a current quota", () => {
+    const monthly = window({ window_minutes: 43_200, resets_at: NOW / 1000 + 15 * 86_400 })
+    expect(windowIsCurrent(monthly, "2026-09-16T03:52:35Z", NOW, "session_log")).toBe(false)
+    expect(windowIsCurrent(monthly, "2026-09-28T10:16:00Z", NOW, "session_log")).toBe(true)
+    expect(windowIsCurrent(monthly, "2026-09-28T10:14:59Z", NOW, "session_log")).toBe(false)
+  })
+
+  it("ages out live Codex readings while preserving a recent observation", () => {
+    const weekly = window({ window_minutes: 10_080, resets_at: NOW / 1000 + 86_400 })
+    expect(windowIsCurrent(weekly, "2026-09-28T10:19:00Z", NOW, "live_api")).toBe(true)
+    expect(windowIsCurrent(weekly, "2026-09-28T10:17:59Z", NOW, "live_api")).toBe(false)
+    expect(windowIsCurrent(weekly, "2026-09-28T10:21:01Z", NOW, "live_api")).toBe(false)
+  })
+
   it("never calls an undatable reading current", () => {
     expect(windowIsCurrent(window({}), "not a date", NOW)).toBe(false)
   })

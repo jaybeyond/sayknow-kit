@@ -25,7 +25,7 @@ export type RateWindow = {
 }
 
 /** Where the limits were read from. */
-export type LimitSource = "session_log" | "status_line" | "claude_app"
+export type LimitSource = "session_log" | "status_line" | "claude_app" | "live_api"
 
 export type RateLimits = {
   captured_at: string
@@ -37,14 +37,22 @@ export type RateLimits = {
   source: LimitSource
 }
 
-/** Whether a recorded window still describes the present. A known reset time
- *  decides it. Without one, a reading is current for at most the length of
- *  its window: a five-hour percentage from yesterday is about a window that
- *  has long since renewed. */
-export function windowIsCurrent(w: RateWindow, capturedAt: string, nowMs: number): boolean {
-  if (w.resets_at > 0) return w.resets_at * 1000 > nowMs
+/** An open reset window does not make a days-old Codex snapshot a current
+ * measurement. Live readings age out quickly; local logs are only observations
+ * from the last CLI run. Other provider sources keep their existing policy. */
+export function windowIsCurrent(
+  w: RateWindow,
+  capturedAt: string,
+  nowMs: number,
+  source?: LimitSource,
+): boolean {
   const capturedMs = Date.parse(capturedAt)
-  return Number.isFinite(capturedMs) && nowMs - capturedMs < w.window_minutes * 60_000
+  if (!Number.isFinite(capturedMs) || capturedMs > nowMs + 60_000) return false
+  const ageMs = nowMs - capturedMs
+  if (source === "live_api" && ageMs > 2 * 60_000) return false
+  if (source === "session_log" && ageMs > 5 * 60_000) return false
+  if (w.resets_at > 0) return w.resets_at * 1000 > nowMs
+  return ageMs < w.window_minutes * 60_000
 }
 
 export type AgentReport = {

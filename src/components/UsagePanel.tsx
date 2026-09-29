@@ -495,9 +495,10 @@ function RateLimitRows({
   // Every window is judged on its own. Once it has renewed, the recorded
   // percentage describes a window that no longer exists — it must not be drawn
   // as if it were the current level.
-  const current = (w: RateWindow) => windowIsCurrent(w, limits.captured_at, nowMs)
+  const current = (w: RateWindow) => windowIsCurrent(w, limits.captured_at, nowMs, limits.source)
   const allExpired = rows.every((r) => !current(r.w))
   const fromApp = limits.source === "claude_app"
+  const fromLive = limits.source === "live_api"
 
   return (
     <div className="rounded-md bg-muted/40 px-2 py-1.5">
@@ -505,6 +506,7 @@ function RateLimitRows({
         <span className="text-[10px] text-muted-foreground">
           {allExpired ? t("usage.limit.lastSeen") : t("usage.limit.label")}
           {fromApp ? ` · ${t("usage.limit.fromClaudeApp")}` : ""}
+          {fromLive ? ` · ${t("usage.deepl.live")}` : ""}
           {limits.plan_type ? ` · ${limits.plan_type}` : ""}
         </span>
         <span className="text-[10px] tabular-nums text-muted-foreground">

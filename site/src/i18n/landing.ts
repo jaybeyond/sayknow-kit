@@ -62,7 +62,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\n얼마나 남았는지 한눈에.",
-        body: "기기에 남은 기록을 읽어 오늘 쓴 토큰과 5시간·주간 한도를 보여 줍니다. 로그인도, 네트워크 요청도 없습니다.",
+        body: "토큰은 기기에 남은 기록에서 읽고 Codex 한도는 기존 로그인으로 OpenAI에서 갱신합니다. 오래된 값은 현재 한도로 표시하지 않습니다.",
         bullets: ["5시간 블록 남은 시간과 소모 속도", "모델별 토큰", "Claude 앱 한도까지 자동으로"],
       },
       providers: {
@@ -119,7 +119,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\nWhat is left, at a glance.",
-        body: "Reads the logs already on your device to show today's tokens and your 5-hour and weekly limits. No sign-in, no network requests.",
+        body: "Tokens come from logs already on your device. Codex limits refresh from OpenAI using the existing login; old readings are never shown as current.",
         bullets: ["Time left and burn rate in the 5-hour block", "Tokens per model", "Claude app limits, automatically"],
       },
       providers: {
@@ -176,7 +176,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code、Codex。\n残りがひと目で。",
-        body: "端末に残った記録を読み、今日のトークンと 5 時間・週間の上限を表示。ログインもネットワーク通信もありません。",
+        body: "トークンは端末の記録から取得し、Codex の上限は既存のログインで OpenAI から更新します。古い値を現在値として表示しません。",
         bullets: ["5 時間ブロックの残り時間と消費ペース", "モデル別トークン", "Claude アプリの上限も自動で"],
       },
       providers: {
@@ -233,7 +233,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code、Codex，\n还剩多少一眼看清。",
-        body: "读取本机已有的记录，显示今天的 token 以及 5 小时与每周额度。无需登录，没有网络请求。",
+        body: "Token 数从本机记录读取。Codex 额度使用现有登录信息从 OpenAI 更新；旧记录不会显示为当前值。",
         bullets: ["5 小时区块剩余时间与消耗速度", "按模型统计 token", "自动读取 Claude 应用额度"],
       },
       providers: {
@@ -290,7 +290,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\nLo que te queda, de un vistazo.",
-        body: "Lee los registros que ya están en tu equipo para mostrar los tokens de hoy y tus límites de 5 horas y semanales. Sin inicio de sesión ni peticiones de red.",
+        body: "Los tokens se leen de los registros locales. Los límites de Codex se actualizan desde OpenAI con la sesión existente; las lecturas antiguas no se muestran como actuales.",
         bullets: ["Tiempo restante y ritmo del bloque de 5 horas", "Tokens por modelo", "Límites de la app de Claude, solos"],
       },
       providers: {
@@ -347,7 +347,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\nCe qu'il reste, d'un coup d'œil.",
-        body: "Lit les journaux déjà présents sur l'appareil pour afficher les jetons du jour et vos limites 5 h et hebdomadaires. Ni connexion, ni requête réseau.",
+        body: "Les jetons proviennent des journaux locaux. Les quotas Codex sont actualisés auprès d'OpenAI avec la session existante ; les anciens relevés ne sont pas affichés comme actuels.",
         bullets: ["Temps restant et rythme du bloc de 5 heures", "Jetons par modèle", "Limites de l'app Claude, automatiquement"],
       },
       providers: {
@@ -404,7 +404,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\nWas übrig ist, auf einen Blick.",
-        body: "Liest die Protokolle auf Ihrem Gerät und zeigt die heutigen Tokens sowie Ihre 5-Stunden- und Wochenlimits. Ohne Anmeldung, ohne Netzwerkanfragen.",
+        body: "Tokens stammen aus lokalen Protokollen. Codex-Limits werden mit der bestehenden Anmeldung bei OpenAI aktualisiert; alte Messwerte erscheinen nicht als aktuell.",
         bullets: ["Restzeit und Verbrauch im 5-Stunden-Block", "Tokens pro Modell", "Limits der Claude-App automatisch"],
       },
       providers: {
@@ -461,7 +461,7 @@ export const LANDING: Record<Locale, LandingCopy> = {
       },
       usage: {
         headline: "Claude Code, Codex.\nCòn lại bao nhiêu, nhìn là biết.",
-        body: "Đọc nhật ký có sẵn trên máy để hiện token hôm nay cùng hạn mức 5 giờ và hàng tuần. Không đăng nhập, không gửi yêu cầu mạng.",
+        body: "Token lấy từ nhật ký trên máy. Hạn mức Codex được cập nhật từ OpenAI bằng phiên đăng nhập hiện có; số liệu cũ không được hiển thị là hiện tại.",
         bullets: ["Thời gian còn lại và tốc độ dùng của khối 5 giờ", "Token theo mô hình", "Tự đọc hạn mức của ứng dụng Claude"],
       },
       providers: {

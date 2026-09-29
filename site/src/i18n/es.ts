@@ -109,12 +109,12 @@ export const es: LocaleCopy = {
         points: [
           { title: "Tres herramientas", body: "Lee los registros de sesión que Claude Code, Codex y SayKnow CLI dejan en tu equipo: tokens de hoy, 7 días y 30 días." },
           { title: "Bloque de 5 horas", body: "Tiempo restante de la ventana actual de 5 horas y consumo por minuto." },
-          { title: "Límites reales", body: "Los límites que registra Codex y los de 5 horas y semanales que registra la app de escritorio de Claude. Una ventana ya reiniciada nunca se muestra como actual." },
+          { title: "Límites reales", body: "Los límites de Codex se actualizan directamente desde OpenAI con la sesión existente; los de Claude provienen del historial de su app de escritorio. Los datos antiguos o reiniciados no se presentan como actuales." },
           { title: "Por modelo", body: "Tokens por modelo en el mismo periodo." },
           { title: "El propio SayKnow Kit", body: "Tokens y coste de las traducciones y chats de la app, y tu cuota mensual de caracteres de DeepL." },
         ],
         notes: [
-          "Sin peticiones de red ni inicio de sesión extra: solo lee archivos que ya están en tu equipo.",
+          "Los tokens provienen de registros locales. Solo los límites de Codex se consultan en OpenAI con la sesión existente mediante una petición de solo lectura; no hace falta otro inicio de sesión.",
           "Los límites de Claude se actualizan mientras la app de escritorio de Claude está abierta; las horas de reinicio son estimaciones.",
           "El coste solo aparece donde el registro lo incluye (SayKnow CLI).",
         ],
@@ -186,9 +186,9 @@ export const es: LocaleCopy = {
     sections: [
       { title: "Servidores y rastreo", body: "No hay servidor de SayKnow. La app no contiene analítica ni rastreo." },
       { title: "A dónde va tu texto", body: "Traducciones y chats van directamente y solo al proveedor de IA o a DeepL que elijas." },
-      { title: "Claves e inicios de sesión", body: "Las claves de API y los tokens de sesión viven en el Llavero de macOS o el Administrador de credenciales de Windows, nunca en archivos de texto." },
+      { title: "Claves e inicios de sesión", body: "Las claves y los tokens gestionados por SayKnow Kit se guardan en el Llavero de macOS o el Administrador de credenciales de Windows. Codex gestiona su propio archivo de inicio de sesión local." },
       { title: "Qué queda en tu equipo", body: "El historial del portapapeles, las notas, el historial de traducciones y las conversaciones se guardan solo aquí. Nunca se registran textos vacíos, cadenas con forma de código, claves privadas ni lo que marca un gestor de contraseñas." },
-      { title: "Uso de tokens", body: "Se leen archivos que dejan Claude Code, Codex, SayKnow CLI y la app de escritorio de Claude; nunca se envían." },
+      { title: "Uso de tokens", body: "Los registros de sesión locales se leen, nunca se envían. Solo los límites de Codex usan su token local existente para una consulta de solo lectura a OpenAI. SayKnow Kit no guarda ese token." },
       { title: "Buscar actualizaciones", body: "Una vez al día la app pregunta a GitHub por la última versión." },
       { title: "Este sitio web", body: "Sin cookies ni analítica. Tu navegador consulta una vez la API de GitHub para mostrar la última versión." },
     ],

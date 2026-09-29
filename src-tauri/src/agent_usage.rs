@@ -1,10 +1,10 @@
 // Subscription-agent usage reader.
 //
-// Claude Code, Codex, and SayKnow CLI all write per-turn token accounting into
-// local JSONL session logs. None of them expose a query API, and the
-// subscription rate-limit windows (Claude's 5h/weekly) only exist in live API
-// response headers — so anything we show has to be derived from those logs.
-// We read them directly instead of shelling out to a helper like `ccusage`.
+// Claude Code, Codex, and SayKnow CLI write per-turn token accounting into
+// local JSONL session logs. Codex also exposes current account limits through
+// its authenticated read-only usage endpoint; the other agents' offline
+// limits come from session events, status-line caches, or app history. Never
+// infer subscription percentages from token counts.
 //
 // Cost: the logs are large (hundreds of MB after a few weeks) and a full
 // re-parse on every tab open would be wasteful. Session files are
@@ -20,7 +20,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -37,6 +38,8 @@ const CACHE_VERSION: u32 = 4;
 const MAX_SCAN_DAYS: u64 = 45;
 /// Guard against a runaway log file wedging the scan.
 const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const MAX_CODEX_USAGE_BYTES: usize = 128 * 1024;
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Bucket {
@@ -79,8 +82,8 @@ pub struct RateWindow {
     /// reported, so the UI must not present it as exact.
     #[serde(default)]
     pub resets_estimated: bool,
-    /// The model family a window is limited to, when it is not the whole plan
-    /// (the Claude app tracks separate weekly allowances for Opus and Sonnet).
+    /// The metered feature or model family this window applies to, if it is
+    /// not the whole plan.
     #[serde(default)]
     pub scope: Option<String>,
 }
@@ -90,6 +93,8 @@ pub struct RateWindow {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitSource {
+    /// Fetched from Codex's account usage endpoint using its local login.
+    LiveApi,
     /// Written by the agent into its own session log (Codex).
     #[default]
     SessionLog,
@@ -101,14 +106,13 @@ pub enum LimitSource {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RateLimits {
-    /// Timestamp of the event this snapshot came from. A snapshot is only
-    /// meaningful next to its capture time: percentages from a month ago say
-    /// nothing about the window you're in now.
+    /// Time of the provider response or the recorded event. Percentages from
+    /// an old snapshot say nothing about the current window.
     pub captured_at: String,
     pub plan_type: Option<String>,
-    /// Short window — 300 minutes (5h) in Codex's case.
+    /// First provider-reported window; its duration varies by plan.
     pub primary: Option<RateWindow>,
-    /// Long window — 10080 minutes (7 days).
+    /// Second provider-reported window, when present.
     pub secondary: Option<RateWindow>,
     /// Further windows limited to one model family.
     #[serde(default)]
@@ -409,6 +413,77 @@ fn parse_codex_limits(v: &Value) -> Option<RateLimits> {
         secondary,
         scoped: Vec::new(),
         source: LimitSource::SessionLog,
+    })
+}
+
+fn codex_live_window(v: Option<&Value>, scope: Option<&str>) -> Option<RateWindow> {
+    let o = v?.as_object()?;
+    let used_percent = o.get("used_percent")?.as_f64()?;
+    if !used_percent.is_finite() || used_percent < 0.0 {
+        return None;
+    }
+    let seconds = o.get("limit_window_seconds")?.as_u64()?;
+    if seconds == 0 {
+        return None;
+    }
+    Some(RateWindow {
+        used_percent,
+        window_minutes: seconds / 60,
+        resets_at: o.get("reset_at").and_then(Value::as_i64).unwrap_or(0),
+        resets_estimated: false,
+        scope: scope.map(|s| s.chars().take(64).collect()),
+    })
+}
+
+/// The endpoint is account-bound. Never attach a different account's limits to
+/// the Codex session logs, even if a stale auth.json points to another login.
+fn parse_codex_live_limits(v: &Value, account: &str, captured_at: String) -> Option<RateLimits> {
+    if v.get("account_id")?.as_str()? != account {
+        return None;
+    }
+    let rate = v.get("rate_limit")?;
+    let primary = codex_live_window(rate.get("primary_window"), None);
+    let secondary = codex_live_window(rate.get("secondary_window"), None);
+    let mut scoped = Vec::new();
+    if let Some(additional) = v.get("additional_rate_limits").and_then(Value::as_array) {
+        for item in additional.iter().take(16) {
+            let scope = item
+                .get("limit_name")
+                .or_else(|| item.get("metered_feature"))
+                .and_then(Value::as_str);
+            if let Some(name) = scope {
+                let details = item.get("rate_limit");
+                scoped.extend(
+                    [
+                        codex_live_window(
+                            details.and_then(|d| d.get("primary_window")),
+                            Some(name),
+                        ),
+                        codex_live_window(
+                            details.and_then(|d| d.get("secondary_window")),
+                            Some(name),
+                        ),
+                    ]
+                    .into_iter()
+                    .flatten(),
+                );
+            }
+        }
+    }
+    if primary.is_none() && secondary.is_none() && scoped.is_empty() {
+        return None;
+    }
+    Some(RateLimits {
+        captured_at,
+        plan_type: v
+            .get("plan_type")
+            .and_then(Value::as_str)
+            .filter(|p| p.len() <= 32)
+            .map(str::to_string),
+        primary,
+        secondary,
+        scoped,
+        source: LimitSource::LiveApi,
     })
 }
 
@@ -897,6 +972,60 @@ fn codex_auth(home: &Path) -> Option<AuthState> {
     })
 }
 
+/// A read-only lookup using Codex's own login. The token never reaches the
+/// webview, logs, cache, or another host. Fail closed on redirects/account
+/// mismatch; the UI can still display its last local snapshot as historical.
+async fn codex_live_limits(home: &Path) -> Option<RateLimits> {
+    let path = home.join(".codex/auth.json");
+    if fs::metadata(&path).ok()?.len() > 1024 * 1024 {
+        return None;
+    }
+    let v: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    if v.get("auth_mode")?.as_str()? != "chatgpt" {
+        return None;
+    }
+    let tokens = v.get("tokens")?;
+    let token = tokens.get("access_token")?.as_str()?;
+    if jwt_exp(token)? <= now_secs() as i64 {
+        return None;
+    }
+    let account = tokens.get("account_id")?.as_str()?.trim();
+    if account.is_empty() || account.len() > 256 {
+        return None;
+    }
+    static CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .ok()
+    }).as_ref()?;
+    let mut response = client
+        .get(CODEX_USAGE_URL)
+        .bearer_auth(token)
+        .header("chatgpt-account-id", account)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|len| len > MAX_CODEX_USAGE_BYTES as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if body.len() + chunk.len() > MAX_CODEX_USAGE_BYTES {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let data: Value = serde_json::from_slice(&body).ok()?;
+    parse_codex_live_limits(&data, account, epoch_to_iso(now_secs()))
+}
+
 /// Newest `*.jsonl` mtime under `root`, ignoring the scan cutoff. Used only to
 /// tell "never used" apart from "last used before the window".
 fn newest_file_mtime(dir: &Path, depth: usize) -> Option<u64> {
@@ -1062,12 +1191,21 @@ pub fn scan(app: &AppHandle) -> Vec<AgentReport> {
 }
 
 /// Scanning is hundreds of MB of disk reads on a cold cache, so keep it off
-/// the UI thread.
+/// the UI thread. Refresh Codex's account limits after the local token scan;
+/// only the read-only, account-matched result may supersede the log snapshot.
 #[tauri::command]
 pub async fn agent_usage(app: AppHandle) -> Result<Vec<AgentReport>, String> {
-    tauri::async_runtime::spawn_blocking(move || scan(&app))
+    let mut reports = tauri::async_runtime::spawn_blocking(move || scan(&app))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let Some(home) = home_dir() {
+        if let Some(limits) = codex_live_limits(&home).await {
+            if let Some(codex) = reports.iter_mut().find(|agent| agent.id == "codex") {
+                codex.rate_limits = Some(limits);
+            }
+        }
+    }
+    Ok(reports)
 }
 
 #[cfg(test)]
@@ -1108,6 +1246,65 @@ mod tests {
         let s = rl.secondary.unwrap();
         assert_eq!(s.used_percent, 40.0);
         assert_eq!(s.window_minutes, 10_080);
+    }
+
+    #[test]
+    fn codex_live_limits_replace_old_log_percentages() {
+        // Shape observed from the read-only /wham/usage endpoint; no account
+        // identifiers or credentials from the real response are retained.
+        let response = serde_json::json!({
+            "account_id": "account-1",
+            "plan_type": "prolite",
+            "rate_limit": {
+                "primary_window": {"used_percent": 11, "limit_window_seconds": 604800, "reset_at": 1791174326},
+                "secondary_window": null
+            },
+            "additional_rate_limits": [{
+                "limit_name": "codex_other",
+                "rate_limit": {"primary_window": {"used_percent": 43, "limit_window_seconds": 18000, "reset_at": 1791174326}}
+            }]
+        });
+        let read =
+            parse_codex_live_limits(&response, "account-1", "2026-09-29T10:00:00Z".into()).unwrap();
+        assert_eq!(read.source, LimitSource::LiveApi);
+        assert_eq!(read.captured_at, "2026-09-29T10:00:00Z");
+        assert_eq!(read.plan_type.as_deref(), Some("prolite"));
+        let primary = read.primary.unwrap();
+        assert_eq!(primary.used_percent, 11.0);
+        assert_eq!(primary.window_minutes, 10_080);
+        assert_eq!(primary.resets_at, 1_791_174_326);
+        assert_eq!(read.scoped[0].scope.as_deref(), Some("codex_other"));
+        assert_eq!(read.scoped[0].used_percent, 43.0);
+        assert!(parse_codex_live_limits(&response, "another-account", "now".into()).is_none());
+        assert!(parse_codex_live_limits(
+            &serde_json::json!({"account_id":"account-1","rate_limit":{}}),
+            "account-1",
+            "now".into()
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn codex_live_limits_reject_invalid_percentages_and_windows() {
+        let invalid = serde_json::json!({"account_id":"acct", "rate_limit": {
+            "primary_window": {"used_percent": -1, "limit_window_seconds": 300, "reset_at": 100},
+            "secondary_window": {"used_percent": 50, "limit_window_seconds": 0, "reset_at": 100}
+        }});
+        assert!(parse_codex_live_limits(&invalid, "acct", "now".into()).is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires a Codex ChatGPT login and network; only reads account limits"]
+    async fn live_codex_usage_uses_the_current_account() {
+        let limits = codex_live_limits(&home_dir().expect("home directory"))
+            .await
+            .expect("live Codex quota");
+        assert_eq!(limits.source, LimitSource::LiveApi);
+        assert!(limits.primary.is_some() || limits.secondary.is_some());
+        println!(
+            "Codex live quota: {:?}",
+            limits.primary.map(|w| w.used_percent)
+        );
     }
 
     #[test]

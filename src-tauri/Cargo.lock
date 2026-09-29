@@ -4106,7 +4106,7 @@ dependencies = [
 
 [[package]]
 name = "sayknow"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "block2",
  "bytes",
@@ -4122,6 +4122,7 @@ dependencies = [
  "objc2-foundation",
  "prost",
  "prost-build",
+ "reqwest 0.12.28",
  "rustls",
  "rustls-pki-types",
  "serde",

@@ -109,12 +109,12 @@ export const de: LocaleCopy = {
         points: [
           { title: "Drei Werkzeuge", body: "Liest die Sitzungsprotokolle, die Claude Code, Codex und SayKnow CLI auf Ihrem Gerät führen: Tokens heute, über 7 und über 30 Tage." },
           { title: "5-Stunden-Block", body: "Restzeit im aktuellen 5-Stunden-Fenster und Verbrauch pro Minute." },
-          { title: "Echte Limits", body: "Die von Codex aufgezeichneten Limits sowie die 5-Stunden- und Wochenlimits der Claude-Desktop-App. Ein bereits zurückgesetztes Fenster wird nie als aktuell gezeigt." },
+          { title: "Echte Limits", body: "Codex-Limits werden mit der bestehenden Anmeldung direkt bei OpenAI aktualisiert; Claude-Limits stammen aus dem Verlauf der Desktop-App. Alte oder zurückgesetzte Werte erscheinen nicht als aktuell." },
           { title: "Pro Modell", body: "Tokens je Modell im selben Zeitraum." },
           { title: "SayKnow Kit selbst", body: "Tokens und Kosten der Übersetzungen und Chats der App sowie Ihr monatliches DeepL-Zeichenkontingent." },
         ],
         notes: [
-          "Keine Netzwerkanfragen, keine zusätzliche Anmeldung – nur Dateien, die schon auf Ihrem Gerät liegen, werden gelesen.",
+          "Tokens stammen aus lokalen Protokollen. Nur Codex-Limits werden mit der bestehenden Anmeldung per schreibgeschützter Anfrage an OpenAI aktualisiert; keine zusätzliche Anmeldung nötig.",
           "Claude-Limits aktualisieren sich, solange die Claude-Desktop-App läuft; Reset-Zeiten sind geschätzt.",
           "Kosten erscheinen nur, wo das Protokoll sie enthält (SayKnow CLI).",
         ],
@@ -186,9 +186,9 @@ export const de: LocaleCopy = {
     sections: [
       { title: "Server und Tracking", body: "Es gibt keinen SayKnow-Server. Die App enthält keine Analyse und kein Tracking." },
       { title: "Wohin Ihr Text geht", body: "Übersetzungen und Chats gehen direkt und nur an den KI-Anbieter oder DeepL Ihrer Wahl." },
-      { title: "Schlüssel und Anmeldungen", body: "API-Schlüssel und Anmelde-Token liegen im macOS-Schlüsselbund bzw. in der Windows-Anmeldeinformationsverwaltung, nie in Klartextdateien." },
+      { title: "Schlüssel und Anmeldungen", body: "Von SayKnow Kit verwaltete API-Schlüssel und Anmelde-Token liegen im macOS-Schlüsselbund oder in der Windows-Anmeldeinformationsverwaltung. Die lokale Codex-Anmeldedatei verwaltet Codex selbst." },
       { title: "Was auf dem Gerät bleibt", body: "Zwischenablage-Verlauf, Notizen, Übersetzungsverlauf und Unterhaltungen bleiben nur auf diesem Gerät. Leerer Text, codeartige Zeichenfolgen, private Schlüssel und von Passwortmanagern markierte Kopien werden nie aufgezeichnet." },
-      { title: "Token-Nutzung", body: "Dateien von Claude Code, Codex, SayKnow CLI und der Claude-Desktop-App werden gelesen, nie gesendet." },
+      { title: "Token-Nutzung", body: "Lokale Sitzungsprotokolle werden gelesen, nie hochgeladen. Nur Codex-Limits nutzen das vorhandene lokale Anmelde-Token für eine schreibgeschützte Anfrage an OpenAI. SayKnow Kit speichert dieses Token nicht." },
       { title: "Update-Prüfung", body: "Einmal täglich fragt die App GitHub nach der neuesten Version." },
       { title: "Diese Website", body: "Keine Cookies, keine Analyse. Ihr Browser fragt einmal die GitHub-API ab, um die neueste Version anzuzeigen." },
     ],

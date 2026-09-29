@@ -52,10 +52,10 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 ### Usage
 - 📊 **Agent usage** — Claude Code, Codex and SayKnow CLI, read from the session logs they already write locally
 - ⏱ **5-hour blocks** — the billing window subscriptions actually meter on, with time left and burn rate
-- 🚦 **Real quota** — provider-reported 5-hour and weekly percentages with reset times, where the CLI records them
-- 🔍 **Honest staleness** — a window that has already reset is struck through, never drawn as your current level
+- **Real quota** — Codex plan limits refresh from OpenAI; other provider limits come from their local records when available
+- **Honest staleness** — old or reset readings are never drawn as your current level
 - 🧮 **Claude app limits** — reads the 5-hour and weekly limits the Claude desktop app records, with no setup. Only the account Claude Code is signed in to is used; reset times are estimated from that history and say "about"
-- 🔌 **No network** — nothing is uploaded and no extra sign-in is required
+- **Codex network request** — reads account limits from OpenAI using the existing local Codex login; its token stays in the backend and is not saved by SayKnow Kit
 - 🧰 **Lives in Tools** — the usage cards sit in the Tools tab, right under screen brightness
 
 ### Tools
@@ -95,11 +95,11 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ## Install
 
-### v0.3.8 prebuilt installers (recommended)
+### v0.3.9 prebuilt installers (recommended)
 
 Download only from the [official GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases), and verify the matching file in `SHA256SUMS.txt`.
 
-**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.8_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.8 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
+**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.9_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.9 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -113,7 +113,7 @@ tccutil reset Accessibility com.sayknow.app
 
 Always move the app to `/Applications` first. Launched from the DMG or Downloads, macOS runs it from a randomized read-only copy where Accessibility permission for built-in brightness can never be stored.
 
-**Windows (x64):** Download `SayKnow-Kit_0.3.8_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.8_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
+**Windows (x64):** Download `SayKnow-Kit_0.3.9_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.9_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
 
 ### Uninstall
 
@@ -189,7 +189,7 @@ Your OpenRouter key is a **billable credential**, so SayKnow Kit never stores it
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.8 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
+Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.9 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
 
 ## Development
 

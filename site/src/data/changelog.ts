@@ -12,6 +12,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.9",
+    date: "2026-09-29",
+    notes: {
+      ko: ["Codex 한도를 기존 로그인으로 OpenAI에서 직접 갱신합니다. 오래된 로컬 기록은 더 이상 현재 사용량으로 표시하지 않습니다."],
+      en: ["Codex limits now refresh directly from OpenAI using the existing login. Old local readings are no longer presented as current usage."],
+      ja: ["Codex の上限を既存のログインで OpenAI から直接更新します。古いローカル記録を現在の使用量として表示しなくなりました。"],
+      zh: ["现在使用现有登录信息直接从 OpenAI 更新 Codex 限额，不再将旧的本地记录显示为当前用量。"],
+      es: ["Los límites de Codex se actualizan directamente desde OpenAI con la sesión existente. Las lecturas locales antiguas ya no se muestran como uso actual."],
+      fr: ["Les quotas Codex sont actualisés directement auprès d'OpenAI avec la session existante. Les anciennes mesures locales ne sont plus présentées comme actuelles."],
+      de: ["Codex-Limits werden mit der bestehenden Anmeldung direkt bei OpenAI aktualisiert. Alte lokale Messwerte erscheinen nicht mehr als aktuelle Nutzung."],
+      vi: ["Giới hạn Codex được cập nhật trực tiếp từ OpenAI bằng phiên đăng nhập hiện có. Số liệu cục bộ cũ không còn được hiển thị là mức dùng hiện tại."],
+    },
+  },
+  {
     version: "0.3.8",
     date: "2026-09-29",
     notes: {

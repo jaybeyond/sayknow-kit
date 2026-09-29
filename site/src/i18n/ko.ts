@@ -112,12 +112,12 @@ export const ko: LocaleCopy = {
         points: [
           { title: "세 가지 도구", body: "Claude Code, Codex, SayKnow CLI가 기기에 남긴 세션 기록을 읽어 오늘·7일·30일 토큰을 보여 줍니다." },
           { title: "5시간 블록", body: "지금 사용 중인 5시간 창의 남은 시간과 분당 소모량을 보여 줍니다." },
-          { title: "실제 한도", body: "Codex가 기록한 한도와, Claude 데스크톱 앱이 기록한 5시간·주간 한도를 보여 줍니다. 이미 리셋된 값은 현재 값처럼 그리지 않습니다." },
+          { title: "실제 한도", body: "Codex 한도는 기존 로그인으로 OpenAI에서 직접 갱신하고, Claude 한도는 데스크톱 앱 기록에서 읽습니다. 오래된 값이나 리셋된 값은 현재 한도로 표시하지 않습니다." },
           { title: "모델별 토큰", body: "같은 기간 안에서 모델마다 쓴 토큰을 나눠 보여 줍니다." },
           { title: "SayKnow Kit 자체 사용량", body: "앱에서 번역·챗에 쓴 토큰과 비용, DeepL 월 글자 한도." },
         ],
         notes: [
-          "네트워크 요청도, 추가 로그인도 없습니다. 기기에 있는 파일만 읽습니다.",
+          "토큰은 기기의 로컬 기록에서 읽습니다. Codex 한도만 기존 로그인으로 OpenAI에 읽기 전용 요청을 보내며 추가 로그인은 필요 없습니다.",
           "Claude 한도는 Claude 데스크톱 앱이 켜져 있어야 갱신되고, 리셋 시각은 기록에서 추정한 값입니다.",
           "금액은 기록에 금액이 있는 도구(SayKnow CLI)만 보여 줍니다.",
         ],
@@ -196,9 +196,9 @@ export const ko: LocaleCopy = {
     sections: [
       { title: "서버와 추적", body: "SayKnow가 운영하는 서버는 없습니다. 앱에 분석·추적 코드가 없습니다." },
       { title: "보내는 곳", body: "번역과 챗 내용은 사용자가 고른 AI 제공자 또는 DeepL에만 직접 보냅니다." },
-      { title: "키와 로그인", body: "API 키와 로그인 토큰은 macOS 키체인, Windows 자격 증명 관리자에 저장합니다. 평문 파일로 남기지 않습니다." },
+      { title: "키와 로그인", body: "SayKnow Kit이 관리하는 API 키와 로그인 토큰은 macOS 키체인 또는 Windows 자격 증명 관리자에 저장합니다. Codex 자체 로그인 파일은 Codex가 관리합니다." },
       { title: "기기에 남는 것", body: "클립보드 기록, 메모, 번역 기록, 대화는 이 기기에만 저장됩니다. 빈 값, 인증 코드 형태, 개인 키, 비밀번호 관리자가 표시한 복사는 기록하지 않습니다." },
-      { title: "토큰 사용량", body: "Claude Code, Codex, SayKnow CLI, Claude 데스크톱 앱이 기기에 남긴 파일을 읽기만 하고, 어디에도 보내지 않습니다." },
+      { title: "토큰 사용량", body: "세션 기록은 기기에서 읽고 보내지 않습니다. Codex 한도 조회에만 Codex가 보관한 기존 로그인 토큰을 사용해 OpenAI에 읽기 전용 요청을 보냅니다. 토큰은 SayKnow Kit에 저장하지 않습니다." },
       { title: "업데이트 확인", body: "하루 한 번 GitHub에 최신 릴리스를 묻습니다." },
       { title: "이 웹사이트", body: "쿠키와 분석 도구가 없습니다. 최신 버전을 보여 주기 위해 브라우저가 GitHub API에 한 번 요청합니다." },
     ],

@@ -112,12 +112,12 @@ export const en: LocaleCopy = {
         points: [
           { title: "Three tools", body: "Reads the session logs Claude Code, Codex and SayKnow CLI keep on your device: tokens today, over 7 days and over 30 days." },
           { title: "5-hour block", body: "Time left in the current 5-hour window and the burn rate per minute." },
-          { title: "Real limits", body: "The limits Codex records, and the 5-hour and weekly limits the Claude desktop app records. A window that already reset is never drawn as current." },
+          { title: "Real limits", body: "Codex limits refresh directly from OpenAI using the existing login; Claude limits come from the desktop app's history. Old or reset readings are never presented as current." },
           { title: "Per model", body: "Tokens split by model for the same period." },
           { title: "SayKnow Kit itself", body: "Tokens and cost of the app's own translations and chats, and your DeepL monthly character quota." },
         ],
         notes: [
-          "No network requests and no extra sign-in — only files already on your device are read.",
+          "Tokens come from local logs. Only Codex limits make a read-only request to OpenAI using the existing login; no extra sign-in is needed.",
           "Claude limits update while the Claude desktop app runs; reset times are estimated from its history.",
           "Cost is shown only where the logs record it (SayKnow CLI).",
         ],
@@ -196,9 +196,9 @@ export const en: LocaleCopy = {
     sections: [
       { title: "Servers and tracking", body: "There is no SayKnow server. The app contains no analytics or tracking." },
       { title: "Where your text goes", body: "Translations and chats go directly and only to the AI provider or DeepL you choose." },
-      { title: "Keys and sign-ins", body: "API keys and sign-in tokens live in the macOS Keychain or Windows Credential Manager, never in plain files." },
+      { title: "Keys and sign-ins", body: "API keys and sign-in tokens managed by SayKnow Kit live in the macOS Keychain or Windows Credential Manager. Codex manages its own local login file." },
       { title: "What stays on your device", body: "Clipboard history, memos, translation history and conversations are stored on this device only. Blank text, code-shaped strings, private keys and copies a password manager marks are never recorded." },
-      { title: "Token usage", body: "Files left by Claude Code, Codex, SayKnow CLI and the Claude desktop app are read, never sent anywhere." },
+      { title: "Token usage", body: "Local session logs are read, never uploaded. Only Codex limits use its existing local login token for a read-only request to OpenAI. SayKnow Kit does not store that token." },
       { title: "Update check", body: "Once a day the app asks GitHub for the latest release." },
       { title: "This website", body: "No cookies and no analytics. Your browser asks the GitHub API once to show the latest version." },
     ],

@@ -109,12 +109,12 @@ export const zh: LocaleCopy = {
         points: [
           { title: "三种工具", body: "读取 Claude Code、Codex、SayKnow CLI 在本机留下的会话记录，显示今天、7 天、30 天的 token。" },
           { title: "5 小时区块", body: "当前 5 小时窗口的剩余时间与每分钟消耗量。" },
-          { title: "真实额度", body: "Codex 记录的额度，以及 Claude 桌面应用记录的 5 小时与每周额度。已重置的窗口不会当作当前值显示。" },
+          { title: "真实额度", body: "Codex 额度使用现有登录信息直接从 OpenAI 更新，Claude 额度来自桌面应用记录。旧数据或已重置的窗口不会显示为当前值。" },
           { title: "按模型", body: "同一时段内按模型分别显示 token。" },
           { title: "SayKnow Kit 本身", body: "应用内翻译与聊天所用的 token 与费用，以及 DeepL 每月字符额度。" },
         ],
         notes: [
-          "没有网络请求，也无需额外登录，只读取本机已有的文件。",
+          "Token 数从本地记录读取。只有 Codex 额度会使用现有登录信息向 OpenAI 发出只读请求，无需额外登录。",
           "Claude 额度在 Claude 桌面应用运行时更新，重置时间由记录推算。",
           "只有记录中包含金额的工具（SayKnow CLI）才显示费用。",
         ],
@@ -183,9 +183,9 @@ export const zh: LocaleCopy = {
     sections: [
       { title: "服务器与追踪", body: "没有 SayKnow 运营的服务器，应用中没有分析或追踪代码。" },
       { title: "文字发往何处", body: "翻译和聊天内容只直接发送给你选择的 AI 服务商或 DeepL。" },
-      { title: "密钥与登录", body: "API 密钥与登录令牌保存在 macOS 钥匙串或 Windows 凭据管理器中，不会以明文文件保存。" },
+      { title: "密钥与登录", body: "SayKnow Kit 管理的 API 密钥和登录令牌保存在 macOS 钥匙串或 Windows 凭据管理器中。Codex 自己的本地登录文件由 Codex 管理。" },
       { title: "留在设备上的内容", body: "剪贴板历史、便签、翻译记录和对话只保存在本设备上。空内容、验证码形式的字符串、私钥以及密码管理器标记的复制内容不会被记录。" },
-      { title: "Token 用量", body: "只读取 Claude Code、Codex、SayKnow CLI 与 Claude 桌面应用在本机留下的文件，不会发送到任何地方。" },
+      { title: "Token 用量", body: "会话记录只在本机读取，不会上传。只有 Codex 额度查询会用 Codex 已有的本地登录令牌向 OpenAI 发出只读请求；SayKnow Kit 不会保存该令牌。" },
       { title: "检查更新", body: "每天向 GitHub 查询一次最新版本。" },
       { title: "本网站", body: "没有 Cookie 和分析工具。为显示最新版本，浏览器会向 GitHub API 请求一次。" },
     ],

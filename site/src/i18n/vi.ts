@@ -109,12 +109,12 @@ export const vi: LocaleCopy = {
         points: [
           { title: "Ba công cụ", body: "Đọc nhật ký phiên mà Claude Code, Codex và SayKnow CLI lưu trên máy: token hôm nay, 7 ngày và 30 ngày." },
           { title: "Khối 5 giờ", body: "Thời gian còn lại của cửa sổ 5 giờ hiện tại và mức tiêu thụ mỗi phút." },
-          { title: "Hạn mức thật", body: "Hạn mức Codex ghi lại, cùng hạn mức 5 giờ và hàng tuần mà ứng dụng Claude trên máy ghi lại. Cửa sổ đã reset không bao giờ hiển thị như hiện tại." },
+          { title: "Hạn mức thật", body: "Hạn mức Codex được cập nhật trực tiếp từ OpenAI bằng phiên đăng nhập hiện có; hạn mức Claude lấy từ lịch sử ứng dụng trên máy. Số liệu cũ hoặc đã reset không được hiển thị là hiện tại." },
           { title: "Theo mô hình", body: "Token chia theo mô hình trong cùng khoảng thời gian." },
           { title: "Chính SayKnow Kit", body: "Token và chi phí của các bản dịch và chat trong ứng dụng, cùng hạn mức ký tự DeepL hàng tháng." },
         ],
         notes: [
-          "Không gửi yêu cầu mạng, không cần đăng nhập thêm — chỉ đọc tệp đã có trên máy.",
+          "Token lấy từ nhật ký cục bộ. Chỉ hạn mức Codex gửi yêu cầu chỉ đọc tới OpenAI bằng phiên đăng nhập hiện có; không cần đăng nhập thêm.",
           "Hạn mức Claude cập nhật khi ứng dụng Claude trên máy đang chạy; giờ reset là ước tính.",
           "Chi phí chỉ hiện khi nhật ký có ghi (SayKnow CLI).",
         ],
@@ -186,9 +186,9 @@ export const vi: LocaleCopy = {
     sections: [
       { title: "Máy chủ và theo dõi", body: "Không có máy chủ SayKnow. Ứng dụng không có mã phân tích hay theo dõi." },
       { title: "Văn bản của bạn đi đâu", body: "Bản dịch và chat chỉ được gửi thẳng tới nhà cung cấp AI hoặc DeepL bạn chọn." },
-      { title: "Khóa và đăng nhập", body: "Khóa API và token đăng nhập nằm trong Keychain của macOS hoặc Credential Manager của Windows, không bao giờ ở tệp văn bản thường." },
+      { title: "Khóa và đăng nhập", body: "Khóa API và token do SayKnow Kit quản lý được lưu trong Keychain của macOS hoặc Credential Manager của Windows. Codex quản lý tệp đăng nhập cục bộ của riêng mình." },
       { title: "Những gì ở lại trên máy", body: "Lịch sử clipboard, ghi chú, lịch sử dịch và cuộc trò chuyện chỉ lưu trên máy này. Nội dung trống, chuỗi dạng mã, khóa riêng tư và nội dung trình quản lý mật khẩu đánh dấu không bao giờ được ghi." },
-      { title: "Token", body: "Chỉ đọc tệp do Claude Code, Codex, SayKnow CLI và ứng dụng Claude để lại, không gửi đi đâu." },
+      { title: "Token", body: "Nhật ký phiên cục bộ chỉ được đọc, không tải lên. Chỉ hạn mức Codex dùng token đăng nhập cục bộ đã có để gửi yêu cầu chỉ đọc tới OpenAI. SayKnow Kit không lưu token đó." },
       { title: "Kiểm tra cập nhật", body: "Mỗi ngày một lần ứng dụng hỏi GitHub phiên bản mới nhất." },
       { title: "Trang web này", body: "Không cookie, không công cụ phân tích. Trình duyệt hỏi GitHub API một lần để hiện phiên bản mới nhất." },
     ],

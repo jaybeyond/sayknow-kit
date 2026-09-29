@@ -109,12 +109,12 @@ export const fr: LocaleCopy = {
         points: [
           { title: "Trois outils", body: "Lit les journaux de session que Claude Code, Codex et SayKnow CLI gardent sur votre appareil : jetons du jour, sur 7 et 30 jours." },
           { title: "Bloc de 5 heures", body: "Temps restant dans la fenêtre de 5 heures en cours et consommation par minute." },
-          { title: "Limites réelles", body: "Les limites enregistrées par Codex, et celles de 5 heures et hebdomadaires de l'app de bureau Claude. Une fenêtre déjà réinitialisée n'est jamais montrée comme actuelle." },
+          { title: "Limites réelles", body: "Les quotas Codex sont actualisés directement auprès d'OpenAI avec la session existante ; ceux de Claude proviennent de l'historique de l'app de bureau. Les anciennes valeurs ou les fenêtres réinitialisées ne sont pas présentées comme actuelles." },
           { title: "Par modèle", body: "Jetons par modèle sur la même période." },
           { title: "SayKnow Kit lui-même", body: "Jetons et coût des traductions et chats de l'app, et votre quota mensuel de caractères DeepL." },
         ],
         notes: [
-          "Aucune requête réseau ni connexion supplémentaire : seuls des fichiers déjà présents sont lus.",
+          "Les jetons proviennent des journaux locaux. Seuls les quotas Codex font l'objet d'une requête en lecture seule à OpenAI avec la session existante ; aucune autre connexion n'est nécessaire.",
           "Les limites Claude se mettent à jour quand l'app de bureau Claude tourne ; les heures de réinitialisation sont estimées.",
           "Le coût n'apparaît que si le journal l'enregistre (SayKnow CLI).",
         ],
@@ -186,9 +186,9 @@ export const fr: LocaleCopy = {
     sections: [
       { title: "Serveurs et pistage", body: "Il n'y a pas de serveur SayKnow. L'app ne contient ni statistiques ni pistage." },
       { title: "Où va votre texte", body: "Traductions et chats vont directement et uniquement au fournisseur d'IA ou à DeepL que vous choisissez." },
-      { title: "Clés et connexions", body: "Clés d'API et jetons de connexion sont dans le Trousseau macOS ou le Gestionnaire d'identification Windows, jamais en fichiers en clair." },
+      { title: "Clés et connexions", body: "Les clés et jetons gérés par SayKnow Kit sont dans le Trousseau macOS ou le Gestionnaire d'identification Windows. Codex gère son propre fichier de connexion local." },
       { title: "Ce qui reste sur l'appareil", body: "Historique du presse-papiers, mémos, historique des traductions et conversations restent sur cet appareil. Texte vide, chaînes en forme de code, clés privées et copies marquées par un gestionnaire de mots de passe ne sont jamais enregistrés." },
-      { title: "Jetons", body: "Les fichiers laissés par Claude Code, Codex, SayKnow CLI et l'app de bureau Claude sont lus, jamais envoyés." },
+      { title: "Jetons", body: "Les journaux de session locaux sont lus, jamais envoyés. Seuls les quotas Codex utilisent le jeton local existant pour une requête en lecture seule à OpenAI. SayKnow Kit ne conserve pas ce jeton." },
       { title: "Recherche de mises à jour", body: "Une fois par jour, l'app demande à GitHub la dernière version." },
       { title: "Ce site", body: "Ni cookies ni statistiques. Votre navigateur interroge une fois l'API GitHub pour afficher la dernière version." },
     ],
