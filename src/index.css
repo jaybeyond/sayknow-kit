@@ -11,8 +11,10 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  /* Brand accent, from the octopus icon: selection, progress, the primary
+     action. Neutrals stay grey so the accent keeps meaning something. */
+  --primary: #e2601a;
+  --primary-foreground: #ffffff;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -22,23 +24,29 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
+  /* Focus stays neutral: an orange outline on every field read as an error
+     or a selection. The accent is for what is chosen or about to happen. */
   --ring: oklch(0.708 0 0);
 }
 
+/* A lifted, slightly warm dark (macOS's own panel greys) instead of near
+   black, so the popover reads as a surface with layers on it. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --background: #1c1c1e;
+  --foreground: #f4f4f5;
+  --card: #242426;
+  --card-foreground: #f4f4f5;
+  --popover: #242426;
+  --popover-foreground: #f4f4f5;
+  /* Same orange as light mode, with white on it: the brighter #f06d23 left
+     white text too faint, and dark text on orange read as muddy. */
+  --primary: #e2601a;
+  --primary-foreground: #ffffff;
+  --secondary: #2c2c2e;
+  --secondary-foreground: #f4f4f5;
+  --muted: #2c2c2e;
+  --muted-foreground: #a1a1aa;
+  --accent: #2c2c2e;
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
@@ -83,6 +91,11 @@
   body {
     margin: 0;
     overflow: hidden;
+  }
+  /* The text cursor carries the accent, as the typing point of the app. */
+  textarea,
+  input {
+    caret-color: var(--primary);
   }
   /* Settings window is a standard decorated window — give it a solid bg. */
   html.settings-window,
@@ -135,5 +148,307 @@
 @media (prefers-reduced-motion: reduce) {
   .lightbox-image {
     transition: none;
+  }
+}
+
+/* ─── Input clear with dissolve ───
+   From transitions.dev (MIT). Motion tokens as the original ships them; the
+   choreography lives in src/lib/dissolve-clear.ts, which reads these on every
+   clear. Dark mode lightens with white streaks, so it needs more opacity. */
+:root {
+  --clear-dur: 1000ms;
+  --clear-out-dur: 400ms;
+  --clear-in-dur: 400ms;
+  --clear-out-fly: 12px;
+  --clear-in-fly: 12px;
+  --clear-out-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --clear-in-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --clear-blur: 2px;
+  --glow-delay: 50ms;
+  --glow-peak-at: 0.15;
+  --glow-opacity: 0.42;
+  --glow-opacity-dark: 0.85;
+  --glow-spread: 1.5;
+}
+.t-clear-overlay {
+  position: fixed;
+  z-index: 60;
+  overflow: hidden;
+  pointer-events: none;
+}
+.t-clear-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: transform, opacity, filter;
+}
+.t-clear-glow {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.t-clear-hide-placeholder::placeholder {
+  color: transparent !important;
+}
+
+/* ─── transitions.dev motion ───
+   Recipes from transitions.dev (MIT, github.com/Jakubantalik/transitions.dev),
+   with their motion tokens as shipped. Each block says where it is used.
+   Nothing here runs on the popover's own open/close or on keyboard-driven
+   changes: those are repeated all day and stay instant. */
+:root {
+  --tabs-dur: 250ms;
+  --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --toggle-dur: 350ms;
+  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --icon-swap-dur: 250ms;
+  --icon-swap-blur: 2px;
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: ease-in-out;
+  --dropdown-open-dur: 250ms;
+  --dropdown-close-dur: 150ms;
+  --dropdown-pre-scale: 0.97;
+  --dropdown-closing-scale: 0.99;
+  --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --badge-slide-dur: 260ms;
+  --badge-pop-dur: 500ms;
+  --badge-blur: 2px;
+  --badge-offset-x: -8.2px;
+  --badge-offset-y: 12.4px;
+  --badge-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --badge-pop-ease: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --shake-distance: 6px;
+  --shake-overshoot: 4px;
+  --shake-dur-a: 80ms;
+  --shake-dur-b: 60ms;
+  --shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --revert-dur: 280ms;
+  --shimmer-dur: 2000ms;
+  --shimmer-band: 400%;
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
+}
+
+/* Tabs sliding — every segmented control (top tabs, tool tabs, translate /
+   rewrite, translate mode). Placed by useSlidingPill. */
+.t-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform var(--tabs-dur) var(--tabs-ease),
+    width var(--tabs-dur) var(--tabs-ease),
+    height var(--tabs-dur) var(--tabs-ease);
+  will-change: transform, width;
+}
+.t-pill.t-pill-instant {
+  transition: none;
+}
+
+/* Toggle — every switch. The recipe's overshoot curve on the thumb's
+   travel; a transition rather than keyframes so a double click reverses
+   from where the thumb is. */
+[data-slot="switch-thumb"] {
+  transition-property: translate, background-color;
+  transition-duration: var(--toggle-dur), 150ms;
+  transition-timing-function: var(--toggle-ease), ease;
+}
+
+/* Icon swap — copy → copied, pin ↔ unpin. */
+.t-icon-swap {
+  position: relative;
+  display: inline-grid;
+}
+.t-icon-swap .t-icon {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  transition:
+    opacity var(--icon-swap-dur) var(--icon-swap-ease),
+    filter var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+/* Menu dropdown — popovers, dropdown menus, selects, grown out of their
+   trigger (Radix supplies the origin). Keyframes because Radix unmounts on
+   animation end. Unlayered, so these win over the component defaults. */
+@keyframes t-dropdown-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--dropdown-pre-scale));
+  }
+}
+@keyframes t-dropdown-out {
+  to {
+    opacity: 0;
+    transform: scale(var(--dropdown-closing-scale));
+  }
+}
+[data-slot="popover-content"][data-state="open"],
+[data-slot="dropdown-menu-content"][data-state="open"],
+[data-slot="dropdown-menu-sub-content"][data-state="open"],
+[data-slot="select-content"][data-state="open"] {
+  animation: t-dropdown-in var(--dropdown-open-dur) var(--dropdown-ease) both;
+}
+[data-slot="popover-content"][data-state="closed"],
+[data-slot="dropdown-menu-content"][data-state="closed"],
+[data-slot="dropdown-menu-sub-content"][data-state="closed"],
+[data-slot="select-content"][data-state="closed"] {
+  animation: t-dropdown-out var(--dropdown-close-dur) var(--dropdown-ease) both;
+}
+
+/* Modal — confirm dialogs. Centered, not trigger-anchored. The dialog is
+   positioned with the `translate` property, so scaling `transform` is free. */
+@keyframes t-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--modal-scale));
+  }
+}
+@keyframes t-modal-out {
+  to {
+    opacity: 0;
+    transform: scale(var(--modal-scale));
+  }
+}
+@keyframes t-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes t-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+[data-slot="dialog-content"][data-state="open"] {
+  animation: t-modal-in var(--modal-open-dur) var(--modal-ease) both;
+}
+[data-slot="dialog-content"][data-state="closed"] {
+  animation: t-modal-out var(--modal-close-dur) var(--modal-ease) both;
+}
+[data-slot="dialog-overlay"][data-state="open"] {
+  animation: t-fade-in var(--modal-open-dur) var(--modal-ease) both;
+}
+[data-slot="dialog-overlay"][data-state="closed"] {
+  animation: t-fade-out var(--modal-close-dur) var(--modal-ease) both;
+}
+
+/* Notification badge — the new-version dot on the settings gear. */
+@keyframes t-badge-slide-in {
+  from {
+    transform: translate(var(--badge-offset-x), var(--badge-offset-y));
+  }
+}
+@keyframes t-badge-pop {
+  from {
+    opacity: 0;
+    filter: blur(var(--badge-blur));
+    transform: scale(0.3);
+  }
+}
+.t-badge {
+  animation: t-badge-slide-in var(--badge-slide-dur) var(--badge-slide-ease) both;
+}
+.t-badge > .t-badge-dot {
+  display: block;
+  animation: t-badge-pop var(--badge-pop-dur) var(--badge-pop-ease) both;
+}
+
+/* Error state — the message fades in as the field shakes (lib/shake.ts). */
+.t-error-msg {
+  animation: t-fade-in var(--revert-dur) ease-out both;
+}
+
+/* Text states swap, entry half — "Copied" appearing next to a clip. */
+@keyframes t-text-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--text-swap-blur));
+    transform: translateY(var(--text-swap-translate-y));
+  }
+}
+.t-text-in {
+  display: inline-flex;
+  animation: t-text-in var(--text-swap-dur) var(--text-swap-ease) both;
+}
+
+/* Shimmer text — "Translating…", "Thinking…", "Scanning…". */
+.t-shimmer {
+  position: relative;
+  display: inline-block;
+}
+.t-shimmer::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 40%,
+    var(--foreground) 50%,
+    transparent 60%,
+    transparent 100%
+  );
+  background-size: var(--shimmer-band) 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: t-shimmer var(--shimmer-dur) linear infinite;
+}
+@keyframes t-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-pill,
+  [data-slot="switch-thumb"],
+  .t-icon-swap .t-icon {
+    transition: none !important;
+  }
+  .t-badge,
+  .t-badge > .t-badge-dot,
+  .t-text-in,
+  .t-shimmer::before {
+    animation: none !important;
+  }
+  /* Menus and dialogs keep a plain fade: it still tells you what appeared. */
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="dialog-content"] {
+    animation-name: t-fade-in !important;
+  }
+  [data-slot="popover-content"][data-state="closed"],
+  [data-slot="dropdown-menu-content"][data-state="closed"],
+  [data-slot="dropdown-menu-sub-content"][data-state="closed"],
+  [data-slot="select-content"][data-state="closed"],
+  [data-slot="dialog-content"][data-state="closed"] {
+    animation-name: t-fade-out !important;
   }
 }

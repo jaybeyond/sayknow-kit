@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useState, useSyncExternalStore } from "react"
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useSlidingPill } from "@/hooks/useSlidingPill"
 import {
   Monitor,
   MonitorOff,
@@ -77,6 +78,9 @@ export function ToolsPanel({ settings, active }: Props) {
   )
   const metrics = useSyncExternalStore(subscribeMetrics, getMetricsSnapshot)
   const [tab, setTab] = useState<ToolTab>("status")
+  const toolTabsRef = useRef<HTMLDivElement>(null)
+  const toolPillRef = useRef<HTMLSpanElement>(null)
+  useSlidingPill(toolTabsRef, toolPillRef, tab)
   const [refreshing, setRefreshing] = useState(false)
 
   const refreshAll = useCallback(async () => {
@@ -238,10 +242,16 @@ export function ToolsPanel({ settings, active }: Props) {
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
         <div
+          ref={toolTabsRef}
           aria-label={t("tools.tabs.label")}
-          className="grid min-w-0 flex-1 grid-cols-4 gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
+          className="relative grid min-w-0 flex-1 grid-cols-4 gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
           role="tablist"
         >
+          <span
+            ref={toolPillRef}
+            aria-hidden
+            className="t-pill rounded-md bg-background shadow-sm ring-1 ring-black/10 dark:bg-white/[0.12] dark:shadow-none dark:ring-white/15"
+          />
           <ToolTabButton
             active={tab === "status"}
             label={t("tools.tabs.status")}
@@ -368,12 +378,12 @@ function ToolTabButton({
   return (
     <button
       aria-selected={active}
+      data-pill-active={active}
       className={cn(
         // A longer label in some locale must not wrap out of the 28px pill.
-        "h-7 min-w-0 truncate rounded-md px-1.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98]",
-        active
-          ? "bg-background text-foreground shadow-sm ring-1 ring-black/10 dark:ring-white/15"
-          : "text-foreground/70 hover:bg-background/60 hover:text-foreground",
+        // The active background is the sliding pill behind the tabs.
+        "relative z-[1] h-7 min-w-0 truncate rounded-md px-1.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98]",
+        active ? "text-foreground" : "text-foreground/70 hover:bg-background/60 hover:text-foreground",
       )}
       onClick={onClick}
       role="tab"

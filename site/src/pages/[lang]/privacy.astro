@@ -1,0 +1,30 @@
+---
+import Base from "../../layouts/Base.astro"
+import { copyFor } from "../../i18n"
+import { localeParams } from "../../data/build"
+import type { Locale } from "../../data/site"
+
+export function getStaticPaths() {
+  return localeParams()
+}
+
+const locale = Astro.params.lang as Locale
+const t = copyFor(locale)
+---
+
+<Base locale={locale} path="privacy" current="privacy" title={t.privacy.title}>
+  <header class="page-head">
+    <h1>{t.privacy.title}</h1>
+    <p>{t.privacy.intro}</p>
+  </header>
+  <ul class="points">
+    {
+      t.privacy.sections.map((s) => (
+        <li>
+          <h3>{s.title}</h3>
+          <p>{s.body}</p>
+        </li>
+      ))
+    }
+  </ul>
+</Base>

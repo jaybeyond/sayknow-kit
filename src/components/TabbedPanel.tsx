@@ -35,7 +35,10 @@ import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 import { invoke } from "@tauri-apps/api/core"
 import { isTauri } from "@/lib/runtime"
-import { formatCombo, shortcut, useShortcuts } from "@/lib/shortcuts"
+import { formatCombo, shortcut } from "@/lib/shortcuts"
+import { useShortcuts } from "@/hooks/useShortcuts"
+import { useSlidingPill } from "@/hooks/useSlidingPill"
+import { IconSwap } from "./motion"
 
 type Tab = "translate" | "chat" | "clipboard" | "tools"
 const TAB_KEY = "active-tab"
@@ -92,6 +95,9 @@ export function TabbedPanel(props: Props) {
   const [composeRequest, setComposeRequest] = useState<number | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const tabRef = useRef(tab)
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const tabPillRef = useRef<HTMLSpanElement>(null)
+  useSlidingPill(tabsRef, tabPillRef, tab)
   useEffect(() => {
     tabRef.current = tab
   }, [tab])
@@ -220,6 +226,12 @@ export function TabbedPanel(props: Props) {
         className="flex shrink-0 items-center gap-0.5 border-b bg-muted/40 px-1.5 py-1"
         data-tauri-drag-region
       >
+        <div ref={tabsRef} className="relative flex items-center gap-0.5">
+        <span
+          ref={tabPillRef}
+          aria-hidden
+          className="t-pill rounded-md bg-background shadow-sm dark:bg-white/[0.12] dark:shadow-none"
+        />
         <TabButton
           active={tab === "translate"}
           icon={TranslateIcon}
@@ -249,6 +261,7 @@ export function TabbedPanel(props: Props) {
           hint={tabHint("app.tab.tools")}
           onClick={() => selectTab("tools")}
         />
+        </div>
 
         {/* Window and app-level controls. They used to sit in the translate
             tab's own header, which meant pin, resize and settings vanished the
@@ -295,11 +308,11 @@ export function TabbedPanel(props: Props) {
               props.settings.pinned ? t("header.pinned") : t("header.pin")
             } (${tabHint("app.pin")})`}
           >
-            {props.settings.pinned ? (
-              <Pin className="h-3.5 w-3.5 fill-current" />
-            ) : (
-              <PinOff className="h-3.5 w-3.5" />
-            )}
+            <IconSwap
+              on={props.settings.pinned}
+              a={<PinOff className="h-3.5 w-3.5" />}
+              b={<Pin className="h-3.5 w-3.5 fill-current" />}
+            />
           </Button>
           <HistoryMenu
             entries={historyEntries}
@@ -368,11 +381,13 @@ function TabButton({
       type="button"
       onClick={onClick}
       title={`${label} (${hint})`}
+      data-pill-active={active}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition",
+        // The active background is the sliding pill behind the tabs.
+        "relative z-[1] inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-[color,background-color]",
         active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+          ? "text-foreground"
+          : "text-muted-foreground hover:bg-background/50 hover:text-foreground dark:hover:bg-white/[0.06]",
       )}
     >
       <Icon className="h-3.5 w-3.5" />

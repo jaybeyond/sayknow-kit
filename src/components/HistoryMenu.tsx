@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
-import { History as HistoryIcon, Pin, PinOff, Search, Trash2, X } from "lucide-react"
+import { History as HistoryIcon, Pin, PinOff, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { SearchField } from "@/components/SearchField"
 import {
   Popover,
   PopoverContent,
@@ -70,15 +70,12 @@ export function HistoryMenu({
         className="w-[400px] p-0"
       >
         <div className="flex items-center gap-1.5 px-2.5 py-1.5">
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t("history.search")}
-              className="h-7 pl-6 text-xs"
-            />
-          </div>
+          <SearchField
+            value={q}
+            onChange={setQ}
+            placeholder={t("history.search")}
+            clearLabel={t("search.clear")}
+          />
           {entries.length > 0 && (
             <Button
               variant="ghost"

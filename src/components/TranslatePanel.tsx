@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react"
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager"
-import { useShortcuts } from "@/lib/shortcuts"
+import { useShortcuts } from "@/hooks/useShortcuts"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
@@ -36,6 +36,10 @@ import { useUsage } from "@/hooks/useUsage"
 import type { Settings } from "@/hooks/useSettings"
 import type { ThemeMode } from "@/hooks/useTheme"
 import { isTauri } from "@/lib/runtime"
+import { cn } from "@/lib/utils"
+import { dissolveClear } from "@/lib/dissolve-clear"
+import { useSlidingPill } from "@/hooks/useSlidingPill"
+import { IconSwap, Shimmer } from "./motion"
 import {
   buildRefinePrompt,
   buildTranslatePrompt,
@@ -117,6 +121,9 @@ export function TranslatePanel({
   const rewriteMode = settings.workspaceMode === "rewrite"
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const modeRef = useRef<HTMLDivElement>(null)
+  const modePillRef = useRef<HTMLSpanElement>(null)
+  useSlidingPill(modeRef, modePillRef, rewriteMode ? "rewrite" : "translate")
   const [compactSplit, setCompactSplit] = useState(50)
   const [stackedSplit, setStackedSplit] = useState(36)
   const splitContainerRef = useRef<HTMLDivElement | null>(null)
@@ -361,10 +368,13 @@ export function TranslatePanel({
       abortRef.current?.abort()
     }
   }
-  function clearSession() {
+  /** `dissolve` animates the input away; only the eraser button asks for it.
+   *  ⌘N is a keyboard action repeated all day, and stays instant. */
+  function clearSession({ dissolve = false }: { dissolve?: boolean } = {}) {
     abortRef.current?.abort()
     rewriteAbort.current?.abort()
-    setInput("")
+    if (dissolve) dissolveClear(inputRef.current, () => setInput(""))
+    else setInput("")
     setOutput("")
     setError(null)
     setRefineText("")
@@ -413,12 +423,20 @@ export function TranslatePanel({
     },
   })
 
-  async function refine(instruction: string) {
+  // The tone preset behind the output on screen. Kept with the text it
+  // produced, so it stops showing as applied the moment the output is
+  // anything else (a new translation, an edit, another refine).
+  const [appliedTone, setAppliedTone] = useState<{ id: string; output: string } | null>(null)
+  const [pendingTone, setPendingTone] = useState<string | null>(null)
+  const activeTone = pendingTone ?? (appliedTone && appliedTone.output === output ? appliedTone.id : null)
+
+  async function refine(instruction: string, presetId?: string) {
     if (!output || !input.trim()) return
     abortRef.current?.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
     setRefining(true)
+    setPendingTone(presetId ?? null)
     setError(null)
     try {
       const result = await chat({
@@ -442,6 +460,7 @@ export function TranslatePanel({
       })
       if (ctrl.signal.aborted) return
       setOutput(result.content)
+      setAppliedTone(presetId ? { id: presetId, output: result.content } : null)
       addHistory({
         source: input.trim(),
         target: result.content,
@@ -461,7 +480,10 @@ export function TranslatePanel({
       if (ctrl.signal.aborted) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      if (!ctrl.signal.aborted) setRefining(false)
+      if (!ctrl.signal.aborted) {
+        setRefining(false)
+        setPendingTone(null)
+      }
     }
   }
 
@@ -638,7 +660,7 @@ export function TranslatePanel({
   const outputBody = output ? (
     output
   ) : translating ? (
-    <span className="text-muted-foreground">{t("output.translating")}</span>
+    <Shimmer className="text-muted-foreground" text={t("output.translating")} />
   ) : input.trim().length < 2 ? (
     <span className="text-muted-foreground">
       {settings.autoTranslate
@@ -655,20 +677,29 @@ export function TranslatePanel({
         className="flex items-center gap-1 border-b bg-muted/30 px-2 py-1.5"
         data-tauri-drag-region
       >
-        <button
-          type="button"
-          className={`h-6 rounded-full px-2.5 text-[11px] font-medium ${rewriteMode ? "text-muted-foreground" : "bg-background text-foreground shadow-sm"}`}
-          onClick={() => update({ workspaceMode: "translate" })}
-        >
-          {t("workspace.translate")}
-        </button>
-        <button
-          type="button"
-          className={`h-6 rounded-full px-2.5 text-[11px] font-medium ${rewriteMode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
-          onClick={() => update({ workspaceMode: "rewrite" })}
-        >
-          {t("workspace.rewrite")}
-        </button>
+        <div ref={modeRef} className="relative flex shrink-0 items-center">
+          <span
+            ref={modePillRef}
+            aria-hidden
+            className="t-pill rounded-full bg-background shadow-sm dark:bg-white/[0.12] dark:shadow-none"
+          />
+          <button
+            type="button"
+            data-pill-active={!rewriteMode}
+            className={`relative z-[1] h-6 rounded-full px-2.5 text-[11px] font-medium transition-colors ${rewriteMode ? "text-muted-foreground" : "text-foreground"}`}
+            onClick={() => update({ workspaceMode: "translate" })}
+          >
+            {t("workspace.translate")}
+          </button>
+          <button
+            type="button"
+            data-pill-active={rewriteMode}
+            className={`relative z-[1] h-6 rounded-full px-2.5 text-[11px] font-medium transition-colors ${rewriteMode ? "text-foreground" : "text-muted-foreground"}`}
+            onClick={() => update({ workspaceMode: "rewrite" })}
+          >
+            {t("workspace.rewrite")}
+          </button>
+        </div>
         {!rewriteMode && (
           <>
             <LangPicker
@@ -870,9 +901,15 @@ export function TranslatePanel({
                   key={p.id}
                   size="sm"
                   variant="ghost"
-                  className="h-6 rounded-full px-2.5 text-[11px] hover:bg-background"
+                  aria-pressed={activeTone === p.id}
+                  className={cn(
+                    "h-6 rounded-full px-2.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.97]",
+                    activeTone === p.id
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground disabled:opacity-100 dark:hover:bg-primary/90"
+                      : "bg-foreground/[0.06] text-foreground/80 hover:bg-foreground/10 dark:bg-white/[0.08] dark:hover:bg-white/[0.13]",
+                  )}
                   disabled={!output || refining}
-                  onClick={() => refine(p.instruction)}
+                  onClick={() => refine(p.instruction, p.id)}
                 >
                   {t(p.labelKey)}
                 </Button>
@@ -930,7 +967,7 @@ export function TranslatePanel({
               size="icon"
               variant="ghost"
               className="h-7 w-7 active:scale-[0.98]"
-              onClick={clearSession}
+              onClick={() => clearSession({ dissolve: true })}
               disabled={!input && !output && rewriteCards.length === 0 && !error}
               aria-label={t("session.clear")}
               title={t("session.clear")}
@@ -946,11 +983,11 @@ export function TranslatePanel({
                 disabled={!output}
                 aria-label={t("copy")}
               >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5 text-emerald-500" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
+                <IconSwap
+                  on={copied}
+                  a={<Copy className="h-3.5 w-3.5" />}
+                  b={<Check className="h-3.5 w-3.5 text-emerald-500" />}
+                />
               </Button>
             )}
           </div>

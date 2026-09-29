@@ -92,7 +92,7 @@ function MainRoot() {
   return (
     // Outer shell — always rendered with full bg/border/shadow/blur so the
     // popover skin never disappears. Animation lives on the inner content layer.
-    <div className="h-svh w-svw overflow-hidden rounded-xl border border-border/50 bg-background/85 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl dark:bg-background/85 dark:ring-white/10">
+    <div className="h-svh w-svw overflow-hidden rounded-2xl border border-border/50 bg-background/85 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl dark:bg-background/85 dark:ring-white/10">
       <div
         ref={contentRef}
         className="popover-content appear h-full w-full"

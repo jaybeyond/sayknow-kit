@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
+import { shake } from "@/lib/shake"
 import {
   ExternalLink,
   Eye,
@@ -39,6 +40,8 @@ export function LoginPanel({ update, uiLocale }: Props) {
   const [show, setShow] = useState(false)
   const [status, setStatus] = useState<"idle" | "checking" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
+  // The key field shakes when a connect attempt is rejected.
+  const keyFieldRef = useRef<HTMLDivElement>(null)
   // The picked provider's default model, committed together with the key so
   // the first request does not carry the previous provider's model id.
   const [modelPatch, setModelPatch] = useState<{ model: string; fallbackModel?: string } | null>(null)
@@ -100,6 +103,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
       if (!ok) {
         setStatus("error")
         setError(t("login.invalidKey"))
+        shake(keyFieldRef.current)
         return
       }
       update({
@@ -111,6 +115,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
     } catch (e) {
       setStatus("error")
       setError(e instanceof Error ? e.message : t("login.connectFail"))
+      shake(keyFieldRef.current)
     }
   }
 
@@ -181,7 +186,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
             </span>
           )}
         </Label>
-        <div className="relative mt-1.5">
+        <div ref={keyFieldRef} className="relative mt-1.5">
           <Input
             id="api-key"
             type={show ? "text" : "password"}
@@ -229,7 +234,7 @@ export function LoginPanel({ update, uiLocale }: Props) {
         </Button>
 
         {error && (
-          <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
+          <div className="t-error-msg mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
             {error}
           </div>
         )}

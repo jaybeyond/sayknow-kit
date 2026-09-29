@@ -31,6 +31,7 @@ src-tauri/gen/
 .omc/
 .omx/
 data/
+!site/src/data/
 
 # Local env
 .env

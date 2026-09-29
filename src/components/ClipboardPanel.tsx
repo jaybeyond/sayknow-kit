@@ -9,7 +9,6 @@ import {
   Pin,
   PinOff,
   Play,
-  Search,
   StickyNote,
   Trash2,
   X,
@@ -23,14 +22,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
+import { SearchField } from "@/components/SearchField"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { useClipboardHistory } from "@/hooks/useClipboardHistory"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
 import { isMemo } from "@/lib/clipboard-history"
-import { formatCombo, shortcut, useShortcuts } from "@/lib/shortcuts"
+import { formatCombo, shortcut } from "@/lib/shortcuts"
+import { useShortcuts } from "@/hooks/useShortcuts"
 import { timeAgo } from "@/lib/history"
 import { cn } from "@/lib/utils"
 
@@ -181,16 +181,13 @@ export function ClipboardPanel({
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 border-b bg-muted/30 px-2.5 py-1.5">
-        <div className="relative flex-1">
-          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={searchRef}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t("clipboard.search")}
-            className="h-7 pl-6 text-xs"
-          />
-        </div>
+        <SearchField
+          ref={searchRef}
+          value={q}
+          onChange={setQ}
+          placeholder={t("clipboard.search")}
+          clearLabel={t("search.clear")}
+        />
         <Button
           variant="ghost"
           size="icon"
@@ -393,7 +390,7 @@ export function ClipboardPanel({
                   {copiedId === e.id && (
                     <>
                       <span>·</span>
-                      <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-500">
+                      <span className="t-text-in items-center gap-0.5 text-emerald-600 dark:text-emerald-500">
                         <Check className="h-2.5 w-2.5" />
                         {t("clipboard.copied")}
                       </span>

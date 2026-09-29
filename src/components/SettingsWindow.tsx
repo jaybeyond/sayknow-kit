@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useSlidingPill } from "@/hooks/useSlidingPill"
 import {
   Activity,
   BookText,
@@ -114,6 +115,9 @@ export function SettingsWindow({
 }: Props) {
   const { t } = useT(settings.uiLocale)
   const [section, setSection] = useState<Section>(initialSection)
+  const navRef = useRef<HTMLElement>(null)
+  const navPillRef = useRef<HTMLSpanElement>(null)
+  useSlidingPill(navRef, navPillRef, section)
 
   // The popover's ⌘/ opens this window straight at the shortcuts page; when
   // the window already exists the section arrives as an event instead.
@@ -168,7 +172,12 @@ export function SettingsWindow({
             <div className="text-[10px] text-muted-foreground">{t("settings.title")}</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-0.5 p-2">
+        <nav ref={navRef} className="relative flex-1 space-y-0.5 p-2">
+          <span
+            ref={navPillRef}
+            aria-hidden
+            className="t-pill rounded-md bg-background shadow-sm dark:bg-white/[0.12] dark:shadow-none"
+          />
           {NAV.map((n) => {
             const Icon = n.icon
             const active = section === n.id
@@ -176,11 +185,12 @@ export function SettingsWindow({
               <button
                 key={n.id}
                 onClick={() => setSection(n.id)}
+                data-pill-active={active}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition",
+                  "relative z-[1] flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-[color,background-color]",
                   active
-                    ? "bg-background font-medium text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-background/60 hover:text-foreground dark:hover:bg-white/[0.06]",
                 )}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -252,6 +262,9 @@ function GeneralSection({
   setThemeMode: (m: ThemeMode) => void
 }) {
   const { t } = useT(settings.uiLocale)
+  const modeRef = useRef<HTMLDivElement>(null)
+  const modePillRef = useRef<HTMLSpanElement>(null)
+  useSlidingPill(modeRef, modePillRef, settings.autoTranslate ? "auto" : "manual")
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -260,23 +273,30 @@ function GeneralSection({
       />
 
       <Row label={t("settings.mode")}>
-        <div className="grid w-full max-w-[280px] grid-cols-2 gap-1">
-          <Button
-            size="sm"
-            variant={settings.autoTranslate ? "secondary" : "ghost"}
-            className="h-8 text-xs"
-            onClick={() => update({ autoTranslate: true })}
-          >
-            {t("settings.mode.auto")}
-          </Button>
-          <Button
-            size="sm"
-            variant={!settings.autoTranslate ? "secondary" : "ghost"}
-            className="h-8 text-xs"
-            onClick={() => update({ autoTranslate: false })}
-          >
-            {t("settings.mode.manual")}
-          </Button>
+        <div ref={modeRef} className="relative grid w-[240px] shrink-0 grid-cols-2 gap-0.5 rounded-full bg-foreground/[0.06] p-0.5 dark:bg-white/[0.06]">
+          <span
+            ref={modePillRef}
+            aria-hidden
+            className="t-pill rounded-full bg-background shadow-sm dark:bg-white/[0.12] dark:shadow-none"
+          />
+          {([true, false] as const).map((auto) => {
+            const on = settings.autoTranslate === auto
+            return (
+              <button
+                key={String(auto)}
+                type="button"
+                aria-pressed={on}
+                data-pill-active={on}
+                className={cn(
+                  "relative z-[1] h-7 rounded-full text-xs font-medium transition-[color,transform] duration-150 active:scale-[0.98]",
+                  on ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => update({ autoTranslate: auto })}
+              >
+                {t(auto ? "settings.mode.auto" : "settings.mode.manual")}
+              </button>
+            )
+          })}
         </div>
       </Row>
 
@@ -487,6 +507,7 @@ function ConnectionSection({
       <Row label={t("settings.model")}>
         <div className="w-full max-w-[400px]">
           <ModelPicker
+            clearLabel={t("search.clear")}
             value={settings.model}
             onChange={(id) => update({ model: id })}
             models={models}
@@ -509,6 +530,7 @@ function ConnectionSection({
           <div className="flex items-center gap-2">
             <div className="flex-1">
               <ModelPicker
+            clearLabel={t("search.clear")}
                 value={settings.fallbackModel}
                 onChange={(id) => update({ fallbackModel: id })}
                 models={models}

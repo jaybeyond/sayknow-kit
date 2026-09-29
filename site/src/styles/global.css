@@ -1,0 +1,744 @@
+/* SayKnow Kit site. Neutral surfaces, one accent taken from the octopus
+   icon, and no motion beyond press feedback: people come here to read facts
+   and download, not to watch things arrive. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-2: #f4f3f1;
+  --text: #1c1917;
+  --muted: #6b6560;
+  --border: #e7e5e4;
+  --accent: #e2601a;
+  --accent-hover: #cc5516;
+  --accent-ink: #ffffff;
+  --accent-soft: #fdeee4;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --max: 1040px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Hiragino Sans",
+    "PingFang SC", "Microsoft YaHei", "Noto Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Dark palette. theme-init.js sets data-theme before first paint (the
+   visitor's choice, or the system's); without script the media query below
+   follows the system. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121212;
+  --surface: #1b1b1b;
+  --surface-2: #232323;
+  --text: #f5f5f4;
+  --muted: #a8a29e;
+  --border: #2c2c2c;
+  --accent: #f06d23;
+  --accent-hover: #ff7d34;
+  --accent-ink: #ffffff;
+  --accent-soft: #2a1a10;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #121212;
+    --surface: #1b1b1b;
+    --surface-2: #232323;
+    --text: #f5f5f4;
+    --muted: #a8a29e;
+    --border: #2c2c2c;
+    --accent: #f06d23;
+    --accent-hover: #ff7d34;
+    --accent-ink: #ffffff;
+    --accent-soft: #2a1a10;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+kbd {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 16px;
+  top: 12px;
+  z-index: 10;
+  background: var(--surface);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ─── Header ─── */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+.site-header .wrap {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 60px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+/* The sayknow.ai wordmark, painted in the current text color through a
+   mask so one file serves light and dark mode. 1791×324 source. */
+.wordmark {
+  display: inline-block;
+  height: 20px;
+  aspect-ratio: 1791 / 324;
+  background-color: currentColor;
+  -webkit-mask: url("/sayknow-ai.png") center / contain no-repeat;
+  mask: url("/sayknow-ai.png") center / contain no-repeat;
+}
+.wordmark.small {
+  height: 13px;
+  vertical-align: -1px;
+}
+.brand-kit {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.nav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.nav a[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* ─── Language menu (no script: a details element) ─── */
+/* ─── Theme switch ─── */
+.theme-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  transition:
+    color 150ms ease,
+    transform 160ms var(--ease-out);
+}
+.theme-toggle:active {
+  transform: scale(0.94);
+}
+.theme-toggle svg {
+  grid-area: 1 / 1;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+/* The icon shows where a click takes you: a moon in light, a sun in dark. */
+.theme-toggle .sun,
+:root[data-theme="dark"] .theme-toggle .moon {
+  opacity: 0;
+  transform: rotate(-45deg) scale(0.8);
+}
+:root[data-theme="dark"] .theme-toggle .sun {
+  opacity: 1;
+  transform: none;
+}
+/* Without script the switch cannot work, so it is not shown. */
+:root:not([data-theme]) .theme-toggle {
+  display: none;
+}
+
+.lang {
+  position: relative;
+  font-size: 14px;
+}
+.lang summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  user-select: none;
+}
+.lang summary::-webkit-details-marker {
+  display: none;
+}
+.lang ul {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+  min-width: 160px;
+  transform-origin: top right;
+}
+.lang[open] ul {
+  animation: menu-in 160ms var(--ease-out);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+}
+.lang li a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+}
+.lang li a[aria-current="true"] {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+/* ─── Buttons ─── */
+.btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-decoration: none;
+  min-width: 240px;
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, border-color 150ms ease;
+  user-select: none;
+  touch-action: manipulation;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn strong {
+  font-size: 16px;
+  font-weight: 650;
+}
+.btn span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btn.primary span {
+  color: color-mix(in srgb, var(--accent-ink) 78%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav a:hover,
+  .theme-toggle:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .lang li a:hover {
+    background: var(--surface-2);
+  }
+  .btn:hover {
+    border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+  }
+  .btn.primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .text-link:hover {
+    color: var(--accent);
+  }
+}
+
+.text-link {
+  color: var(--text);
+  font-weight: 550;
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+.text-link::after {
+  content: " →";
+}
+.text-link.back::after {
+  content: none;
+}
+
+/* ─── Page scaffolding ─── */
+main {
+  padding: 56px 0 88px;
+}
+.page-head {
+  margin-bottom: 40px;
+  max-width: 680px;
+}
+.page-head h1 {
+  font-size: clamp(28px, 4vw, 38px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+}
+.page-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 17px;
+}
+h2 {
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+.section {
+  margin-top: 48px;
+}
+.muted {
+  color: var(--muted);
+}
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+/* ─── Home ─── */
+.hero {
+  display: grid;
+  gap: 28px;
+  justify-items: start;
+  max-width: 760px;
+}
+.hero-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+}
+.hero h1 {
+  font-size: clamp(36px, 6vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+.hero .tagline {
+  font-size: clamp(18px, 2.2vw, 21px);
+  color: var(--muted);
+  margin: 12px 0 0;
+  max-width: 640px;
+}
+.release-pill {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  align-items: baseline;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+}
+.release-pill > * {
+  white-space: nowrap;
+}
+.release-pill b {
+  font-weight: 650;
+}
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+/* Separate tiles rather than one ruled table: five facts never fill whole
+   rows, and a ruled grid showed the leftover cells as a grey block. */
+.facts {
+  margin: 72px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.facts div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  min-width: 0;
+}
+.facts dt {
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* ─── Features ─── */
+.feature-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
+}
+.feature-nav {
+  position: sticky;
+  top: 88px;
+  align-self: start;
+  display: grid;
+  gap: 2px;
+  font-size: 15px;
+}
+.feature-nav a {
+  padding: 7px 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--muted);
+}
+.feature-nav a[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+.points {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.points li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.points h3 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+.points p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.notes {
+  margin-top: 28px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 16px 20px;
+}
+.notes h2 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.notes ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  font-size: 15px;
+}
+
+/* ─── Lists, tables, steps ─── */
+.stack {
+  display: grid;
+  gap: 16px;
+}
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+ol.steps,
+ul.plain {
+  margin: 0;
+  padding-left: 20px;
+}
+ol.steps li,
+ul.plain li {
+  margin: 6px 0;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.table th {
+  color: var(--muted);
+  font-weight: 550;
+  font-size: 13px;
+}
+.table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.cmd-lead {
+  margin: 16px 0 8px;
+  font-size: 15px;
+}
+pre.cmd {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  user-select: all;
+}
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 6px;
+  margin-right: 3px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: center;
+  font-size: 13px;
+}
+
+/* ─── Changelog ─── */
+.releases {
+  display: grid;
+  gap: 0;
+}
+.release {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 24px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+}
+.release h2 {
+  font-size: 18px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.release time {
+  color: var(--muted);
+  font-size: 14px;
+}
+.release ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.release li + li {
+  margin-top: 6px;
+}
+.badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ─── Feedback ─── */
+.action-card h2 {
+  margin-bottom: 6px;
+}
+.action-card p {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+.action-card .btn {
+  min-width: 0;
+}
+
+/* ─── Footer ─── */
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding: 28px 0 40px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.site-footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+}
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.site-footer a {
+  text-decoration: none;
+}
+.site-footer .spacer {
+  margin-left: auto;
+}
+
+@media (max-width: 760px) {
+  /* Brand and language on the first row, the page links on a second row of
+     their own instead of scrolling out of sight behind the language menu. */
+  .site-header .wrap {
+    flex-wrap: wrap;
+    height: auto;
+    gap: 0 12px;
+    padding-top: 10px;
+  }
+  .theme-toggle {
+    margin-left: auto;
+  }
+  .nav {
+    order: 3;
+    width: 100%;
+    margin: 6px 0 4px -10px;
+  }
+  .feature-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .feature-nav {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .release {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .btn {
+    min-width: 0;
+    width: 100%;
+  }
+  main {
+    padding-top: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lang[open] ul {
+    animation: none;
+  }
+  .btn:active,
+  .theme-toggle:active {
+    transform: none;
+  }
+  .theme-toggle svg {
+    transition: opacity 150ms ease;
+  }
+  .theme-toggle .sun,
+  :root[data-theme="dark"] .theme-toggle .moon {
+    transform: none;
+  }
+}

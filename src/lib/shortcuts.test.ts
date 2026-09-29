@@ -9,8 +9,8 @@ import {
   formatCombo,
   matchesCombo,
   shortcut,
-  useShortcuts,
 } from "./shortcuts"
+import { useShortcuts } from "@/hooks/useShortcuts"
 
 const key = (code: string, mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {}) => ({
   code,

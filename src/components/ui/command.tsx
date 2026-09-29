@@ -1,7 +1,8 @@
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
-import { SearchIcon } from "lucide-react"
+import { SearchIcon, XIcon } from "lucide-react"
 
+import { dissolveClear } from "@/lib/dissolve-clear"
 import { cn } from "@/lib/utils"
 import {
   Dialog,
@@ -58,10 +59,17 @@ function CommandDialog({
   )
 }
 
+/**
+ * With `clearLabel` (and a controlled `value` / `onValueChange`), a clear
+ * button appears while there is a query and dissolves it away.
+ */
 function CommandInput({
   className,
+  clearLabel,
   ...props
-}: React.ComponentProps<typeof CommandPrimitive.Input>) {
+}: React.ComponentProps<typeof CommandPrimitive.Input> & { clearLabel?: string }) {
+  const inputRef = React.useRef<HTMLInputElement | null>(null)
+  const clearable = clearLabel && props.value && props.onValueChange
   return (
     <div
       data-slot="command-input-wrapper"
@@ -75,7 +83,22 @@ function CommandInput({
           className
         )}
         {...props}
+        ref={inputRef}
       />
+      {clearable && (
+        <button
+          type="button"
+          aria-label={clearLabel}
+          title={clearLabel}
+          onPointerDown={(e) => {
+            if (document.activeElement === inputRef.current) e.preventDefault()
+          }}
+          onClick={() => dissolveClear(inputRef.current, () => props.onValueChange?.(""))}
+          className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-foreground/10 hover:text-foreground active:scale-90"
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
     </div>
   )
 }

@@ -11,14 +11,15 @@
 // Global shortcuts are registered by the Rust side (src-tauri/src/global_shortcuts.rs),
 // which keeps its own table; a Rust test fails if the two drift apart.
 //
+// No React here: the website's shortcuts page reads this same table, and the
+// in-app key binding hook lives in src/hooks/useShortcuts.ts.
+//
 // Why ⌃⌥⌘ for global: ⌘⇧ letters are almost all taken by browsers (⌘⇧T is
 // "reopen closed tab"), and bare ⌃⌥ is VoiceOver's modifier and a chord other
 // apps and input methods already use; with ⌘ added nothing else claims it and
 // it still types no characters. Windows gets
 // Ctrl+Alt+Shift because Ctrl+Alt is AltGr there: Ctrl+Alt+2 is how a Spanish
 // keyboard types "@", and a global hotkey on it would swallow the character.
-
-import { useEffect, useRef } from "react"
 
 export type ShortcutGroup = "global" | "app" | "translate" | "chat" | "clipboard"
 
@@ -168,35 +169,4 @@ export function comboKeys(combo: string, mac = isMacPlatform()): string[] {
 /** One-line form for tooltips and prose: ⌃⌥⌘S on macOS, Ctrl+Alt+Shift+S elsewhere. */
 export function formatCombo(combo: string, mac = isMacPlatform()): string {
   return comboKeys(combo, mac).join(mac ? "" : "+")
-}
-
-/** Return false to let the key through (nothing to act on right now). */
-export type ShortcutHandler = (e: KeyboardEvent) => boolean | void
-
-/**
- * Bind in-app shortcuts by id while the calling component is mounted. Only
- * the active panel is mounted, so tab-specific ids never fire in another tab.
- * A key a focused field already handled (defaultPrevented) is left alone.
- */
-export function useShortcuts(bindings: Record<string, ShortcutHandler | undefined>): void {
-  const ref = useRef(bindings)
-  useEffect(() => {
-    ref.current = bindings
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.repeat || e.isComposing) return
-      for (const [id, handler] of Object.entries(ref.current)) {
-        if (!handler) continue
-        const def = shortcut(id)
-        if (def.local || def.group === "global") continue
-        if (!matchesCombo(def.combo, e)) continue
-        if (handler(e) === false) return
-        e.preventDefault()
-        return
-      }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [])
 }

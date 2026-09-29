@@ -1,0 +1,109 @@
+---
+// The landing page: what it is and the download first, then one chapter per
+// feature while the app mockup beside them follows along, then the facts.
+// Each chapter links to its feature page for the details.
+import Base from "../../layouts/Base.astro"
+import DownloadButtons from "../../components/DownloadButtons.astro"
+import PopoverMock from "../../components/PopoverMock.astro"
+import MenuBar from "../../components/MenuBar.astro"
+import { copyFor } from "../../i18n"
+import { buildRelease, formatDate, localeParams, versionAnchor } from "../../data/build"
+import { FEATURE_IDS, localePath, type Locale } from "../../data/site"
+import { comboKeys, shortcut } from "../../../../src/lib/shortcuts"
+import "../../styles/landing.css"
+
+export function getStaticPaths() {
+  return localeParams()
+}
+
+const locale = Astro.params.lang as Locale
+const t = copyFor(locale)
+const l = t.landing
+const release = await buildRelease()
+const released = t.home.released
+const openKeys = comboKeys(shortcut("global.toggle").combo, true)
+---
+
+<Base locale={locale} path="" current="home">
+  <div data-release={release.version} data-story>
+    <section class="st-hero">
+      <span class="lp-eyebrow">{l.eyebrow}</span>
+      <h1>{l.headline}</h1>
+      <p class="lp-body">{l.body}</p>
+      <p class="keys" aria-label={openKeys.join(" ")}>{openKeys.map((k) => <kbd>{k}</kbd>)}</p>
+      <DownloadButtons release={release} t={t} />
+      <a class="release-pill" href={`${localePath(locale, "changelog")}#${versionAnchor(release.version)}`}>
+        <span>{t.home.latest}</span>
+        <b data-release-version>v{release.version}</b>
+        {release.date && <span data-release-date={released}>{released.replace("{date}", formatDate(release.date, locale))}</span>}
+      </a>
+      <div class="st-hero-bar">
+        <MenuBar locale={locale} />
+      </div>
+    </section>
+
+    <div class="st-grid">
+      <div class="st-stage">
+        {FEATURE_IDS.map((id, i) => <PopoverMock panel={id} locale={locale} class={i === 0 ? "st-first" : undefined} />)}
+      </div>
+      <div>
+        {
+          FEATURE_IDS.map((id, i) => {
+            const s = l.sections[id]
+            return (
+              <section class="st-chapter" data-chapter={i}>
+                <div class="st-progress" aria-hidden="true">
+                  {FEATURE_IDS.map((_, j) => (
+                    <i class:list={{ on: j <= i }} />
+                  ))}
+                </div>
+                <span class="lp-eyebrow">{t.features.items[id].name}</span>
+                <h2 class="lp-headline">{s.headline}</h2>
+                <p class="lp-body">{s.body}</p>
+                <ul class="lp-bullets">
+                  {s.bullets.map((b) => (
+                    <li>{b}</li>
+                  ))}
+                </ul>
+                <a class="text-link" href={localePath(locale, `features/${id}`)}>
+                  {t.features.items[id].name} · {t.features.more}
+                </a>
+                <div class="inline-mock">
+                  <PopoverMock panel={id} locale={locale} />
+                </div>
+              </section>
+            )
+          })
+        }
+      </div>
+    </div>
+
+    <section class="lp-facts reveal">
+      <h2>{l.factsTitle}</h2>
+      <dl class="facts">
+        {
+          t.home.facts.map((fact) => (
+            <div>
+              <dt>{fact.title}</dt>
+              <dd>{fact.body}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </section>
+
+    <section class="lp-closing reveal">
+      <img class="hero-icon" src="/icon.png" alt="" width="84" height="84" />
+      <h2>{l.closingHeadline}</h2>
+      <p>{l.closingBody}</p>
+      <DownloadButtons release={release} t={t} />
+      <a class="text-link" href={localePath(locale, "download")}>{t.home.otherFormats}</a>
+    </section>
+  </div>
+</Base>
+
+<script>
+  import { startReveal, startStory } from "../../scripts/landing"
+  startReveal(document)
+  startStory(document)
+</script>

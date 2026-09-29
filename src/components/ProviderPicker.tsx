@@ -103,7 +103,7 @@ export function ProviderPicker({
               className={cn(
                 "flex items-start gap-2 rounded-md border px-2.5 py-2 text-left text-xs transition",
                 active
-                  ? "border-foreground/60 bg-accent/40"
+                  ? "border-primary/70 bg-primary/[0.06]"
                   : "border-border hover:border-border/80 hover:bg-accent/20",
               )}
             >
@@ -111,7 +111,7 @@ export function ProviderPicker({
                 className={cn(
                   "mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border",
                   active
-                    ? "border-foreground bg-foreground text-background"
+                    ? "border-primary bg-primary text-primary-foreground"
                     : "border-border",
                 )}
               >
@@ -153,7 +153,7 @@ export function ProviderPicker({
                 className={cn(
                   "rounded px-2 py-1 text-[11px] transition-colors duration-150 active:scale-[0.98]",
                   selected
-                    ? "bg-background font-medium text-foreground shadow-sm"
+                    ? "bg-background font-medium text-foreground shadow-sm dark:bg-white/[0.12] dark:shadow-none"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >

@@ -1,0 +1,32 @@
+---
+// A slice of the macOS menu bar with SayKnow Kit's icon and CPU readout.
+import { HTML_LANG, type Locale } from "../data/site"
+
+interface Props {
+  locale: Locale
+}
+const { locale } = Astro.props
+// A fixed moment, so every build draws the same clock.
+const clock = new Intl.DateTimeFormat(HTML_LANG[locale], {
+  month: "short",
+  day: "numeric",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZone: "UTC",
+}).format(new Date("2026-09-28T14:02:00Z"))
+---
+
+<div class="menubar" aria-hidden="true">
+  <svg class="dim" width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+    <path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 6.9a6 6 0 0 1 8 0M6.5 9.5a2.5 2.5 0 0 1 3 0"></path>
+  </svg>
+  <span class="me"><img src="/favicon.png" alt="" width="16" height="16" />CPU 23%</span>
+  <svg class="dim" width="22" height="11" viewBox="0 0 22 11" fill="none" stroke="currentColor" stroke-width="1.2">
+    <rect x="0.6" y="0.6" width="18.8" height="9.8" rx="2.5"></rect>
+    <rect x="2.4" y="2.4" width="12.6" height="6.2" rx="1.2" fill="currentColor" stroke="none"></rect>
+    <path d="M21 3.8v3.4" stroke-linecap="round"></path>
+  </svg>
+  <span>{clock}</span>
+</div>

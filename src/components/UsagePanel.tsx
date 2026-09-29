@@ -22,6 +22,7 @@ import {
 import { formatCost, formatTokens as formatAppTokens, modelsFromDay, shortenModelName } from "@/lib/usage"
 import { formatCharacters, type DeeplUsage } from "@/lib/deepl"
 import { cn } from "@/lib/utils"
+import { Shimmer } from "./motion"
 
 type Props = {
   settings: Settings
@@ -141,7 +142,7 @@ export function UsagePanel({ settings, active }: Props) {
 
       {agents.length === 0 && loading && (
         <div className="py-8 text-center text-xs text-muted-foreground">
-          {t("usage.scanning")}
+          <Shimmer text={t("usage.scanning")} />
         </div>
       )}
 

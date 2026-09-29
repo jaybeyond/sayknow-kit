@@ -60,7 +60,9 @@ export function QuickMenu({
           {/* The release check is only useful if it is visible without
               opening anything: an unread dot rides the gear. */}
           {outdated && (
-            <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="t-badge absolute right-0.5 top-0.5">
+              <span className="t-badge-dot h-1.5 w-1.5 rounded-full bg-primary" />
+            </span>
           )}
         </Button>
       </PopoverTrigger>

@@ -1,0 +1,58 @@
+name: Bug report / 버그 신고
+description: Something behaves unexpectedly, freezes or looks wrong. / 예상과 다르게 동작하거나 멈추거나 잘못 보이는 것.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search [open issues](https://github.com/jaybeyond/sayknow-kit/issues) first. Any language is fine.
+        먼저 [열린 이슈](https://github.com/jaybeyond/sayknow-kit/issues)를 찾아봐 주세요. 어떤 언어로 써도 됩니다.
+  # The website pre-fills this field from ?version=, so its id must stay "version".
+  - type: input
+    id: version
+    attributes:
+      label: App version / 앱 버전
+      description: Settings → About / 설정 → 정보
+      placeholder: "0.3.8"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system / 운영체제
+      options:
+        - macOS (Apple Silicon)
+        - Windows (x64)
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version / 운영체제 버전
+      placeholder: "macOS 26.1, Windows 11 24H2, …"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / 무슨 일이 있었나요
+      description: What you expected, and what you saw instead. / 기대한 것과 실제로 본 것.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 다시 일어나게 하는 순서
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log or screenshot / 로그 또는 화면 캡처
+      description: |
+        macOS: ~/Library/Logs/com.sayknow.app/SayKnow Kit.log
+        Windows: %LOCALAPPDATA%\com.sayknow.app\logs
+        Remove anything personal before posting. / 올리기 전에 개인 정보는 지워 주세요.
+      render: text

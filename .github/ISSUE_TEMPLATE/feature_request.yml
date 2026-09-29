@@ -1,0 +1,32 @@
+name: Feature request / 기능 제안
+description: Something you wish it did, or a behaviour to change. / 있었으면 하는 기능이나 바꾸고 싶은 동작.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any language is fine. / 어떤 언어로 써도 됩니다.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do? / 무엇을 하려고 하나요?
+      description: The situation, not the solution yet. / 해결책보다 상황을 먼저 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help / 어떻게 되면 좋을까요
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 영역
+      options:
+        - Translate / 번역
+        - Chat / 챗
+        - Clipboard / 클립보드
+        - Tools / 도구
+        - Settings / 설정
+        - Other / 기타

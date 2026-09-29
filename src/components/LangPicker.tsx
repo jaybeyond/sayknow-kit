@@ -37,6 +37,13 @@ function localizedName(code: string, targetLocale: string): string {
 export function LangPicker({ value, onChange, showAuto, uiLocale }: Props) {
   const { t, locale } = useT(uiLocale)
   const [open, setOpen] = useState(false)
+  // Controlled so the search box can offer a clear button; emptied on every
+  // open, as the uncontrolled input used to be.
+  const [search, setSearch] = useState("")
+  const toggle = (next: boolean) => {
+    if (next) setSearch("")
+    setOpen(next)
+  }
   const items = LANGS.filter((l) => showAuto || l.code !== "auto")
 
   // Pre-compute localized names for the right column. Keyed on the
@@ -61,13 +68,13 @@ export function LangPicker({ value, onChange, showAuto, uiLocale }: Props) {
       : current?.label ?? value
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={toggle}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
           role="combobox"
           aria-expanded={open}
-          className="h-7 w-[110px] justify-between bg-transparent px-2 text-xs hover:bg-background data-[state=open]:bg-background"
+          className="h-6 w-[110px] justify-between rounded-full bg-foreground/[0.06] px-2.5 text-[11px] font-medium hover:bg-foreground/10 data-[state=open]:bg-foreground/10 dark:bg-white/[0.08] dark:hover:bg-white/[0.13] dark:data-[state=open]:bg-white/[0.13]"
         >
           <span className="truncate">{triggerLabel}</span>
           <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
@@ -80,7 +87,7 @@ export function LangPicker({ value, onChange, showAuto, uiLocale }: Props) {
             return haystack.includes(search.toLowerCase()) ? 1 : 0
           }}
         >
-          <CommandInput placeholder={t("lang.search")} className="text-xs" />
+          <CommandInput placeholder={t("lang.search")} className="text-xs" value={search} onValueChange={setSearch} clearLabel={t("search.clear")} />
           <CommandList className="max-h-[300px]">
             <CommandEmpty>{t("common.empty")}</CommandEmpty>
             <CommandGroup>

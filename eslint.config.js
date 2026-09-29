@@ -8,7 +8,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   // Build output, not source. src-tauri/target holds tauri codegen assets
   // that otherwise get linted as if we wrote them.
-  globalIgnores(['dist', 'src-tauri/target', 'src-tauri/gen']),
+  globalIgnores(['dist', 'src-tauri/target', 'src-tauri/gen', 'site/dist', 'site/.astro', 'site/node_modules']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

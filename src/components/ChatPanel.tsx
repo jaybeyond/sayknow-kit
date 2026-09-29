@@ -41,7 +41,8 @@ import {
 } from "@/lib/chat-image"
 import { AttachmentStrip, ImageLightbox, MessageImages } from "@/components/ChatImages"
 import { cn } from "@/lib/utils"
-import { useShortcuts } from "@/lib/shortcuts"
+import { useShortcuts } from "@/hooks/useShortcuts"
+import { IconSwap, Shimmer } from "./motion"
 
 type Props = {
   settings: Settings
@@ -323,7 +324,7 @@ export function ChatPanel({ settings, update }: Props) {
                     className={cn(
                       "max-w-[85%] rounded-2xl text-[13px] leading-relaxed",
                       isUser
-                        ? "bg-foreground text-background"
+                        ? "bg-primary text-primary-foreground"
                         : "bg-muted",
                       isEditing && "ring-2 ring-amber-500/40",
                     )}
@@ -354,11 +355,11 @@ export function ChatPanel({ settings, update }: Props) {
                       label={copiedId === m.id ? t("copied") : t("copy")}
                       onClick={() => copy(m.content, m.id)}
                     >
-                      {copiedId === m.id ? (
-                        <Check className="h-3 w-3 text-emerald-500" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
+                      <IconSwap
+                        on={copiedId === m.id}
+                        a={<Copy className="h-3 w-3" />}
+                        b={<Check className="h-3 w-3 text-emerald-500" />}
+                      />
                     </MsgActionButton>
                     {isUser ? (
                       <MsgActionButton
@@ -408,8 +409,7 @@ export function ChatPanel({ settings, update }: Props) {
                 ) : (
                   activeTools.length === 0 && (
                     <div className="inline-flex items-center gap-1.5 rounded-2xl bg-muted px-3 py-2 text-[13px] text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      {t("chat.thinking")}
+                      <Shimmer text={t("chat.thinking")} />
                     </div>
                   )
                 )}
@@ -452,7 +452,7 @@ export function ChatPanel({ settings, update }: Props) {
         />
         {/* One rounded field holding the attach button, the textarea, and
             send — reads as a single control instead of three loose parts. */}
-        <div className="flex items-end gap-1 rounded-2xl border bg-background py-1 pl-1 pr-1 shadow-sm transition-[box-shadow,border-color] duration-150 ease-out focus-within:border-ring/60 focus-within:shadow-md dark:bg-muted/40 dark:focus-within:bg-muted/60">
+        <div className="flex items-end gap-1 rounded-2xl border bg-background py-1 pl-1 pr-1 shadow-sm transition-[box-shadow,border-color] duration-150 ease-out focus-within:border-foreground/20 focus-within:shadow-md dark:bg-muted/40 dark:focus-within:bg-muted/60">
           <input
             ref={fileInputRef}
             type="file"
@@ -531,7 +531,7 @@ export function ChatPanel({ settings, update }: Props) {
               size="icon"
               onClick={submit}
               disabled={!canSubmit}
-              className="h-8 w-8 shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-95 disabled:opacity-30"
+              className="h-8 w-8 shrink-0 rounded-full transition-[transform,background-color,color] duration-150 ease-out active:scale-95 disabled:bg-foreground/10 disabled:text-muted-foreground disabled:opacity-100"
               aria-label={t("chat.send")}
               title={t("chat.send")}
             >

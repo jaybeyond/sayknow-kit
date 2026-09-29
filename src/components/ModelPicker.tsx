@@ -19,6 +19,8 @@ type Props = {
   models: OpenRouterModel[]
   loading?: boolean
   placeholder?: string
+  /** Label for the search box's clear button. */
+  clearLabel?: string
 }
 
 function priceLabel(m: OpenRouterModel): string {
@@ -37,13 +39,20 @@ export function ModelPicker({
   models,
   loading,
   placeholder,
+  clearLabel,
 }: Props) {
   const [open, setOpen] = useState(false)
+  // Controlled for the clear button; emptied on every open.
+  const [search, setSearch] = useState("")
+  const toggle = (next: boolean) => {
+    if (next) setSearch("")
+    setOpen(next)
+  }
   const current = models.find((m) => m.id === value)
   const label = current?.name ?? (value || placeholder || "선택...")
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={toggle}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -72,7 +81,7 @@ export function ModelPicker({
             return haystack.includes(search.toLowerCase()) ? 1 : 0
           }}
         >
-          <CommandInput placeholder="모델 검색 (예: claude, gpt, free)..." />
+          <CommandInput placeholder="모델 검색 (예: claude, gpt, free)..." value={search} onValueChange={setSearch} clearLabel={clearLabel} />
           <CommandList className="max-h-[320px]">
             <CommandEmpty>
               {loading ? "불러오는 중..." : "결과 없음"}

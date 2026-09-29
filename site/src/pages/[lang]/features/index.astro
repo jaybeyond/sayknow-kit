@@ -1,0 +1,81 @@
+---
+// Every feature on one board, sized by how much there is to show. Each tile
+// opens its feature page.
+import Base from "../../../layouts/Base.astro"
+import PopoverMock from "../../../components/PopoverMock.astro"
+import { copyFor } from "../../../i18n"
+import { localeParams } from "../../../data/build"
+import { localePath, type FeatureId, type Locale } from "../../../data/site"
+import "../../../styles/landing.css"
+
+export function getStaticPaths() {
+  return localeParams()
+}
+
+const locale = Astro.params.lang as Locale
+const t = copyFor(locale)
+const l = t.landing
+const href = (id: FeatureId) => localePath(locale, `features/${id}`)
+const name = (id: FeatureId) => t.features.items[id].name
+---
+
+<Base locale={locale} path="features" current="features" title={t.features.title}>
+  <header class="page-head bt-head">
+    <h1>{t.features.title}</h1>
+    <p>{t.features.intro}</p>
+  </header>
+
+  <div class="bt-grid">
+    <a class="bt-tile wide reveal" href={href("translate")}>
+      <div class="bt-split">
+        <div>
+          <span class="lp-eyebrow">{name("translate")}</span>
+          <h2>{l.sections.translate.headline}</h2>
+          <p>{l.sections.translate.body}</p>
+          <p class="bt-big">1.5s</p>
+          <p>{l.stats.translate}</p>
+        </div>
+        <div class="bt-art"><PopoverMock panel="translate" locale={locale} /></div>
+      </div>
+    </a>
+    <a class="bt-tile narrow reveal" href={href("providers")}>
+      <span class="lp-eyebrow">{name("providers")}</span>
+      <h2>{l.sections.providers.headline}</h2>
+      <p class="bt-big">360+</p>
+      <p>{l.stats.providers}</p>
+    </a>
+    <a class="bt-tile half reveal" href={href("clipboard")}>
+      <span class="lp-eyebrow">{name("clipboard")}</span>
+      <h2>{l.sections.clipboard.headline}</h2>
+      <p>{l.sections.clipboard.body}</p>
+      <div class="bt-art"><PopoverMock panel="clipboard" locale={locale} /></div>
+    </a>
+    <a class="bt-tile half reveal" href={href("chat")}>
+      <span class="lp-eyebrow">{name("chat")}</span>
+      <h2>{l.sections.chat.headline}</h2>
+      <p>{l.sections.chat.body}</p>
+      <div class="bt-art"><PopoverMock panel="chat" locale={locale} /></div>
+    </a>
+    <a class="bt-tile narrow reveal" href={href("usage")}>
+      <span class="lp-eyebrow">{name("usage")}</span>
+      <h2>{l.sections.usage.headline}</h2>
+      <p class="bt-big">5h · 7d</p>
+      <p>{l.stats.usage}</p>
+    </a>
+    <a class="bt-tile wide reveal" href={href("system")}>
+      <div class="bt-split">
+        <div>
+          <span class="lp-eyebrow">{name("system")}</span>
+          <h2>{l.sections.system.headline}</h2>
+          <p>{l.sections.system.body}</p>
+        </div>
+        <div class="bt-art"><PopoverMock panel="system" locale={locale} /></div>
+      </div>
+    </a>
+  </div>
+</Base>
+
+<script>
+  import { startReveal } from "../../../scripts/landing"
+  startReveal(document)
+</script>

@@ -1,0 +1,71 @@
+---
+// Built from the app's own shortcut table and labels, so this page lists
+// exactly the keys the shipped app binds.
+import Base from "../../layouts/Base.astro"
+import { copyFor } from "../../i18n"
+import { localeParams } from "../../data/build"
+import type { Locale } from "../../data/site"
+import { SHORTCUTS, SHORTCUT_GROUPS, comboKeys } from "../../../../src/lib/shortcuts"
+import { UI_STRINGS } from "../../../../src/i18n/strings"
+
+export function getStaticPaths() {
+  return localeParams()
+}
+
+const locale = Astro.params.lang as Locale
+const t = copyFor(locale)
+const label = (key: string) => UI_STRINGS[locale][key] ?? UI_STRINGS.en[key] ?? key
+const groups = SHORTCUT_GROUPS.map((group) => ({
+  group,
+  title: label(`shortcuts.group.${group}`),
+  rows: SHORTCUTS.filter((s) => s.group === group),
+}))
+---
+
+<Base locale={locale} path="shortcuts" current="shortcuts" title={t.shortcuts.title}>
+  <header class="page-head">
+    <h1>{t.shortcuts.title}</h1>
+    <p>{t.shortcuts.intro}</p>
+  </header>
+  <div class="stack">
+    {
+      groups.map(({ group, title, rows }) => (
+        <section class="panel" id={group}>
+          <h2>{title}</h2>
+          <div class="table-scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>{t.shortcuts.action}</th>
+                  <th>macOS</th>
+                  <th>Windows</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((s) => (
+                  <tr>
+                    <td>
+                      {label(s.label)}
+                      {s.local && <span class="muted"> · {t.shortcuts.local}</span>}
+                    </td>
+                    <td>
+                      {comboKeys(s.combo, true).map((k) => (
+                        <kbd>{k}</kbd>
+                      ))}
+                    </td>
+                    <td>
+                      {comboKeys(s.combo, false).map((k) => (
+                        <kbd>{k}</kbd>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))
+    }
+  </div>
+  <p class="muted section">{t.shortcuts.note}</p>
+</Base>
