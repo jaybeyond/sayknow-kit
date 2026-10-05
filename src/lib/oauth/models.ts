@@ -1,5 +1,5 @@
 /**
- * Model catalogue for the OAuth providers.
+ * Bundled model catalogue for the OAuth providers.
  *
  * These providers are not OpenAI-compatible `/models` endpoints, so the usual
  * `useModels(apiKey, baseURL)` probe cannot discover them. Without a list of
@@ -7,33 +7,37 @@
  * endpoint returned — an OpenRouter id like `openai/gpt-4o-mini` would then be
  * sent to `api.anthropic.com` and rejected.
  *
- * Ids are taken from `packages/ai/src/models.json` in sayknow-cli, restricted
- * to the aliases that track a current model so the list does not rot.
+ * Anthropic, Codex, xAI and Cursor publish an account-scoped list that
+ * replaces these once the account answers (`./model-discovery`,
+ * `listCursorModels`). The bundled ids are the seed shown until then and the
+ * fallback when the probe fails; Gemini has no probe and relies on them alone.
  */
 import type { OpenRouterModel } from "../openrouter"
 import type { OAuthProvider } from "./types"
 
 /**
- * Ids and ordering follow sayknow-cli's `config/model-profiles.ts` — what it
- * actually runs against these accounts. `models.json` also lists retired and
- * API-key-only entries that a subscription rejects.
+ * Ids and order as the providers' own lists answered on 2026-10-04:
+ * Anthropic `GET /v1/models` (newest first), xAI `GET /v1/language-models`.
  */
 const ANTHROPIC_MODELS: OpenRouterModel[] = [
+  { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+  { id: "claude-fable-5-1", name: "Claude Fable 5.1" },
   { id: "claude-opus-5", name: "Claude Opus 5" },
   { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+  { id: "claude-fable-5", name: "Claude Fable 5" },
   { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
 ]
 
 const XAI_MODELS: OpenRouterModel[] = [
+  { id: "grok-4.7", name: "Grok 4.7" },
   { id: "grok-4.6", name: "Grok 4.6" },
   { id: "grok-4.5", name: "Grok 4.5" },
   { id: "grok-4.3", name: "Grok 4.3" },
-  { id: "grok-4.20-beta-latest-reasoning", name: "Grok 4.20 Beta (Reasoning)" },
-  { id: "grok-4-1-fast", name: "Grok 4.1 Fast" },
+  { id: "grok-4.20-0309-reasoning", name: "Grok 4.20 (Reasoning)" },
+  { id: "grok-4.20-0309-non-reasoning", name: "Grok 4.20 (Non Reasoning)" },
 ]
 
 /**
@@ -46,11 +50,14 @@ export const OAUTH_MODELS: Record<OAuthProvider, OpenRouterModel[]> = {
   xai: XAI_MODELS,
   // A ChatGPT subscription does not unlock every Codex model — the backend
   // answers `400 "... is not supported when using Codex with a ChatGPT
-  // account"` for the rest, which is what `gpt-5.2-codex` hit. The `-codex`
-  // suffixed entries are the ones that failed; the named line is what
-  // sayknow-cli runs on a ChatGPT account.
+  // account"` for the rest, which is what `gpt-5.2-codex` hit. These are the
+  // `visibility: "list"` entries of the backend's own `/codex/models` answer,
+  // in its priority order.
   "openai-codex": [
+    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
     { id: "gpt-6-astra", name: "GPT-6 Astra" },
+    { id: "gpt-6-sol", name: "GPT-6 Sol" },
+    { id: "gpt-6-luna", name: "GPT-6 Luna" },
     { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
     { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
@@ -67,10 +74,10 @@ export const OAUTH_MODELS: Record<OAuthProvider, OpenRouterModel[]> = {
   // token and a round trip. These are the fallback so the picker is never
   // empty; `listCursorModels` replaces them once the account answers.
   cursor: [
-    { id: "composer-1", name: "Composer 1" },
+    { id: "composer-2.5", name: "Composer 2.5" },
     { id: "claude-4.5-sonnet", name: "Claude 4.5 Sonnet" },
-    { id: "gpt-5", name: "GPT-5" },
-    { id: "gemini-3-pro", name: "Gemini 3 Pro" },
+    { id: "gpt-5.5-none", name: "GPT-5.5" },
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
   ],
 }
 

@@ -43,6 +43,7 @@ import { AttachmentStrip, ImageLightbox, MessageImages } from "@/components/Chat
 import { cn } from "@/lib/utils"
 import { useShortcuts } from "@/hooks/useShortcuts"
 import { IconSwap, Shimmer } from "./motion"
+import { carry, takeCarried, useBeforeReload, useReloadHold } from "@/lib/idle-reload"
 
 type Props = {
   settings: Settings
@@ -74,7 +75,7 @@ export function ChatPanel({ settings, update }: Props) {
     model: settings.model,
     fallbackModel: settings.fallbackModel,
   })
-  const [draft, setDraft] = useState("")
+  const [draft, setDraft] = useState(() => takeCarried<string>("chat-draft") ?? "")
   const [attachments, setAttachments] = useState<ChatImage[]>([])
   const [encoding, setEncoding] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -88,6 +89,12 @@ export function ChatPanel({ settings, update }: Props) {
   // Nested drag events fire enter/leave for every child; count them so the
   // overlay does not flicker while the cursor crosses bubbles.
   const dragDepth = useRef(0)
+  // An answer in flight or attached images must not be wiped by the idle
+  // reload; typed text is simply carried across it.
+  useReloadHold(sending || encoding || attachments.length > 0)
+  useBeforeReload(() => {
+    if (draft) carry("chat-draft", draft)
+  })
 
   useEffect(() => {
     const el = scrollRef.current

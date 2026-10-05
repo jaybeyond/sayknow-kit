@@ -128,6 +128,7 @@ export function endpointPreset(provider: string): ProviderPreset | null {
 export const ZAI_MODELS: OpenRouterModel[] = [
   { id: "glm-5.3-flash", name: "GLM-5.3 Flash" },
   { id: "glm-5.3", name: "GLM-5.3" },
+  { id: "glm-5.3-highspeed", name: "GLM-5.3 Highspeed" },
   { id: "glm-5.2", name: "GLM-5.2" },
   { id: "glm-5.1", name: "GLM-5.1" },
   { id: "glm-5", name: "GLM-5" },
@@ -180,13 +181,16 @@ export function zaiReasoningParams(model: string): Record<string, unknown> {
 }
 
 /** Hardcoded Claude model list used as a fallback when an OCP-style
- *  endpoint doesn't expose `/v1/models` (or returns empty). */
+ *  endpoint doesn't expose `/v1/models` (or returns empty). Same ids as the
+ *  Anthropic OAuth seed, which Anthropic's `/v1/models` answered. */
 export const CLAUDE_CLI_MODELS: OpenRouterModel[] = [
-  { id: "claude-opus-4-5", name: "Claude Opus 4.5" },
-  { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+  { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+  { id: "claude-opus-5", name: "Claude Opus 5" },
+  { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+  { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
   { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
-  { id: "claude-opus-4-1", name: "Claude Opus 4.1" },
-  { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
 ]
 
 function trimSlash(s: string): string {

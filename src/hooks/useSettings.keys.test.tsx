@@ -29,7 +29,7 @@ vi.mock("@/lib/secrets", () => ({
 }))
 vi.mock("@/lib/oauth/registry", () => ({ ensureAccessToken: vi.fn(), OAUTH_PROVIDER_IDS: [] }))
 
-import { useSettings } from "./useSettings"
+import { popoverOpacity, useSettings } from "./useSettings"
 
 beforeEach(() => {
   localStorage.clear()
@@ -90,5 +90,24 @@ describe("per-provider API keys", () => {
     expect(vault.shared).toBe("sk-or-shared")
     expect(result.current.settings.provider).toBe("openrouter")
     expect(result.current.settings.apiKey).toBe("sk-or-shared")
+  })
+})
+
+describe("popover opacity", () => {
+  it("defaults prefs saved by older builds", async () => {
+    localStorage.setItem("sayknow:prefs", JSON.stringify({ windowMode: "compact" }))
+    const { result } = await mount()
+    expect(result.current.settings.popoverOpacity).toBe(95)
+  })
+
+  it.each([
+    [undefined, 95],
+    ["80", 95],
+    [Number.NaN, 95],
+    [10, 50],
+    [140, 100],
+    [72.4, 72],
+  ])("renders %s as %s%%", (stored, shown) => {
+    expect(popoverOpacity(stored)).toBe(shown)
   })
 })

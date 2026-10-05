@@ -10,15 +10,49 @@ import {
 } from "@/lib/openrouter"
 import { OAUTH_MODELS } from "@/lib/oauth/models"
 import { listCursorModels } from "@/lib/oauth/cursor-chat"
+import { discoverOAuthModels, isDiscoverable } from "@/lib/oauth/model-discovery"
 import { ensureAccessToken } from "@/lib/oauth/registry"
+import type { OAuthProvider } from "@/lib/oauth/types"
 
 const CACHE_KEY_PREFIX = "models-cache"
 const TTL_MS = 24 * 60 * 60 * 1000 // 24h
+/**
+ * OAuth lists change when a provider ships a model, not per request. An hour
+ * keeps a new release visible the same day without asking on every open.
+ */
+const OAUTH_TTL_MS = 60 * 60 * 1000
 
 type Cache = { fetchedAt: number; data: OpenRouterModel[] }
 
 function cacheKey(baseURL: string): string {
   return `${CACHE_KEY_PREFIX}:${baseURL}`
+}
+
+function oauthCacheKey(provider: OAuthProvider): string {
+  return `oauth-models:${provider}`
+}
+
+/** The account's own list, or null to keep the bundled one. */
+async function liveOAuthModels(provider: OAuthProvider): Promise<OpenRouterModel[] | null> {
+  if (provider !== "cursor" && !isDiscoverable(provider)) return null
+  const token = await ensureAccessToken(provider)
+  if (token.status !== "ready") return null
+  if (provider === "cursor") {
+    // The bundled fallback already fills the picker, so a failed probe is
+    // not something the user has to act on.
+    const list = await listCursorModels(token.credentials.access).catch(() => [])
+    return list.length > 0 ? list : null
+  }
+  return discoverOAuthModels(provider, token.credentials)
+}
+
+/**
+ * Builds before per-endpoint caching kept one list under the bare prefix. No
+ * build reads it any more, but WebKit still loads every localStorage item of
+ * the origin into memory: about 0.85 MB of OpenRouter catalogue held twice.
+ */
+export function dropRetiredModelCache() {
+  storage.remove(CACHE_KEY_PREFIX)
 }
 
 /** OCP runs on localhost:3456 by default. Loose match so 127.0.0.1 and
@@ -29,7 +63,7 @@ function isOcpLike(baseURL: string): boolean {
 
 export function useModels(apiKey: string, baseURL: string, provider?: string) {
   // OAuth providers answer on their own API, not an OpenAI-compatible
-  // `/models` endpoint, so their catalogue is bundled rather than probed.
+  // `/models` endpoint, so they are probed per provider further down.
   const oauthProvider = provider ? parseOAuthProvider(provider) : null
   const ocpLike = isOcpLike(baseURL)
   // Known lists shown until (or instead of) the endpoint's own answer.
@@ -95,35 +129,35 @@ export function useModels(apiKey: string, baseURL: string, provider?: string) {
     // `bundled` is a module constant or null, so it only changes with baseURL.
   }, [apiKey, baseURL, ocpLike, bundled])
 
-  const [cursorModels, setCursorModels] = useState<OpenRouterModel[] | null>(null)
+  // Every OAuth provider that publishes a list answers per account: a plan
+  // change or a new release adds models. The bundled list is the seed shown
+  // until the account answers and the fallback when it does not.
+  const [oauthLive, setOauthLive] = useState(() =>
+    oauthProvider ? storage.get<Cache>(oauthCacheKey(oauthProvider))?.data ?? null : null,
+  )
+  const [oauthFor, setOauthFor] = useState(oauthProvider)
+  if (oauthFor !== oauthProvider) {
+    setOauthFor(oauthProvider)
+    setOauthLive(oauthProvider ? storage.get<Cache>(oauthCacheKey(oauthProvider))?.data ?? null : null)
+  }
   useEffect(() => {
-    if (oauthProvider !== "cursor") return
+    if (!oauthProvider) return
+    const key = oauthCacheKey(oauthProvider)
+    const cached = storage.get<Cache>(key)
+    if (cached && Date.now() - cached.fetchedAt < OAUTH_TTL_MS) return
     let cancelled = false
-    void (async () => {
-      const token = await ensureAccessToken("cursor")
-      if (cancelled || token.status !== "ready") return
-      try {
-        const list = await listCursorModels(token.credentials.access)
-        if (!cancelled && list.length > 0) setCursorModels(list)
-      } catch {
-        // The bundled fallback already fills the picker, so a failed probe is
-        // not something the user has to act on.
-      }
-    })()
+    void liveOAuthModels(oauthProvider).then((list) => {
+      if (cancelled || !list) return
+      setOauthLive(list)
+      storage.set(key, { fetchedAt: Date.now(), data: list })
+    })
     return () => {
       cancelled = true
     }
   }, [oauthProvider])
 
-  // Cursor is the one OAuth provider that publishes its own list, and it is
-  // account-specific: a plan change adds or removes models. The bundled list
-  // is only the seed shown until the account answers.
   if (oauthProvider) {
-    const catalogue =
-      oauthProvider === "cursor"
-        ? cursorModels ?? OAUTH_MODELS.cursor
-        : OAUTH_MODELS[oauthProvider]
-    return { models: catalogue, loading: false, error: null }
+    return { models: oauthLive ?? OAUTH_MODELS[oauthProvider], loading: false, error: null }
   }
   return { models, loading, error }
 }

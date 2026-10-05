@@ -101,9 +101,9 @@ export function ToolsPanel({ settings, active }: Props) {
     void scanDisplays()
   }, [active])
   useEffect(() => {
-    setMetricsActive(active)
+    setMetricsActive(active && tab === "status")
     return () => setMetricsActive(false)
-  }, [active])
+  }, [active, tab])
   // Graphs and the process list poll only while they are on screen: walking
   // the process table is the costliest thing this panel does.
   useEffect(() => {
@@ -115,24 +115,29 @@ export function ToolsPanel({ settings, active }: Props) {
   // whose system half changes under us. The sync command is pure math on the
   // tap-tracked level (no DDC, no registry hit), so 250ms is cheap and makes
   // the thumb feel attached to F1/F2.
+  const displayActive = active && tab === "display"
+  const hasBuiltin = displays.some((d) => d.kind === "builtin")
+  const needsAccessibility = displays.some(
+    (d) => d.kind === "builtin" && d.method !== "backlight",
+  )
   useEffect(() => {
-    if (!active) return
+    if (!displayActive || !hasBuiltin) return
     const timer = setInterval(() => void syncBuiltin(), 250)
     return () => clearInterval(timer)
-  }, [active])
+  }, [displayActive, hasBuiltin])
 
   // Never auto-prompt. macOS re-shows the same consent dialog on every call,
   // and an app running from quarantine can never keep the grant, so the loop
   // the user saw was infinite. Read the state and say it once, in-app.
   useEffect(() => {
-    if (!active) return
+    if (!displayActive) return
     void refreshAccessibility()
-  }, [active])
+  }, [displayActive])
 
   // While the notice is up the user is in System Settings toggling the switch.
   // Poll so the panel reacts the moment macOS grants trust, instead of looking
   // like it is still demanding permission that was already given.
-  const awaitingTrust = active && accessibility !== null && !accessibility.trusted
+  const awaitingTrust = displayActive && needsAccessibility && accessibility !== null && !accessibility.trusted
   useEffect(() => {
     if (!awaitingTrust) return
     const timer = setInterval(() => void refreshAccessibility(), 2000)
@@ -312,9 +317,7 @@ export function ToolsPanel({ settings, active }: Props) {
 
               <AccessibilityNotice
                 state={accessibility}
-                needed={displays.some(
-                  (d) => d.kind === "builtin" && d.method !== "backlight",
-                )}
+                needed={needsAccessibility}
                 t={t}
               />
 
@@ -359,7 +362,7 @@ export function ToolsPanel({ settings, active }: Props) {
         )}
 
         {tab === "usage" && <UsagePanel settings={settings} active={active} />}
-        {tab === "mole" && <MolePanel t={t} active />}
+        {tab === "mole" && <MolePanel t={t} active={active} />}
       </div>
     </div>
   )

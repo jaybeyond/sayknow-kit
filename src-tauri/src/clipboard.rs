@@ -212,6 +212,24 @@ enum Pasteboard {
     Unreadable,
 }
 
+/// Check the inexpensive native revision before allocating/copying clipboard
+/// text. Failed or raced reads are retried; platforms without a counter keep
+/// their existing text-based polling behavior.
+fn poll_pasteboard(
+    last_change_count: &mut Option<isize>,
+    change_count: Option<isize>,
+    read: impl FnOnce() -> Pasteboard,
+) -> Option<Pasteboard> {
+    if change_count.is_some() && change_count == *last_change_count {
+        return None;
+    }
+    let contents = read();
+    if !matches!(contents, Pasteboard::Unreadable) {
+        *last_change_count = change_count;
+    }
+    Some(contents)
+}
+
 /// Read the pasteboard's text unless it is marked as not to be recorded.
 ///
 /// The marks are checked first, so a copied password is never even read into
@@ -313,6 +331,7 @@ pub fn spawn_poller(app: AppHandle, handle: Arc<ClipboardHandle>) {
             Pasteboard::Unrecorded | Pasteboard::Unreadable => None,
         };
     }
+    let mut last_change_count = None;
 
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -321,7 +340,14 @@ pub fn spawn_poller(app: AppHandle, handle: Arc<ClipboardHandle>) {
             continue;
         }
 
-        let text = match read_pasteboard(&app) {
+        let Some(contents) = poll_pasteboard(
+            &mut last_change_count,
+            pasteboard_change_count(),
+            || read_pasteboard(&app),
+        ) else {
+            continue;
+        };
+        let text = match contents {
             Pasteboard::Text(text) => text,
             Pasteboard::Unrecorded => {
                 // Forget the last text seen, so a clip copied over the secret
@@ -615,6 +641,116 @@ pub fn set_clipboard_max_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unchanged_pasteboard_is_not_read_or_copied_again() {
+        let mut revision = None;
+        let large_text = "x".repeat(1024 * 1024);
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(10), || Pasteboard::Text(large_text)),
+            Some(Pasteboard::Text(_))
+        ));
+        for _ in 0..100 {
+            assert!(poll_pasteboard(&mut revision, Some(10), || {
+                panic!("unchanged clipboard must not be read")
+            }).is_none());
+        }
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(11), || Pasteboard::Text("new copy".into())),
+            Some(Pasteboard::Text(text)) if text == "new copy"
+        ));
+    }
+
+    #[test]
+    fn failed_or_raced_pasteboard_reads_retry_the_same_revision() {
+        let mut revision = Some(10);
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(11), || Pasteboard::Unreadable),
+            Some(Pasteboard::Unreadable)
+        ));
+        assert_eq!(revision, Some(10));
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(11), || Pasteboard::Text("retry".into())),
+            Some(Pasteboard::Text(text)) if text == "retry"
+        ));
+    }
+
+    #[test]
+    fn unrecorded_revision_is_skipped_until_the_next_copy() {
+        let mut revision = None;
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(1), || Pasteboard::Unrecorded),
+            Some(Pasteboard::Unrecorded)
+        ));
+        assert!(poll_pasteboard(&mut revision, Some(1), || {
+            panic!("marked unchanged contents must not be read")
+        }).is_none());
+        assert!(matches!(
+            poll_pasteboard(&mut revision, Some(2), || Pasteboard::Text("ordinary".into())),
+            Some(Pasteboard::Text(text)) if text == "ordinary"
+        ));
+    }
+
+    #[test]
+    fn platforms_without_a_revision_keep_reading_each_poll() {
+        let mut revision = None;
+        let mut reads = 0;
+        for _ in 0..3 {
+            assert!(matches!(
+                poll_pasteboard(&mut revision, None, || {
+                    reads += 1;
+                    Pasteboard::Text("copy".into())
+                }),
+                Some(Pasteboard::Text(_))
+            ));
+        }
+        assert_eq!(reads, 3);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Needs a macOS pasteboard server; uses a private pasteboard only"]
+    fn live_idle_polling_reads_large_private_pasteboard_once() {
+        use objc2_app_kit::NSPasteboard;
+        use objc2_foundation::NSString;
+
+        objc2::rc::autoreleasepool(|_| {
+            let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+            let text_type = NSString::from_str("public.utf8-plain-text");
+            let payload = "x".repeat(1024 * 1024);
+            pasteboard.clearContents();
+            assert!(pasteboard.setString_forType(&NSString::from_str(&payload), &text_type));
+            let read = || objc2::rc::autoreleasepool(|_| {
+                pasteboard.stringForType(&text_type).unwrap().to_string()
+            });
+
+            let before = std::time::Instant::now();
+            let mut baseline_bytes = 0;
+            for _ in 0..100 {
+                baseline_bytes += read().len();
+            }
+            let baseline_elapsed = before.elapsed();
+            let before = std::time::Instant::now();
+            let mut revision = None;
+            let mut optimized_bytes = 0;
+            let mut reads = 0;
+            for _ in 0..100 {
+                let result = poll_pasteboard(&mut revision, Some(pasteboard.changeCount()), || {
+                    reads += 1;
+                    Pasteboard::Text(read())
+                });
+                if let Some(Pasteboard::Text(text)) = result {
+                    optimized_bytes += text.len();
+                }
+            }
+            let optimized_elapsed = before.elapsed();
+            assert_eq!(reads, 1);
+            assert_eq!(baseline_bytes, 100 * payload.len());
+            assert_eq!(optimized_bytes, payload.len());
+            eprintln!("private pasteboard benchmark: baseline 100 reads/{baseline_bytes} bytes/{baseline_elapsed:?}; optimized {reads} read/{optimized_bytes} bytes/{optimized_elapsed:?}");
+            let _: () = unsafe { objc2::msg_send![&*pasteboard, releaseGlobally] };
+        });
+    }
 
     fn clip(text: &str, ts: i64, pinned: bool) -> ClipEntry {
         ClipEntry {

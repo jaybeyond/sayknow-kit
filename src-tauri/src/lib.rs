@@ -525,8 +525,23 @@ fn hide_window(app: AppHandle) -> Result<(), String> {
         app.state::<AppState>()
             .popover_open
             .store(false, Ordering::Relaxed);
+        let _ = app.emit("sayknow:hidden", ());
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn is_main_window_visible(app: AppHandle) -> Result<bool, String> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let owner = app.clone();
+    app.run_on_main_thread(move || {
+        let visible = owner.get_webview_window("main").is_some_and(|win| {
+            popover_is_showing(&owner, &win) && popover_is_on_screen(&win)
+        });
+        let _ = send.send(visible);
+    })
+    .map_err(|error| error.to_string())?;
+    receive.await.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1649,6 +1664,64 @@ fn popover_is_showing(app: &AppHandle, win: &tauri::WebviewWindow) -> bool {
         && win.is_visible().unwrap_or(false)
 }
 
+#[cfg(target_os = "macos")]
+fn popover_is_on_screen(win: &tauri::WebviewWindow) -> bool {
+    use objc2_app_kit::{NSWindow, NSWindowOcclusionState};
+    let Ok(ptr) = win.ns_window() else { return false };
+    if ptr.is_null() { return false; }
+    // The visibility command dispatches here on the main thread; Tauri owns
+    // the native window for the lifetime of this borrowed WebviewWindow.
+    unsafe { (&*(ptr as *const NSWindow)).occlusionState().contains(NSWindowOcclusionState::Visible) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn popover_is_on_screen(_win: &tauri::WebviewWindow) -> bool { true }
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static VISIBILITY_OBSERVER: std::cell::RefCell<Option<objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(target_os = "macos")]
+fn remove_visibility_observer() {
+    VISIBILITY_OBSERVER.with(|slot| {
+        if let Some(observer) = slot.borrow_mut().take() {
+            // The retained observer was returned by this same notification center.
+            unsafe { objc2_foundation::NSNotificationCenter::defaultCenter().removeObserver(observer.as_ref()); }
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn observe_popover_visibility(app: &AppHandle, win: &tauri::WebviewWindow) {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSWindow, NSWindowDidChangeOcclusionStateNotification};
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue};
+    use std::ptr::NonNull;
+    let Ok(ptr) = win.ns_window() else { return };
+    if ptr.is_null() { return; }
+    let owner = app.clone();
+    let handler = RcBlock::new(move |_: NonNull<NSNotification>| {
+        let _ = owner.emit("sayknow:visibility-change", ());
+    });
+    // Register once on the UI thread and remove at exit. Unlike leaking a
+    // callback, this releases its AppHandle and observer token when the app quits.
+    unsafe {
+        let window = &*(ptr as *const NSWindow);
+        let observer = NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSWindowDidChangeOcclusionStateNotification),
+            Some(window),
+            Some(&NSOperationQueue::mainQueue()),
+            &handler,
+        );
+        remove_visibility_observer();
+        VISIBILITY_OBSERVER.with(|slot| *slot.borrow_mut() = Some(observer));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn observe_popover_visibility(_app: &AppHandle, _win: &tauri::WebviewWindow) {}
+
 /// Put the clear background back and force one repaint.
 ///
 /// Clicking the wallpaper to reveal the desktop (and Stage Manager) has
@@ -1921,8 +1994,10 @@ fn toggle_window(app: &AppHandle, source: &str) {
     let elsewhere = showing && popover_on_other_display(&win);
     log::info!("toggle_window source={source} showing={showing} elsewhere={elsewhere}");
     if showing && !elsewhere {
-        let _ = win.hide();
-        state.popover_open.store(false, Ordering::Relaxed);
+        if win.hide().is_ok() {
+            state.popover_open.store(false, Ordering::Relaxed);
+            let _ = app.emit("sayknow:hidden", ());
+        }
         return;
     }
     #[cfg(target_os = "macos")]
@@ -2216,6 +2291,7 @@ pub fn run() {
             set_secret,
             delete_secret,
             hide_window,
+            is_main_window_visible,
             set_pinned,
             resize_main_window,
             open_settings,
@@ -2414,6 +2490,7 @@ pub fn run() {
             // of switching the display to the one it was last shown on.
             if let Some(win) = app.get_webview_window("main") {
                 keep_popover_on_every_space(&win);
+                observe_popover_visibility(app.handle(), &win);
             }
 
             // Recheck transient blur instead of dropping it: a discarded blur
@@ -2453,6 +2530,7 @@ pub fn run() {
                                     )
                                         && win.hide().is_ok() {
                                             state.popover_open.store(false, Ordering::Relaxed);
+                                            let _ = handle.emit("sayknow:hidden", ());
                                         }
                                 });
                             });
@@ -2475,6 +2553,10 @@ pub fn run() {
                 crate::mole::shutdown();
                 crate::display::restore_disconnected_displays();
                 crate::display::restore_builtin_gamma();
+            }
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Exit) {
+                remove_visibility_observer();
             }
         });
 }

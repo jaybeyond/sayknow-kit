@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { Settings } from "@/hooks/useSettings"
 
 const mocks = vi.hoisted(() => ({
@@ -169,7 +169,7 @@ vi.mock("@/components/UsagePanel", () => ({
   ),
 }))
 vi.mock("@/components/MolePanel", () => ({
-  MolePanel: () => <section aria-label="Clean" />,
+  MolePanel: ({ active }: { active: boolean }) => <section aria-label="Clean" data-active={String(active)} />,
 }))
 
 // Radix' slider measures its thumb; jsdom ships no ResizeObserver.
@@ -193,12 +193,92 @@ function openUsageTab() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
+  mocks.toolsState.displays = []
+  mocks.toolsState.accessibility = null
   vi.clearAllMocks()
   mocks.activityState.points = []
   mocks.activityState.processes = null
   mocks.scanDisplays.mockImplementation(() => Promise.resolve())
 })
 
+describe("ToolsPanel polling eligibility", () => {
+  const builtin = { id: "builtin", name: "Built-in", kind: "builtin", method: "backlight", brightness: 50, system_level: 0.5, controllable: true, power: null, power_capable: false, is_main: true }
+
+  it("stops metrics and process polling off status and when inactive", () => {
+    const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(mocks.setMetricsActive).toHaveBeenLastCalledWith(true)
+    expect(mocks.setActivityActive).toHaveBeenLastCalledWith(true)
+    openUsageTab()
+    expect(mocks.setMetricsActive).toHaveBeenLastCalledWith(false)
+    expect(mocks.setActivityActive).toHaveBeenLastCalledWith(false)
+    fireEvent.click(screen.getByRole("tab", { name: "Status" }))
+    expect(mocks.setMetricsActive).toHaveBeenLastCalledWith(true)
+    view.rerender(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active={false} />)
+    expect(mocks.setMetricsActive).toHaveBeenLastCalledWith(false)
+    expect(mocks.setActivityActive).toHaveBeenLastCalledWith(false)
+  })
+
+  it("runs brightness ticks only on the visible built-in display tab", async () => {
+    vi.useFakeTimers()
+    mocks.toolsState.displays = [builtin]
+    const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(mocks.syncBuiltin).not.toHaveBeenCalled()
+    openDisplayTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(mocks.syncBuiltin).toHaveBeenCalledTimes(4)
+    openUsageTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(mocks.syncBuiltin).toHaveBeenCalledTimes(4)
+    openDisplayTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(mocks.syncBuiltin).toHaveBeenCalledTimes(8)
+    view.rerender(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active={false} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(mocks.syncBuiltin).toHaveBeenCalledTimes(8)
+  })
+
+  it("polls trust only while the built-in permission notice is visible", async () => {
+    vi.useFakeTimers()
+    mocks.toolsState.displays = [{ ...builtin, method: "gamma" }]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
+    const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    expect(mocks.refreshAccessibility).not.toHaveBeenCalled()
+    openDisplayTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(mocks.refreshAccessibility).toHaveBeenCalledTimes(2)
+    openUsageTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    expect(mocks.refreshAccessibility).toHaveBeenCalledTimes(2)
+    openDisplayTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(mocks.refreshAccessibility).toHaveBeenCalledTimes(4)
+    view.rerender(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active={false} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    expect(mocks.refreshAccessibility).toHaveBeenCalledTimes(4)
+  })
+
+  it("does not poll builtin brightness or trust for external-only displays", async () => {
+    vi.useFakeTimers()
+    mocks.toolsState.displays = [{ ...builtin, id: "external", kind: "external", method: "ddc" }]
+    mocks.toolsState.accessibility = { trusted: false, translocated: false, adhoc: false }
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    openDisplayTab()
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    expect(mocks.syncBuiltin).not.toHaveBeenCalled()
+    expect(mocks.refreshAccessibility).toHaveBeenCalledTimes(1)
+  })
+
+  it("passes native window inactivity through to cleanup tools", () => {
+    const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+    expect(screen.getByRole("region", { name: "Clean" }).dataset.active).toBe("true")
+    view.rerender(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active={false} />)
+    expect(screen.getByRole("region", { name: "Clean" }).dataset.active).toBe("false")
+  })
+})
 describe("ToolsPanel system metrics", () => {
   it("announces stale state without disguising unsupported temperature", async () => {
     render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)

@@ -11,6 +11,7 @@ import {
   type MoleResult,
   type MoleRun,
 } from "./mole"
+import { holdReload } from "./idle-reload"
 
 export type SessionId = "disk" | "cache" | "tune"
 
@@ -95,6 +96,7 @@ export async function detect(): Promise<void> {
 }
 
 async function executeRun(id: SessionId, action: string): Promise<void> {
+  const release = holdReload()
   set({ busy: id })
   const runLines: string[] = []
   let unlisten: (() => void) | undefined
@@ -141,6 +143,7 @@ async function executeRun(id: SessionId, action: string): Promise<void> {
       unlisten?.()
     } finally {
       set({ busy: null })
+      release()
     }
   }
 }
