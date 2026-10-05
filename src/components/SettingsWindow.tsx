@@ -35,13 +35,19 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
+import { Slider } from "@/components/ui/slider"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ModelPicker } from "./ModelPicker"
 import { ProviderPicker } from "./ProviderPicker"
 import { GlossaryEditor } from "./GlossaryEditor"
 import { ShortcutsList } from "./ShortcutsList"
 import { useModels } from "@/hooks/useModels"
-import type { Settings } from "@/hooks/useSettings"
+import {
+  POPOVER_OPACITY_MAX,
+  POPOVER_OPACITY_MIN,
+  popoverOpacity,
+  type Settings,
+} from "@/hooks/useSettings"
 import { UpdateRow } from "./UpdateRow"
 import type { ThemeMode } from "@/hooks/useTheme"
 import {
@@ -350,6 +356,24 @@ function GeneralSection({
             </SelectItem>
           </SelectContent>
         </Select>
+      </Row>
+
+      <Separator />
+
+      <Row label={t("settings.opacity")} description={t("settings.opacity.body")}>
+        <div className="flex w-[180px] items-center gap-2.5">
+          <Slider
+            aria-label={t("settings.opacity")}
+            min={POPOVER_OPACITY_MIN}
+            max={POPOVER_OPACITY_MAX}
+            step={5}
+            value={[popoverOpacity(settings.popoverOpacity)]}
+            onValueChange={([v]) => update({ popoverOpacity: v })}
+          />
+          <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">
+            {popoverOpacity(settings.popoverOpacity)}%
+          </span>
+        </div>
       </Row>
 
       <Separator />

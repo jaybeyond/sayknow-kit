@@ -65,7 +65,7 @@ export function getSnapshot(): ToolsState {
 /** Refresh only the built-in row — a registry read, no DDC traffic — so the
  *  slider can follow the keyboard brightness keys while the tab is visible. */
 export async function syncBuiltin(): Promise<void> {
-  if (!isTauri()) return
+  if (!isTauri() || !state.displays.some((d) => d.kind === "builtin")) return
   try {
     const { invoke } = await import("@tauri-apps/api/core")
     const current = await invoke<{
@@ -73,9 +73,13 @@ export async function syncBuiltin(): Promise<void> {
       system_level: number
     } | null>("sync_builtin_brightness")
     if (current === null || current === undefined) return
+    const changed = (d: DisplayRow) => d.kind === "builtin" && (
+      d.brightness !== current.brightness || d.system_level !== current.system_level
+    )
+    if (!state.displays.some(changed)) return
     set({
       displays: state.displays.map((d) =>
-        d.kind === "builtin"
+        changed(d)
           ? {
               ...d,
               brightness: current.brightness,

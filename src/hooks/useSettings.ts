@@ -61,6 +61,19 @@ export type Prefs = {
   menuBarReadout: MenuBarReadout
   /** System alerts the user turned on. */
   systemAlerts: SystemAlertKind[]
+  /** Popover background opacity in percent; the desktop shows through the
+   *  rest. There is no blur behind it, so the default stays high enough that
+   *  text behind the popover does not compete with its own. */
+  popoverOpacity: number
+}
+
+export const POPOVER_OPACITY_MIN = 50
+export const POPOVER_OPACITY_MAX = 100
+
+/** A stored value from an older build, or a hand-edited one, still renders. */
+export function popoverOpacity(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULTS.popoverOpacity
+  return Math.min(POPOVER_OPACITY_MAX, Math.max(POPOVER_OPACITY_MIN, Math.round(value)))
 }
 
 const DEFAULTS: Prefs = {
@@ -83,6 +96,7 @@ const DEFAULTS: Prefs = {
   workspaceMode: "translate",
   menuBarReadout: "off",
   systemAlerts: [],
+  popoverOpacity: 95,
 }
 
 const PREFS_KEY = "prefs"

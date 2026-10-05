@@ -7,7 +7,7 @@
  * unverified fails loudly instead of sending a guessed request.
  */
 import { httpFetch } from "../http"
-import { ANTHROPIC_OAUTH_BETAS } from "./anthropic"
+import { ANTHROPIC_OAUTH_BETAS, CLAUDE_CODE_VERSION } from "./anthropic"
 import { chatCodex } from "./codex-chat"
 import { chatGemini } from "./gemini-chat"
 import { chatCursor, CursorAuthRequired } from "./cursor-chat"
@@ -113,7 +113,6 @@ async function readError(response: Response): Promise<string> {
  * The Messages API also takes the system prompt as its own field rather than
  * a message, so system turns are lifted out of the conversation.
  */
-const CLAUDE_CODE_VERSION = "2.1.267"
 const CLAUDE_CODE_SYSTEM_INSTRUCTION =
   "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 

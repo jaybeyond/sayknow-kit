@@ -6,7 +6,7 @@ import type { Settings } from "@/hooks/useSettings"
 type Handler = (event: { payload: string }) => void
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn<(cmd: string, args?: unknown) => Promise<undefined>>(async () => undefined),
+  invoke: vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(async (cmd) => cmd === "is_main_window_visible" ? true : undefined),
   handlers: new Map<string, Handler>(),
   store: new Map<string, unknown>(),
 }))
@@ -39,7 +39,11 @@ vi.mock("./TranslatePanel", () => ({
   ),
 }))
 vi.mock("./ChatPanel", () => ({ ChatPanel: () => <div data-testid="panel">chat</div> }))
-vi.mock("./ToolsPanel", () => ({ ToolsPanel: () => <div data-testid="panel">tools</div> }))
+vi.mock("./ToolsPanel", () => ({
+  ToolsPanel: ({ active }: { active: boolean }) => (
+    <div data-testid="panel" data-active={String(active)}>tools</div>
+  ),
+}))
 vi.mock("./ClipboardPanel", () => ({
   ClipboardPanel: ({ composeRequest }: { composeRequest?: number | null }) => (
     <div data-testid="panel">clipboard:{composeRequest ? "compose" : "list"}</div>
@@ -47,6 +51,7 @@ vi.mock("./ClipboardPanel", () => ({
 }))
 
 import { TabbedPanel } from "./TabbedPanel"
+import { HELD_RETRY_MS, HIDDEN_RELOAD_AFTER_MS, holdReload, page, resetReloadHoldsForTests } from "@/lib/idle-reload"
 
 const update = vi.fn()
 const settings = { uiLocale: "en", pinned: false, windowMode: "normal" } as unknown as Settings
@@ -65,18 +70,170 @@ function emit(name: string, payload: string) {
 
 const panel = () => screen.findByTestId("panel").then((el) => el.textContent)
 
-beforeEach(() => mocks.store.clear())
+beforeEach(() => {
+  mocks.store.clear()
+  mocks.invoke.mockReset()
+  mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? true : undefined)
+})
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   mocks.handlers.clear()
 })
 
+describe("TabbedPanel native visibility", () => {
+  it("keeps a stored tools tab inactive while the native popover is hidden", async () => {
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? false : undefined)
+    await mount("tools")
+    await screen.findByTestId("panel")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    expect(screen.getByTestId("panel").dataset.active).toBe("false")
+  })
+
+  it("stops tools on native hide and resumes on native open without DOM focus", async () => {
+    await mount("tools")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("true"))
+    emit("sayknow:hidden", "")
+    expect(screen.getByTestId("panel").dataset.active).toBe("false")
+    emit("sayknow:open", "tray")
+    expect(screen.getByTestId("panel").dataset.active).toBe("true")
+  })
+
+  it("does not let an old visible query restart polling after native hide", async () => {
+    let resolve!: (value: boolean) => void
+    const pending = new Promise<boolean>((done) => { resolve = done })
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? pending : undefined)
+    await mount("tools")
+    await screen.findByTestId("panel")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    emit("sayknow:hidden", "")
+    await act(async () => resolve(true))
+    expect(screen.getByTestId("panel").dataset.active).toBe("false")
+  })
+
+  it("does not let an old hidden query stop polling after native open", async () => {
+    let resolve!: (value: boolean) => void
+    const pending = new Promise<boolean>((done) => { resolve = done })
+    let queries = 0
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? ++queries === 1 ? pending : true : undefined)
+    await mount("tools")
+    await screen.findByTestId("panel")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    emit("sayknow:open", "tray")
+    await act(async () => resolve(false))
+    expect(screen.getByTestId("panel").dataset.active).toBe("true")
+  })
+
+  it("stops on system occlusion and resumes on restoration without a tray open", async () => {
+    let visible = true
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? visible : undefined)
+    await mount("tools")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("true"))
+    visible = false
+    emit("sayknow:visibility-change", "")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("false"))
+    visible = true
+    emit("sayknow:visibility-change", "")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("true"))
+  })
+
+  it("discards an occlusion query superseded by native hide", async () => {
+    let resolve!: (value: boolean) => void
+    const pending = new Promise<boolean>((done) => { resolve = done })
+    let queries = 0
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? ++queries === 1 ? true : pending : undefined)
+    await mount("tools")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("true"))
+    emit("sayknow:visibility-change", "")
+    emit("sayknow:hidden", "")
+    await act(async () => resolve(true))
+    expect(screen.getByTestId("panel").dataset.active).toBe("false")
+  })
+
+  it("discards an old occlusion query after a newly confirmed native open", async () => {
+    let resolve!: (value: boolean) => void
+    const pending = new Promise<boolean>((done) => { resolve = done })
+    let queries = 0
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? ++queries === 2 ? pending : true : undefined)
+    await mount("tools")
+    await waitFor(() => expect(screen.getByTestId("panel").dataset.active).toBe("true"))
+    emit("sayknow:visibility-change", "")
+    emit("sayknow:open", "tray")
+    await act(async () => resolve(false))
+    expect(screen.getByTestId("panel").dataset.active).toBe("true")
+  })
+
+  it("releases system visibility listeners and ignores a pending query after unmount", async () => {
+    let resolve!: (value: boolean) => void
+    const pending = new Promise<boolean>((done) => { resolve = done })
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? pending : undefined)
+    await mount("tools")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    cleanup()
+    expect(mocks.handlers.has("sayknow:visibility-change")).toBe(false)
+    expect(mocks.handlers.has("sayknow:hidden")).toBe(false)
+    await act(async () => resolve(true))
+    expect(screen.queryByTestId("panel")).toBeNull()
+  })
+})
+
+describe("TabbedPanel idle reload", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    resetReloadHoldsForTests()
+  })
+
+  async function mountUsedThenHidden() {
+    await mount("chat")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    vi.useFakeTimers()
+    emit("sayknow:hidden", "")
+  }
+
+  it("reloads once the popover has stayed hidden long enough after being used", async () => {
+    const reload = vi.spyOn(page, "reload").mockImplementation(() => {})
+    await mountUsedThenHidden()
+    act(() => vi.advanceTimersByTime(HIDDEN_RELOAD_AFTER_MS - 1))
+    expect(reload).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(1))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not reload when it is opened again in time", async () => {
+    const reload = vi.spyOn(page, "reload").mockImplementation(() => {})
+    await mountUsedThenHidden()
+    act(() => vi.advanceTimersByTime(HIDDEN_RELOAD_AFTER_MS - 1))
+    emit("sayknow:open", "tray")
+    act(() => vi.advanceTimersByTime(HIDDEN_RELOAD_AFTER_MS * 2))
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("never reloads a page that has not been shown since it loaded", async () => {
+    const reload = vi.spyOn(page, "reload").mockImplementation(() => {})
+    mocks.invoke.mockImplementation(async (cmd) => cmd === "is_main_window_visible" ? false : undefined)
+    await mount("chat")
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("is_main_window_visible"))
+    vi.useFakeTimers()
+    act(() => vi.advanceTimersByTime(HIDDEN_RELOAD_AFTER_MS * 3))
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("waits for held work to settle, then reloads", async () => {
+    const reload = vi.spyOn(page, "reload").mockImplementation(() => {})
+    await mountUsedThenHidden()
+    const release = holdReload()
+    act(() => vi.advanceTimersByTime(HIDDEN_RELOAD_AFTER_MS + HELD_RETRY_MS * 3))
+    expect(reload).not.toHaveBeenCalled()
+    release()
+    act(() => vi.advanceTimersByTime(HELD_RETRY_MS))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+})
 describe("TabbedPanel global shortcuts", () => {
   it("shows the requested panel when a panel shortcut opened the popover", async () => {
     await mount("chat")
     emit("sayknow:open", "shortcut:clipboard")
-    expect(await panel()).toBe("clipboard:list")
+    await waitFor(() => expect(screen.getByTestId("panel").textContent).toBe("clipboard:list"))
   })
 
   it("asks translate to pull in the clipboard when opened on it by shortcut", async () => {

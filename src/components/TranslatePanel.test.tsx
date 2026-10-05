@@ -25,6 +25,7 @@ vi.mock("@/lib/openrouter", async (importOriginal) => ({
 }))
 
 import { TranslatePanel, type TranslateInjection } from "./TranslatePanel"
+import { carry, page, reloadNow, resetReloadHoldsForTests, takeCarried } from "@/lib/idle-reload"
 
 const settings: Settings = {
   provider: "openrouter",
@@ -48,6 +49,7 @@ const settings: Settings = {
   workspaceMode: "rewrite",
   menuBarReadout: "off",
   systemAlerts: [],
+  popoverOpacity: 95,
 }
 
 function Harness({
@@ -92,6 +94,36 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.useRealTimers()
+  resetReloadHoldsForTests()
+  sessionStorage.clear()
+})
+
+describe("idle reload", () => {
+  it("carries the draft and its result across the reload without translating again", async () => {
+    vi.spyOn(page, "reload").mockImplementation(() => {})
+    const { unmount } = render(
+      <Harness initial={{ workspaceMode: "translate" }} injectedInput={{ text: "Hello", output: "안녕", nonce: 1 }} />,
+    )
+    act(() => reloadNow())
+    unmount()
+
+    vi.useFakeTimers()
+    render(<Harness initial={{ workspaceMode: "translate", autoTranslate: true }} />)
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Hello")
+    expect(screen.getByText("안녕")).toBeTruthy()
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    expect(mocks.chat).not.toHaveBeenCalled()
+    expect(takeCarried("translate")).toBeNull()
+  })
+
+  it("translates a carried draft that had no result yet", async () => {
+    carry("translate", { input: "Hello", output: "" })
+    vi.useFakeTimers()
+    render(<Harness initial={{ workspaceMode: "translate", autoTranslate: true }} />)
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    expect(mocks.chat).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("rewrite result actions", () => {

@@ -35,6 +35,9 @@ export const ANTHROPIC_OAUTH_BETAS = [
   "prompt-caching-scope-2026-01-05",
 ] as const
 
+/** Claude Code release the subscription requests identify as. */
+export const CLAUDE_CODE_VERSION = "2.1.267"
+
 function formatErrorDetails(error: unknown): string {
   if (error instanceof Error) {
     const details: string[] = [`${error.name}: ${error.message}`]

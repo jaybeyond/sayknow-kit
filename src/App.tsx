@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef } from "react"
 import { Loader2 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
-import { useSettings } from "./hooks/useSettings"
+import { popoverOpacity, useSettings } from "./hooks/useSettings"
 import { useTheme } from "./hooks/useTheme"
 import { useT } from "./i18n"
 import { LoginPanel } from "./components/LoginPanel"
@@ -90,9 +90,16 @@ function MainRoot() {
 
 
   return (
-    // Outer shell — always rendered with full bg/border/shadow/blur so the
-    // popover skin never disappears. Animation lives on the inner content layer.
-    <div className="h-svh w-svw overflow-hidden rounded-2xl border border-border/50 bg-background/85 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl dark:bg-background/85 dark:ring-white/10">
+    // Outer shell — always rendered with full bg/border/shadow so the popover
+    // skin never disappears. Animation lives on the inner content layer. The
+    // background is a flat tint at the user's chosen opacity; a backdrop blur
+    // here cost a full-window filter pass on every repaint.
+    <div
+      className="h-svh w-svw overflow-hidden rounded-2xl border border-border/50 shadow-2xl ring-1 ring-black/5 dark:ring-white/10"
+      style={{
+        backgroundColor: `color-mix(in oklab, var(--background) ${popoverOpacity(settings.popoverOpacity)}%, transparent)`,
+      }}
+    >
       <div
         ref={contentRef}
         className="popover-content appear h-full w-full"

@@ -51,6 +51,7 @@ import { REWRITE_PRESETS, buildRewritePrompt } from "@/lib/rewrite"
 import { useT } from "@/i18n"
 import { deeplSupports, deeplTranslate, DeeplError } from "@/lib/deepl"
 import { translationMemory } from "@/lib/translation-memory"
+import { carry, takeCarried, useBeforeReload, useReloadHold } from "@/lib/idle-reload"
 
 const REFINE_PRESETS = [
   { id: "polite", labelKey: "refine.polite", instruction: "Make it more polite and formal." },
@@ -108,8 +109,11 @@ export function TranslatePanel({
   onAutofillHandled,
 }: Props) {
   const { t } = useT(settings.uiLocale)
-  const [input, setInput] = useState("")
-  const [output, setOutput] = useState("")
+  // What was on screen before an idle reload comes back as it was; the result
+  // is kept too, so nothing is translated (or billed) a second time.
+  const [carried] = useState(() => takeCarried<{ input: string; output: string }>("translate"))
+  const [input, setInput] = useState(carried?.input ?? "")
+  const [output, setOutput] = useState(carried?.output ?? "")
   const [translating, setTranslating] = useState(false)
   const [refining, setRefining] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -132,13 +136,17 @@ export function TranslatePanel({
   // new entries into it.
   const { add: addHistory } = useHistory()
   const { record: recordUsage } = useUsage()
+  useReloadHold(translating || refining || rewriteCards.some((c) => c.loading))
+  useBeforeReload(() => {
+    if (input || output) carry("translate", { input, output })
+  })
 
   const debounced = useDebounce(input, 1500)
   // Tracks the source text that produced the currently-shown `output`.
   // The auto-translate effect uses this to skip re-translating an input
   // that already has a fresh result (e.g. after restoring from history,
   // refining, or finishing a manual translate).
-  const lastTranslatedRef = useRef("")
+  const lastTranslatedRef = useRef(carried?.output ? carried.input.trim() : "")
 
 
   // The tab strip owns the "opened by shortcut" signal because this panel may

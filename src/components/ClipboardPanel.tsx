@@ -33,6 +33,7 @@ import { formatCombo, shortcut } from "@/lib/shortcuts"
 import { useShortcuts } from "@/hooks/useShortcuts"
 import { timeAgo } from "@/lib/history"
 import { cn } from "@/lib/utils"
+import { useReloadHold } from "@/lib/idle-reload"
 
 type Props = {
   settings: Settings
@@ -79,6 +80,8 @@ export function ClipboardPanel({
   // Only one memo editor is open at a time: NEW_MEMO for the composer, or the
   // id of the memo being rewritten.
   const [memoEditorId, setMemoEditorId] = useState<string | null>(null)
+  // An open note or memo editor is unsaved work the idle reload must not drop.
+  useReloadHold(editingNoteId !== null || memoEditorId !== null)
   const [pendingClear, setPendingClear] = useState<"unpinned" | "all" | null>(null)
   const [pendingMemoDelete, setPendingMemoDelete] = useState<string | null>(null)
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null)

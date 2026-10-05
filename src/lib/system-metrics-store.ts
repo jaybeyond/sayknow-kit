@@ -303,7 +303,7 @@ let generation = 0
 let timer: ReturnType<typeof setInterval> | null = null
 let staleTimer: ReturnType<typeof setTimeout> | null = null
 let unlisten: (() => void) | null = null
-let current: { id: number; promise: Promise<void> } | null = null
+let current: { id: number; promise: Promise<void>; timedOut: boolean } | null = null
 let requestId = 0
 let trailing = false
 
@@ -339,9 +339,11 @@ async function invokeSnapshot(): Promise<MetricsSnapshot> {
   return decodeMetricsSnapshot(await invoke<unknown>("get_system_metrics"))
 }
 
+const REQUEST_TIMEOUT_ERROR = "system_metrics_request_timeout"
+
 function withDeadline<Value>(promise: Promise<Value>): Promise<Value> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("system_metrics_request_timeout")), REQUEST_TIMEOUT_MS)
+    const timeout = setTimeout(() => reject(new Error(REQUEST_TIMEOUT_ERROR)), REQUEST_TIMEOUT_MS)
     promise.then(
       (value) => {
         clearTimeout(timeout)
@@ -359,14 +361,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function doRefresh(token: number): Promise<void> {
+function doRefresh(token: number, request: Promise<MetricsSnapshot>, id: number): Promise<void> {
   if (!active || token !== generation) return Promise.resolve()
   const hadData = state.snapshot !== null
   setState({
     status: hadData ? state.status : "initial_loading",
     refreshing: true,
   })
-  return withDeadline(invokeSnapshot())
+  return withDeadline(request)
     .then((snapshot) => {
       if (!active || token !== generation) return
       setState({
@@ -380,12 +382,17 @@ function doRefresh(token: number): Promise<void> {
       scheduleStaleDeadline(token)
     })
     .catch((error) => {
-      if (!active || token !== generation) return
+      const message = errorMessage(error)
+      const ownedTimeout = message === REQUEST_TIMEOUT_ERROR && current?.id === id
+      if (ownedTimeout && current) current.timedOut = true
+      // The same raw command can still block a reopened view. Report its
+      // deadline, but never publish old-generation data or other errors.
+      if (!active || (token !== generation && !ownedTimeout)) return
       const age_ms = state.last_updated_ms == null ? null : Math.max(0, Date.now() - state.last_updated_ms)
       setState({
         status: hadData ? "stale_with_error" : "initial_error",
         refreshing: false,
-        error: errorMessage(error),
+        error: message,
         age_ms,
       })
     })
@@ -400,17 +407,23 @@ export function refresh(): Promise<void> {
   }
   const token = generation
   const id = ++requestId
-  const promise = doRefresh(token).finally(() => {
-    if (current?.id !== id) return
-    current = null
-    if (trailing && active) {
-      trailing = false
-      void refresh()
-    } else {
-      trailing = false
-    }
+  const request = invokeSnapshot()
+  // A UI deadline cannot cancel native work. Release ownership only once
+  // both the raw command and the displayed result have settled.
+  const settled = request.then(() => undefined, () => undefined)
+  const promise = doRefresh(token, request, id).finally(() => {
+    void settled.then(() => {
+      if (current?.id !== id) return
+      current = null
+      if (trailing && active) {
+        trailing = false
+        void refresh()
+      } else {
+        trailing = false
+      }
+    })
   })
-  current = { id, promise }
+  current = { id, promise, timedOut: false }
   return promise
 }
 
@@ -450,7 +463,7 @@ export function setActive(next: boolean) {
       unlisten = null
       stop()
     }
-    state = { ...state, refreshing: false, status: state.snapshot ? state.status : "initial_loading" }
+    state = { ...state, refreshing: false, status: state.snapshot ? state.status : state.error ? "initial_error" : "initial_loading" }
     emit()
     return
   }
@@ -458,7 +471,12 @@ export function setActive(next: boolean) {
   const status = state.snapshot && age_ms != null && age_ms > 6000
     ? state.error ? "stale_with_error" : "stale"
     : state.status
-  setState({ status, refreshing: true, age_ms })
+  setState({
+    status: current?.timedOut ? state.snapshot ? "stale_with_error" : "initial_error" : status,
+    error: current?.timedOut ? REQUEST_TIMEOUT_ERROR : state.error,
+    refreshing: current === null,
+    age_ms,
+  })
   scheduleStaleDeadline(token)
   timer = setInterval(() => {
     if (state.last_updated_ms != null) {

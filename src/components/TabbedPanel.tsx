@@ -35,6 +35,7 @@ import { storage } from "@/lib/storage"
 import { cn } from "@/lib/utils"
 import { invoke } from "@tauri-apps/api/core"
 import { isTauri } from "@/lib/runtime"
+import { HELD_RETRY_MS, HIDDEN_RELOAD_AFTER_MS, reloadHeld, reloadNow } from "@/lib/idle-reload"
 import { formatCombo, shortcut } from "@/lib/shortcuts"
 import { useShortcuts } from "@/hooks/useShortcuts"
 import { useSlidingPill } from "@/hooks/useSlidingPill"
@@ -85,6 +86,9 @@ export function TabbedPanel(props: Props) {
     const stored = storage.get<string>(TAB_KEY)
     return stored === "usage" ? "tools" : ((stored ?? "translate") as Tab)
   })
+  // Native hide/show signals are reliable even when macOS keeps the WebView
+  // document visible or does not give the popover focus.
+  const [popoverVisible, setPopoverVisible] = useState(() => !isTauri())
   // What the clipboard tab or the history menu wants the translate tab to pick
   // up. nonce changes every dispatch so an identical payload still lands.
   const [pendingTranslateInput, setPendingTranslateInput] =
@@ -101,6 +105,25 @@ export function TabbedPanel(props: Props) {
   useEffect(() => {
     tabRef.current = tab
   }, [tab])
+  // Once the popover has been used and then left hidden for a while, reload
+  // the page so WebKit hands back what the visited panels held on to. A page
+  // that has not been shown since it loaded is already lean, so it is left
+  // alone; otherwise a hidden popover would reload itself forever.
+  const shownSinceLoad = useRef(false)
+  useEffect(() => {
+    if (popoverVisible) {
+      shownSinceLoad.current = true
+      return
+    }
+    if (!isTauri() || !shownSinceLoad.current) return
+    let timer: ReturnType<typeof setTimeout>
+    const attempt = () => {
+      if (reloadHeld()) timer = setTimeout(attempt, HELD_RETRY_MS)
+      else reloadNow()
+    }
+    timer = setTimeout(attempt, HIDDEN_RELOAD_AFTER_MS)
+    return () => clearTimeout(timer)
+  }, [popoverVisible])
   const {
     entries: historyEntries,
     remove: removeHistory,
@@ -139,10 +162,22 @@ export function TabbedPanel(props: Props) {
   useEffect(() => {
     if (!isTauri()) return
     let cancelled = false
+    let visibilityRevision = 0
     const unlisteners: (() => void)[] = []
+    const reconcileVisibility = () => {
+      const revision = ++visibilityRevision
+      void invoke<boolean>("is_main_window_visible")
+        .then((visible) => {
+          if (!cancelled && revision === visibilityRevision) setPopoverVisible(visible)
+        })
+        .catch(() => {})
+    }
     void import("@tauri-apps/api/event").then(({ listen }) => {
       const subscriptions = [
         listen<string>("sayknow:open", (event) => {
+          visibilityRevision++
+          setPopoverVisible(true)
+          reconcileVisibility()
           const source = event.payload
           if (source === "shortcut") {
             // The plain toggle keeps the last tab and, on translate, still
@@ -153,6 +188,11 @@ export function TabbedPanel(props: Props) {
           const target = source.startsWith("shortcut:") ? source.slice("shortcut:".length) : ""
           if (isShortcutTarget(target)) goTo(target)
         }),
+        listen("sayknow:hidden", () => {
+          visibilityRevision++
+          setPopoverVisible(false)
+        }),
+        listen("sayknow:visibility-change", reconcileVisibility),
         listen<string>("sayknow:shortcut", (event) => {
           const target = event.payload
           if (!isShortcutTarget(target)) return
@@ -171,6 +211,9 @@ export function TabbedPanel(props: Props) {
           else unlisteners.push(un)
         })
       }
+      void Promise.all(subscriptions)
+        .then(() => { if (!cancelled) reconcileVisibility() })
+        .catch(() => {})
     })
     return () => {
       cancelled = true
@@ -355,7 +398,7 @@ export function TabbedPanel(props: Props) {
               onComposeHandled={() => setComposeRequest(null)}
             />
           ) : (
-            <ToolsPanel settings={props.settings} active={tab === "tools"} />
+            <ToolsPanel settings={props.settings} active={popoverVisible && tab === "tools"} />
           )}
         </Suspense>
       </div>
