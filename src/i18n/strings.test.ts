@@ -164,6 +164,8 @@ const REQUIRED_MOLE_KEYS = [
   "cancel",
   "confirm",
   "retry",
+  "back",
+  "moreTools",
   "session.disk",
   "session.diskHint",
   "diskOverlap",
@@ -276,7 +278,7 @@ const REQUIRED_MOLE_KEYS = [
 describe("Mac cleanup translations", () => {
   it("has exactly the approved keys in all eight product locales, without obsolete aliases", () => {
     expect([...UI_LOCALES].sort()).toEqual(["de", "en", "es", "fr", "ja", "ko", "vi", "zh"])
-    expect(REQUIRED_MOLE_KEYS).toHaveLength(161)
+    expect(REQUIRED_MOLE_KEYS).toHaveLength(163)
     for (const locale of UI_LOCALES) {
       const keys = Object.keys(UI_STRINGS[locale]).filter((key) => key.startsWith("tools.mole."))
       expect(keys.sort(), locale).toEqual([...REQUIRED_MOLE_KEYS].sort())
