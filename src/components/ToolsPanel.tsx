@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import { UsagePanel } from "@/components/UsagePanel"
 import { MolePanel } from "@/components/MolePanel"
+import { SpeedTestPanel } from "@/components/SpeedTestPanel"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import type { Settings } from "@/hooks/useSettings"
@@ -62,7 +63,7 @@ type Props = {
   active: boolean
 }
 
-type ToolTab = "status" | "display" | "usage" | "mole"
+type ToolTab = "status" | "display" | "usage" | "mole" | "speed"
 
 /**
  * Tools that talk to the machine rather than to a translation provider. The
@@ -248,10 +249,13 @@ export function ToolsPanel({ settings, active }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
+        {/* Five tabs share ~430px. Equal columns clipped "Token usage" in es/de,
+            so each column takes what its label needs and short labels give the
+            rest to long ones; truncation still guards the extreme. */}
         <div
           ref={toolTabsRef}
           aria-label={t("tools.tabs.label")}
-          className="relative grid min-w-0 flex-1 grid-cols-4 gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
+          className="relative grid min-w-0 flex-1 grid-cols-[repeat(5,minmax(0,auto))] justify-between gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
           role="tablist"
         >
           <span
@@ -278,6 +282,11 @@ export function ToolsPanel({ settings, active }: Props) {
             active={tab === "mole"}
             label={t("tools.tabs.mole")}
             onClick={() => setTab("mole")}
+          />
+          <ToolTabButton
+            active={tab === "speed"}
+            label={t("tools.tabs.speed")}
+            onClick={() => setTab("speed")}
           />
         </div>
         <Button
@@ -365,6 +374,7 @@ export function ToolsPanel({ settings, active }: Props) {
 
         {tab === "usage" && <UsagePanel settings={settings} active={active} />}
         {tab === "mole" && <MolePanel t={t} active={active} />}
+        {tab === "speed" && <SpeedTestPanel t={t} />}
       </div>
     </div>
   )

@@ -36,6 +36,31 @@ const REQUIRED_METRIC_KEYS = [
   "tools.metrics.listenerError",
 ] as const
 
+const REQUIRED_SPEED_KEYS = [
+  "tools.tabs.speed",
+  ...[
+    "title", "intro", "dataNote", "start", "again", "cancel", "running", "measuredAt",
+    "download", "upload", "latency", "dataUsed", "connection", "server", "unknown", "previous",
+    "error.busy", "error.cancelled", "error.timeout", "error.network_error", "error.unsupported", "error.failed",
+  ].map((key) => `tools.speed.${key}`),
+]
+
+describe("internet speed translations", () => {
+  it("has every key, readable and with the time token, in all eight locales", () => {
+    for (const locale of UI_LOCALES) {
+      const strings = UI_STRINGS[locale]
+      for (const key of REQUIRED_SPEED_KEYS) {
+        const value = strings[key]
+        expect(value?.trim(), `${locale}:${key}`).toBeTruthy()
+        expect(value, `${locale}:${key}`).not.toMatch(/tools\.|speed_/)
+      }
+      expect(strings["tools.speed.measuredAt"], locale).toContain("{time}")
+      expect(strings["tools.speed.intro"], locale).toContain("networkQuality")
+      expect(strings["tools.speed.dataNote"], locale).toMatch(/MB|Mo/)
+    }
+  })
+})
+
 describe("system metric translations", () => {
   it("has the explicit nonempty contract in every locale", () => {
     for (const locale of UI_LOCALES) {
