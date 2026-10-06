@@ -61,6 +61,7 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 ### Tools
 - **In-app cleanup (macOS)** — requires Mole **1.38.1**, whose noninteractive/no-auth behavior has been checked. No external Terminal or login-shell startup is used. Cleanup and maintenance run one at a time with user-level access; administrator-only tasks are skipped. Other Mole versions are rejected until their no-auth behavior is checked. Preview does not delete cleanup targets, but Mole can write its preview report. Actual cleanup/maintenance still modifies user files and settings; header refresh only runs previews. On timeout or app exit, the app terminates its own process group, not unrelated Terminal sessions.
 - **App removal (macOS)** — lists apps through Mole and shows related data that matches each app's exact bundle ID (caches, preferences, saved state, WebKit, Application Support). Only the app and the related items you tick go to the Trash; none are ticked by default. Running, system and protected apps are refused, and nothing is permanently deleted.
+- 📶 **Internet speed test (macOS 12+)** — measures download, upload and idle latency against Apple's test servers with the built-in `networkQuality`. It only runs when you press Start test, takes about 20 seconds, uses a few hundred MB of data, and can be cancelled.
 - 🌞 **Screen brightness (macOS-specific)** — hardware-level control for connected displays: DDC/CI for externals (HDMI/DisplayPort/USB-C), IOKit backlight for built-in Mac panels where available. On newer supported Macs where direct IOKit access is unavailable, it uses Control Center accessibility automation. External DDC capabilities vary by hardware; both built-in paths are macOS-only.
 - 🔌 **Display power (macOS-specific)** — Lunar-style BlackOut: disconnect the external from WindowServer so macOS stops driving it (USB/charging stay alive). Not mirroring. DDC panels also get backlight and contrast pulled to 0 first. DDC standby is not used; some panels take it into a sleep this app cannot reverse.
 - 🎚️ **One slider for all** — move every display at once, or adjust each on its own
@@ -96,11 +97,11 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ## Install
 
-### v0.3.10 prebuilt installers (recommended)
+### v0.3.12 prebuilt installers (recommended)
 
 Download only from the [official GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases), and verify the matching file in `SHA256SUMS.txt`.
 
-**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.10_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.10 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
+**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.12_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.12 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -114,7 +115,7 @@ tccutil reset Accessibility com.sayknow.app
 
 Always move the app to `/Applications` first. Launched from the DMG or Downloads, macOS runs it from a randomized read-only copy where Accessibility permission for built-in brightness can never be stored.
 
-**Windows (x64):** Download `SayKnow-Kit_0.3.10_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.10_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
+**Windows (x64):** Download `SayKnow-Kit_0.3.12_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.12_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
 
 ### Uninstall
 
@@ -190,7 +191,7 @@ Your OpenRouter key is a **billable credential**, so SayKnow Kit never stores it
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.10 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
+Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.12 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
 
 ## Development
 

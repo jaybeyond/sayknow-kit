@@ -61,6 +61,7 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 ### 도구
 - **앱 내부 정리(macOS)** — 비대화형·인증 차단 동작을 확인한 Mole **1.38.1**이 필요합니다. 외부 Terminal이나 로그인 셸을 열지 않고 한 작업씩 사용자 권한으로 실행하며, 관리자 권한이 필요한 작업은 건너뜁니다. 다른 Mole 버전은 인증 동작을 검증하기 전까지 실행을 차단합니다. 미리보기는 정리 대상을 삭제하지 않지만 Mole의 미리보기 보고서는 저장할 수 있습니다. 실제 정리·유지보수는 사용자 파일과 설정을 변경하며, 상단 새로고침은 미리보기만 실행합니다. 시간 초과나 앱 종료 시 앱이 실행한 프로세스 그룹만 종료하고 기존 Terminal 세션은 건드리지 않습니다.
 - **앱 삭제(macOS)** — Mole로 앱 목록을 확인하고, 번들 ID가 정확히 일치하는 관련 데이터(캐시·설정·저장된 상태·WebKit·앱 지원 파일)를 함께 보여줍니다. 앱 본체와 직접 선택한 관련 항목만 휴지통으로 옮기며, 기본으로 선택된 관련 항목은 없습니다. 실행 중이거나 시스템·보호 대상인 앱은 거부하고, 영구 삭제는 하지 않습니다.
+- 📶 **인터넷 속도 측정(macOS 12 이상)** — macOS에 들어 있는 `networkQuality`로 Apple 측정 서버까지의 다운로드·업로드 속도와 지연 시간을 잽니다. 측정 시작을 눌렀을 때만 실행되고, 약 20초 동안 데이터를 수백 MB 사용하며, 중간에 취소할 수 있습니다.
 - 🌞 **화면 밝기(macOS 전용)** — 외부 화면은 DDC/CI(HDMI/DP/USB-C), 지원되는 Mac 내장 패널은 IOKit 백라이트로 하드웨어 수준에서 제어합니다. 외부 DDC 기능은 하드웨어에 따라 다릅니다. IOKit 직접 접근을 사용할 수 없는 최신 지원 Mac에서는 macOS 제어 센터 접근성 UI 자동화를 사용하며, 두 내장 경로 모두 macOS 전용입니다.
 - 🔌 **화면 전원(macOS 전용)** — Lunar식 블랙아웃. 외부 화면을 macOS에서 연결 해제해서 출력을 끊습니다. 미러링이 아닙니다. USB·충전은 유지됩니다. DDC가 되는 모니터는 그 전에 밝기·명암도 0으로 내립니다. DDC 대기는 일부 모니터를 앱으로 못 깨우는 수면으로 넣어서 쓰지 않습니다.
 - 🎚️ **한 번에 전부** — 슬라이더 하나로 모든 화면을 함께, 또는 각각 조절
@@ -96,11 +97,11 @@ SayKnow Kit는 **macOS 메뉴바 또는 Windows 시스템 트레이에 상주**�
 
 ## 설치
 
-### v0.3.10 공식 설치 프로그램 (권장)
+### v0.3.12 공식 설치 프로그램 (권장)
 
 [공식 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)에서만 다운로드하고 `SHA256SUMS.txt`로 확인하세요.
 
-**macOS (Apple Silicon):** `SayKnow-Kit_0.3.10_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.3.10 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. macOS 13 이상에서는 우클릭 우회가 통하지 않습니다. 앱을 한 번 실행한 뒤 **시스템 설정 → 개인정보 보호와 보안 → 그래도 열기**를 누르세요. 또는 격리 속성을 직접 제거해도 됩니다:
+**macOS (Apple Silicon):** `SayKnow-Kit_0.3.12_aarch64.dmg`를 열어 앱을 `/Applications`로 드래그합니다. v0.3.12 앱은 **임시(ad-hoc) 서명만** 적용되며 Developer ID와 공증(notarization)이 없으므로 Gatekeeper 경고가 예상됩니다. macOS 13 이상에서는 우클릭 우회가 통하지 않습니다. 앱을 한 번 실행한 뒤 **시스템 설정 → 개인정보 보호와 보안 → 그래도 열기**를 누르세요. 또는 격리 속성을 직접 제거해도 됩니다:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -114,7 +115,7 @@ tccutil reset Accessibility com.sayknow.app
 
 반드시 먼저 `/Applications`로 옮기세요. DMG나 다운로드 폴더에서 바로 실행하면 macOS가 임의의 읽기 전용 위치에서 앱을 실행해, 내장 화면 밝기에 필요한 손쉬운 사용 권한이 저장되지 않습니다.
 
-**Windows (x64):** `SayKnow-Kit_0.3.10_x64-setup.exe`(NSIS) 또는 `SayKnow-Kit_0.3.10_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
+**Windows (x64):** `SayKnow-Kit_0.3.12_x64-setup.exe`(NSIS) 또는 `SayKnow-Kit_0.3.12_x64_en-US.msi`를 실행합니다. 설치 프로그램은 **서명되지 않았으며** SmartScreen 경고가 예상됩니다. 공식 Release와 `SHA256SUMS.txt` 확인 후에만 “추가 정보 → 실행”을 선택하세요.
 
 ### 제거
 
@@ -190,7 +191,7 @@ OpenRouter API 키는 **청구되는 자격증명**이라 평문으로 저장하
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.3.10 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
+설치 프로그램은 공식 GitHub Release에서만 받고 `SHA256SUMS.txt`를 확인하세요. v0.3.12 macOS 앱은 Developer ID·공증 없이 임시(ad-hoc) 서명되며, Windows 설치 프로그램은 Authenticode 없이 서명되지 않았습니다. Gatekeeper와 SmartScreen 경고가 예상됩니다.
 
 ## 개발 환경
 

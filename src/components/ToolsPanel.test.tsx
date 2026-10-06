@@ -78,6 +78,7 @@ vi.mock("@/i18n", () => ({
       "tools.tabs.display": "Displays",
       "tools.tabs.usage": "Token usage",
       "tools.tabs.mole": "Clean",
+      "tools.tabs.speed": "Speed",
       "tools.refresh": "Refresh",
       "tools.metrics.title": "System status",
       "tools.metrics.cpu": "CPU",
@@ -182,6 +183,9 @@ vi.mock("@/components/UsagePanel", () => ({
 }))
 vi.mock("@/components/MolePanel", () => ({
   MolePanel: ({ active }: { active: boolean }) => <section aria-label="Clean" data-active={String(active)} />,
+}))
+vi.mock("@/components/SpeedTestPanel", () => ({
+  SpeedTestPanel: () => <section aria-label="Internet speed" />,
 }))
 
 // Radix' slider measures its thumb; jsdom ships no ResizeObserver.
@@ -464,6 +468,11 @@ describe("ToolsPanel system metrics", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
     expect(screen.getByRole("tab", { name: "Clean" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByRole("region", { name: "Clean" })).toBeTruthy()
+    expect(screen.queryByRole("region", { name: "Internet speed" })).toBeNull()
+    fireEvent.click(screen.getByRole("tab", { name: "Speed" }))
+    expect(screen.getByRole("tab", { name: "Speed" }).getAttribute("aria-selected")).toBe("true")
+    expect(screen.getByRole("region", { name: "Internet speed" })).toBeTruthy()
+    expect(screen.queryByRole("region", { name: "Clean" })).toBeNull()
   })
 })
 

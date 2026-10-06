@@ -58,6 +58,7 @@ SayKnow Kit fonctionne sur macOS et Windows : il apparaît dans la **barre de me
 - 🔒 **Stockage sécurisé** — identifiants dans le stockage système (macOS Keychain / Windows Credential Manager)
 - 🧹 **Nettoyage intégré (macOS)** — nécessite Mole **1.38.1**, dont le comportement non interactif et sans authentification a été vérifié. Aucun Terminal ni shell de login n'est lancé : une tâche à la fois, avec les droits de l'utilisateur, celles réservées à l'administrateur sont ignorées. Les autres versions sont refusées tant qu'elles ne sont pas vérifiées. L'aperçu ne supprime rien (Mole peut écrire son propre rapport). Le nettoyage réel modifie fichiers et réglages. En cas d'expiration ou à la fermeture, seul son propre groupe de processus est arrêté.
 - 🗑️ **Suppression d'apps (macOS)** — liste les apps via Mole et affiche les données associées correspondant exactement à leur identifiant de bundle (caches, préférences, état enregistré, WebKit, Application Support). Seules l'app et les données que vous cochez vont à la Corbeille ; rien n'est coché par défaut. Les apps en cours d'exécution, système ou protégées sont refusées, et rien n'est supprimé définitivement.
+- 📶 **Test de débit (macOS 12+)** — mesure le débit descendant, montant et la latence au repos vers les serveurs de test d'Apple avec `networkQuality`, intégré à macOS. Il ne se lance que sur demande, dure environ 20 secondes, consomme quelques centaines de Mo et peut être annulé.
 - 🆕 **Vérification des versions** — une fois par jour, l'app interroge la dernière release GitHub, marque l'engrenage et renvoie vers sa page avec les sommes de contrôle. Rien n'est installé à votre insu : signature ad hoc sur macOS, aucune signature sur Windows — le téléchargement reste un acte délibéré.
 
 ## Prérequis
@@ -72,14 +73,14 @@ SayKnow Kit fonctionne sur macOS et Windows : il apparaît dans la **barre de me
 
 1. Téléchargez le DMG macOS aarch64 depuis la [version officielle GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Ouvrez le DMG et glissez SayKnow Kit.app dans `/Applications`.
-3. L’application v0.3.10 utilise uniquement une signature **ad hoc**, sans Developer ID ni notarisation ; les avertissements Gatekeeper sont attendus.
+3. L’application v0.3.12 utilise uniquement une signature **ad hoc**, sans Developer ID ni notarisation ; les avertissements Gatekeeper sont attendus.
 4. macOS 13+ n'accepte plus le contournement par clic droit : lancez-la une fois, puis **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Ou lancez `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Ouverte depuis le DMG, l'app s'exécute depuis une copie aléatoire en lecture seule où l'autorisation d'accessibilité n'est jamais conservée. Si macOS redemande l'accessibilité malgré l'autorisation, l'entrée enregistrée ne correspond plus à la signature ad hoc mise à jour : lancez `tccutil reset Accessibility com.sayknow.app` puis redémarrez l'app.
 5. Vérifiez `SHA256SUMS.txt` publié avec la version.
 
 ### Windows — EXE ou MSI
 
 1. Téléchargez l'installateur NSIS `.exe` ou l'installateur MSI `.msi` x64 depuis GitHub Releases officiel.
-2. Windows SmartScreen peut avertir car v0.3.10 n'est pas signé ; c'est normal. Aucun Authenticode.
+2. Windows SmartScreen peut avertir car v0.3.12 n'est pas signé ; c'est normal. Aucun Authenticode.
 3. Vérifiez `SHA256SUMS.txt`, puis lancez l'assistant.
 4. Désinstallez via **Paramètres → Applications → Applications installées → SayKnow Kit → Désinstaller**.
 
@@ -132,7 +133,7 @@ La clé API OpenRouter est une donnée facturable et est conservée uniquement d
 - macOS **Keychain** et Windows **Credential Manager**
 - Jamais en clair et jamais dérivée du mot de passe de session
 - Téléchargez depuis GitHub Releases officiel et vérifiez `SHA256SUMS.txt`
-- L’application macOS v0.3.10 est signée ad hoc, sans Developer ID ni notarisation ; les installateurs Windows ne sont pas signés avec Authenticode. Les avertissements Gatekeeper et SmartScreen sont attendus.
+- L’application macOS v0.3.12 est signée ad hoc, sans Developer ID ni notarisation ; les installateurs Windows ne sont pas signés avec Authenticode. Les avertissements Gatekeeper et SmartScreen sont attendus.
 
 ## Licence
 

@@ -58,6 +58,7 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 - 🔒 **系统凭据存储** — API 密钥保存于 macOS Keychain / Windows Credential Manager，不以明文保存
 - 🧹 **应用内清理（macOS）** — 需要已验证非交互/免认证行为的 Mole **1.38.1**。不启动外部 Terminal 或登录 shell，以用户权限一次执行一项，跳过需要管理员权限的任务。未经验证的其他版本会被拒绝。预览不会删除文件（Mole 仍可能写入自己的预览报告）。真正的清理/优化会修改用户文件与设置。超时或退出时，只终止本应用自己的进程组。
 - 🗑️ **应用删除（macOS）** — 通过 Mole 列出应用，并显示与其 Bundle ID 完全匹配的相关数据（缓存、偏好设置、已保存状态、WebKit、Application Support）。只将应用本体和你勾选的相关项目移到废纸篓，默认不勾选任何相关项目。拒绝正在运行、系统或受保护的应用，绝不永久删除。
+- 📶 **网速测试（macOS 12 及以上）** — 使用 macOS 自带的 `networkQuality`，测量到 Apple 测速服务器的下载、上传速度和延迟。只在点击开始时运行，约需 20 秒、消耗数百 MB 流量，可随时取消。
 - 🆕 **新版本检查** — 每天一次检查 GitHub 最新发行版，在齿轮上显示小圆点并指向带校验和的发行页。不会在后台自动安装：macOS 为临时签名、Windows 未签名，下载始终由你决定。
 
 ## 系统要求
@@ -68,11 +69,11 @@ SayKnow Kit 常驻 **macOS 菜单栏或 Windows 系统托盘**。一个快捷键
 
 ## 安装
 
-### v0.3.10 官方安装程序（推荐）
+### v0.3.12 官方安装程序（推荐）
 
 仅从[官方 GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases)下载，并使用 `SHA256SUMS.txt` 校验。
 
-**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.3.10_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.3.10 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。macOS 13 及以上版本不再接受右键绕过：先运行一次,然后前往**系统设置 → 隐私与安全性 → 仍要打开**。也可以自行清除隔离属性:
+**macOS（Apple Silicon）：** 下载 `SayKnow-Kit_0.3.12_aarch64.dmg`，打开后将应用拖入 `/Applications`。v0.3.12 应用仅使用**临时签名（ad-hoc）**，没有 Developer ID 或 notarization，因此出现 Gatekeeper 警告是正常的。macOS 13 及以上版本不再接受右键绕过：先运行一次,然后前往**系统设置 → 隐私与安全性 → 仍要打开**。也可以自行清除隔离属性:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -86,7 +87,7 @@ tccutil reset Accessibility com.sayknow.app
 
 请务必先移动到 `/Applications`。若直接从 DMG 或下载文件夹启动,macOS 会在随机的只读位置运行应用,内置屏幕亮度所需的辅助功能权限将无法保存。
 
-**Windows（x64）：** 下载 `SayKnow-Kit_0.3.10_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.3.10_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
+**Windows（x64）：** 下载 `SayKnow-Kit_0.3.12_x64-setup.exe`（NSIS）或 `SayKnow-Kit_0.3.12_x64_en-US.msi` 并运行。安装程序**未签名**，出现 SmartScreen 警告是正常的。确认官方 Release 与 `SHA256SUMS.txt` 后，再选择“更多信息 → 仍要运行”。
 
 ### 卸载
 
@@ -139,7 +140,7 @@ OpenRouter API 密钥涉及计费，SayKnow Kit 不以明文存储，使用操�
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.3.10 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
+安装程序仅从官方 GitHub Release 获取，并使用 `SHA256SUMS.txt` 校验。v0.3.12 的 macOS 应用仅使用临时签名，没有 Developer ID 或 notarization；Windows 安装程序未使用 Authenticode 签名。Gatekeeper 和 SmartScreen 警告是正常现象。
 
 ## 许可
 

@@ -58,6 +58,7 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 - 🔒 **Sicherer Speicher** — Anmeldedaten im System-Credential-Speicher (macOS Keychain / Windows Credential Manager)
 - 🧹 **In-App-Bereinigung (macOS)** — benötigt Mole **1.38.1**, dessen nicht interaktives Verhalten ohne Authentifizierung geprüft wurde. Kein externes Terminal, keine Login-Shell: eine Aufgabe nach der anderen mit Benutzerrechten, Aufgaben mit Administratorrechten werden übersprungen. Andere Versionen werden abgelehnt, bis sie geprüft sind. Die Vorschau löscht nichts (Mole schreibt ggf. seinen eigenen Bericht). Die echte Bereinigung ändert Dateien und Einstellungen. Bei Timeout oder Beenden wird nur die eigene Prozessgruppe beendet.
 - 🗑️ **App-Entfernung (macOS)** — listet Apps über Mole und zeigt die zugehörigen Daten mit exakt passender Bundle-ID (Caches, Einstellungen, gespeicherter Zustand, WebKit, Application Support). Nur die App und die von Ihnen markierten Daten kommen in den Papierkorb; standardmäßig ist nichts markiert. Laufende, System- und geschützte Apps werden abgelehnt, endgültig gelöscht wird nichts.
+- 📶 **Internet-Geschwindigkeitstest (macOS 12+)** — misst Download, Upload und Latenz im Leerlauf gegen Apples Testserver mit dem in macOS enthaltenen `networkQuality`. Er läuft nur auf Knopfdruck, dauert etwa 20 Sekunden, verbraucht einige hundert MB und lässt sich abbrechen.
 - 🆕 **Update-Prüfung** — einmal täglich fragt die App das neueste GitHub-Release ab, markiert das Zahnrad und verlinkt die Seite samt Prüfsummen. Es wird nichts heimlich installiert: macOS ad hoc signiert, Windows unsigniert — der Download bleibt eine bewusste Entscheidung.
 
 ## Anforderungen
@@ -72,14 +73,14 @@ SayKnow Kit läuft auf macOS und Windows: Es erscheint in der **macOS-Menüleist
 
 1. Lade das macOS-aarch64-DMG vom [offiziellen GitHub-Release](https://github.com/jaybeyond/sayknow-kit/releases) herunter.
 2. Öffne das DMG und ziehe SayKnow Kit.app nach `/Applications`.
-3. Die v0.3.10-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
+3. Die v0.3.12-App ist nur **ad hoc** signiert, ohne Developer ID oder Notarisierung; Gatekeeper-Warnungen sind zu erwarten.
 4. macOS 13+ akzeptiert den Rechtsklick-Trick nicht mehr: einmal starten, dann **Systemeinstellungen → Datenschutz & Sicherheit → Dennoch öffnen**. Alternativ `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Aus dem DMG heraus gestartet, läuft die App aus einer zufälligen Nur-Lese-Kopie, in der die Bedienungshilfen-Berechtigung nie gespeichert wird. Fragt macOS trotz Erlaubnis weiter nach Bedienungshilfen, passt der gespeicherte Eintrag nicht mehr zur aktualisierten Ad-hoc-Signatur: `tccutil reset Accessibility com.sayknow.app` ausführen und die App neu starten.
 5. Prüfe vor dem Öffnen die veröffentlichte `SHA256SUMS.txt`.
 
 ### Windows — EXE oder MSI
 
 1. Lade den x64-NSIS-Installer (`.exe`) oder den x64-MSI-Installer (`.msi`) ausschließlich vom offiziellen GitHub-Release.
-2. Windows SmartScreen kann warnen, da v0.3.10 unsigniert ist; das ist erwartbar. Kein Authenticode.
+2. Windows SmartScreen kann warnen, da v0.3.12 unsigniert ist; das ist erwartbar. Kein Authenticode.
 3. Prüfe `SHA256SUMS.txt` und führe den Installationsassistenten aus.
 4. Deinstallation: **Einstellungen → Apps → Installierte Apps → SayKnow Kit → Deinstallieren**.
 
@@ -132,7 +133,7 @@ Der OpenRouter-Key ist abrechnungsrelevant und wird ausschließlich im sicheren 
 - macOS **Keychain** und Windows **Credential Manager**
 - Nie im Klartext und nicht aus dem Login-Passwort abgeleitet
 - Nur vom offiziellen GitHub-Release laden und `SHA256SUMS.txt` prüfen
-- Die macOS-App v0.3.10 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
+- Die macOS-App v0.3.12 ist ad hoc signiert, ohne Developer ID oder Notarisierung; die Windows-Installer haben keine Authenticode-Signatur. Gatekeeper- und SmartScreen-Warnungen sind zu erwarten.
 
 ## Lizenz
 

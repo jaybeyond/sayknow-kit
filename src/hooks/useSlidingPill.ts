@@ -55,18 +55,25 @@ export function useSlidingPill(
     place(placed && fromPointer)
     pill.dataset.placed = "true"
     // Label widths change with the UI language or a font load; follow them
-    // without animating.
+    // without animating. Columns sized to their labels move the active option
+    // while the control keeps its size, so watch every option, and compare
+    // the active option's box, not the control's.
     if (typeof ResizeObserver === "undefined") return
+    const box = () => {
+      const active = container.querySelector<HTMLElement>("[data-pill-active='true']")
+      return active ? `${active.offsetLeft},${active.offsetTop},${active.offsetWidth}x${active.offsetHeight}` : ""
+    }
     // An observer reports once as soon as it starts; only a real change in
-    // size should re-snap, or it would cut the slide that just began.
-    let size = `${container.offsetWidth}x${container.offsetHeight}`
+    // place or size should re-snap, or it would cut the slide that just began.
+    let last = box()
     const ro = new ResizeObserver(() => {
-      const next = `${container.offsetWidth}x${container.offsetHeight}`
-      if (next === size) return
-      size = next
+      const next = box()
+      if (next === last) return
+      last = next
       place(false)
     })
     ro.observe(container)
+    container.querySelectorAll<HTMLElement>("[data-pill-active]").forEach((option) => ro.observe(option))
     return () => ro.disconnect()
   }, [containerRef, pillRef, activeKey])
 }

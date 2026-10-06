@@ -58,6 +58,7 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 - 🔒 **Almacenamiento seguro** — credenciales en el almacén del sistema (macOS Keychain / Windows Credential Manager)
 - 🧹 **Limpieza en la app (macOS)** — requiere Mole **1.38.1**, cuyo comportamiento no interactivo y sin autenticación está verificado. No abre Terminal ni un shell de login: ejecuta una tarea a la vez con permisos de usuario y omite las que exigen administrador. Otras versiones se rechazan hasta verificarlas. La vista previa no borra nada (Mole sí puede escribir su propio informe). La limpieza real modifica archivos y ajustes del usuario. Al agotarse el tiempo o al salir, solo termina su propio grupo de procesos.
 - 🗑️ **Eliminación de apps (macOS)** — lista las apps con Mole y muestra los datos relacionados que coinciden exactamente con su ID de paquete (cachés, preferencias, estado guardado, WebKit, Application Support). Solo la app y los elementos relacionados que marques van a la Papelera; ninguno viene marcado. Rechaza apps en ejecución, del sistema o protegidas, y nunca borra de forma permanente.
+- 📶 **Prueba de velocidad (macOS 12+)** — mide descarga, subida y latencia en reposo contra los servidores de prueba de Apple con `networkQuality`, incluido en macOS. Solo se ejecuta al pulsar Iniciar prueba, tarda unos 20 segundos, consume unos cientos de MB y se puede cancelar.
 - 🆕 **Comprobación de versión** — una vez al día consulta la última publicación en GitHub, marca el engranaje y enlaza a su página con los checksums. Nunca instala nada por su cuenta: en macOS la firma es ad hoc y en Windows no hay firma, así que descargar sigue siendo una decisión tuya.
 
 ## Requisitos
@@ -72,14 +73,14 @@ SayKnow Kit funciona en macOS y Windows: aparece en la **barra de menú de macOS
 
 1. Descarga el DMG macOS aarch64 de la [versión oficial en GitHub Releases](https://github.com/jaybeyond/sayknow-kit/releases).
 2. Abre el DMG y arrastra SayKnow Kit.app a `/Applications`.
-3. La aplicación v0.3.10 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
+3. La aplicación v0.3.12 solo lleva una firma **ad hoc**, sin Developer ID ni notarización; las advertencias de Gatekeeper son esperadas.
 4. macOS 13+ ya no acepta el atajo del clic derecho: ábrela una vez y luego usa **Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente**. O ejecuta `xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"`. Si la abres desde el DMG, macOS la ejecuta desde una copia temporal de solo lectura donde el permiso de accesibilidad nunca se guarda. Si macOS sigue pidiendo accesibilidad tras concederla, la entrada guardada ya no coincide con la firma ad hoc actualizada: ejecuta `tccutil reset Accessibility com.sayknow.app` y reinicia la app.
 5. Verifica el archivo `SHA256SUMS.txt` publicado junto a la versión antes de abrirlo.
 
 ### Windows — EXE o MSI
 
 1. Descarga el instalador NSIS `.exe` o el instalador MSI `.msi` x64 de la versión oficial en GitHub Releases.
-2. Windows SmartScreen puede mostrar una advertencia porque v0.3.10 no está firmado; es normal. No hay Authenticode.
+2. Windows SmartScreen puede mostrar una advertencia porque v0.3.12 no está firmado; es normal. No hay Authenticode.
 3. Verifica `SHA256SUMS.txt` antes de ejecutar el instalador y sigue el asistente.
 4. Para desinstalar, usa **Configuración → Aplicaciones → Aplicaciones instaladas → SayKnow Kit → Desinstalar**.
 
@@ -132,7 +133,7 @@ La clave API es una credencial facturable y se guarda únicamente en el almacena
 - macOS **Keychain** y Windows **Credential Manager**
 - Nunca se almacena en texto plano ni se deriva del inicio de sesión
 - Descarga solo desde GitHub Releases oficial y verifica `SHA256SUMS.txt`
-- La aplicación macOS v0.3.10 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
+- La aplicación macOS v0.3.12 usa firma ad hoc sin Developer ID ni notarización; los instaladores de Windows no tienen firma Authenticode. Las advertencias de Gatekeeper y SmartScreen son esperadas.
 
 ## Licencia
 

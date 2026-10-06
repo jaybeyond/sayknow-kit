@@ -15,6 +15,7 @@ mod battery_macos;
 mod iokit_macos;
 mod mole;
 mod network_metrics;
+mod speed_test;
 mod display;
 mod clipboard;
 mod global_shortcuts;
@@ -2340,6 +2341,8 @@ pub fn run() {
             mole::removal::preview_mole_app_removal,
             mole::removal::cancel_mole_app_removal,
             mole::removal::trash_mole_app_selection,
+            speed_test::run_speed_test,
+            speed_test::cancel_speed_test,
             system_monitor::set_system_monitor_config,
         ])
         .setup(|app| {
@@ -2555,6 +2558,7 @@ pub fn run() {
             // because a crash never reaches here.
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 crate::mole::shutdown();
+                crate::speed_test::shutdown();
                 crate::display::restore_disconnected_displays();
                 crate::display::restore_builtin_gamma();
             }

@@ -53,6 +53,36 @@ describe("useSlidingPill", () => {
     fireEvent.click(screen.getByText("keyboard"))
     expect(pill.classList.contains("t-pill-instant")).toBe(true)
   })
+
+  it("re-snaps when the active option moves while the control keeps its size", () => {
+    const observers: { cb: () => void; targets: Element[] }[] = []
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        targets: Element[] = []
+        constructor(cb: () => void) {
+          observers.push({ cb, targets: this.targets })
+        }
+        observe(el: Element) {
+          this.targets.push(el)
+        }
+        disconnect() {}
+      },
+    )
+    render(<Tabs />)
+    const pill = screen.getByTestId("pill")
+    const active = screen.getByText("a")
+    const live = observers[observers.length - 1]
+    expect(live.targets).toContain(active)
+
+    // A new language widens an earlier label: the active option shifts right.
+    Object.defineProperty(active, "offsetLeft", { configurable: true, value: 40 })
+    Object.defineProperty(active, "offsetWidth", { configurable: true, value: 52 })
+    live.cb()
+    expect(pill.style.transform).toBe("translate(40px, 0px)")
+    expect(pill.style.width).toBe("52px")
+    expect(pill.classList.contains("t-pill-instant")).toBe(true)
+  })
 })
 
 describe("IconSwap", () => {
