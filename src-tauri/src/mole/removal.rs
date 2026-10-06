@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 
 const TTL: Duration = Duration::from_secs(60);
 
@@ -900,7 +900,7 @@ mod native {
             token: id(),
             generation,
             expires_at_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+                .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| "mole_identity_unavailable")?
                 .as_millis() as u64
                 + TTL.as_millis() as u64,
@@ -1585,7 +1585,7 @@ mod tests {
                 size_bytes: None,
             },
             chain: vec![],
-            modified: UNIX_EPOCH,
+            modified: std::time::UNIX_EPOCH,
             len: 0,
         }
     }
