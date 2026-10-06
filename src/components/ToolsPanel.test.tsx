@@ -2,8 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { Settings } from "@/hooks/useSettings"
+import type { MoleStore } from "@/lib/mole-store"
 
 const mocks = vi.hoisted(() => ({
+  moleState: { busy: null as MoleStore["busy"] },
+  moleListeners: new Set<() => void>(),
+  refreshScans: vi.fn(() => Promise.resolve()),
   setActivityActive: vi.fn(),
   activityState: {
     points: [] as {
@@ -163,6 +167,14 @@ vi.mock("@/lib/system-activity-store", () => ({
   subscribe: () => () => undefined,
   setActive: mocks.setActivityActive,
 }))
+vi.mock("@/lib/mole-store", () => ({
+  getSnapshot: () => mocks.moleState,
+  subscribe: (listener: () => void) => {
+    mocks.moleListeners.add(listener)
+    return () => { mocks.moleListeners.delete(listener) }
+  },
+  refreshScans: mocks.refreshScans,
+}))
 vi.mock("@/components/UsagePanel", () => ({
   UsagePanel: ({ active }: { active: boolean }) => (
     <section aria-label="Usage" data-active={String(active)} />
@@ -200,6 +212,9 @@ afterEach(() => {
   mocks.activityState.points = []
   mocks.activityState.processes = null
   mocks.scanDisplays.mockImplementation(() => Promise.resolve())
+  mocks.moleState = { busy: null }
+  mocks.moleListeners.clear()
+  mocks.refreshScans.mockImplementation(() => Promise.resolve())
 })
 
 describe("ToolsPanel polling eligibility", () => {
@@ -278,6 +293,118 @@ describe("ToolsPanel polling eligibility", () => {
     view.rerender(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active={false} />)
     expect(screen.getByRole("region", { name: "Clean" }).dataset.active).toBe("false")
   })
+})
+
+describe("ToolsPanel cleanup header refresh", () => {
+  it("refreshes idle Mole scans and keeps the header disabled until they finish", async () => {
+    let finishScans!: () => void
+    mocks.refreshScans.mockImplementation(() => new Promise<void>((resolve) => {
+      finishScans = resolve
+    }))
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+    const refresh = screen.getByTitle("Refresh") as HTMLButtonElement
+    mocks.scanDisplays.mockClear()
+
+    expect(refresh.disabled).toBe(false)
+    fireEvent.click(refresh)
+    expect(mocks.refreshScans).toHaveBeenCalledOnce()
+    expect(mocks.scanDisplays).toHaveBeenCalledExactlyOnceWith(true)
+    expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
+    expect(refresh.disabled).toBe(true)
+    fireEvent.click(refresh)
+    expect(mocks.refreshScans).toHaveBeenCalledOnce()
+
+    await act(async () => { finishScans() })
+    expect(refresh.disabled).toBe(false)
+  })
+
+  it.each(["disk", "cache", "tune", "apps", "detect", "preview", "remove"] as const)(
+    "disables the header on a %s notification and re-enables it when Mole becomes idle",
+    async (busy) => {
+      render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+      const refresh = screen.getByTitle("Refresh") as HTMLButtonElement
+      mocks.scanDisplays.mockClear()
+
+      expect(refresh.disabled).toBe(false)
+      act(() => {
+        mocks.moleState = { busy }
+        mocks.moleListeners.forEach((listener) => listener())
+      })
+      expect(refresh.disabled).toBe(true)
+      fireEvent.click(refresh)
+      expect(mocks.refreshScans).not.toHaveBeenCalled()
+      expect(mocks.scanDisplays).not.toHaveBeenCalled()
+      expect(mocks.refreshMetrics).not.toHaveBeenCalled()
+
+      act(() => {
+        mocks.moleState = { busy: null }
+        mocks.moleListeners.forEach((listener) => listener())
+      })
+      expect(refresh.disabled).toBe(false)
+      expect(mocks.refreshScans).not.toHaveBeenCalled()
+      await act(async () => { fireEvent.click(refresh) })
+      expect(mocks.refreshScans).toHaveBeenCalledOnce()
+      expect(mocks.scanDisplays).toHaveBeenCalledExactlyOnceWith(true)
+      expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
+    },
+  )
+
+  it("rejects refresh using the latest busy snapshot before a subscription notification", async () => {
+    render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+    const refresh = screen.getByTitle("Refresh") as HTMLButtonElement
+    mocks.scanDisplays.mockClear()
+
+    // No notification: the rendered button still reflects the previous idle snapshot.
+    mocks.moleState = { busy: "remove" }
+    expect(refresh.disabled).toBe(false)
+    await act(async () => { fireEvent.click(refresh) })
+    expect(mocks.refreshScans).not.toHaveBeenCalled()
+    expect(mocks.scanDisplays).not.toHaveBeenCalled()
+    expect(mocks.refreshMetrics).not.toHaveBeenCalled()
+
+    act(() => {
+      mocks.moleState = { busy: null }
+      mocks.moleListeners.forEach((listener) => listener())
+    })
+    expect(mocks.refreshScans).not.toHaveBeenCalled()
+    expect(mocks.scanDisplays).not.toHaveBeenCalled()
+    expect(mocks.refreshMetrics).not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(refresh) })
+    expect(mocks.refreshScans).toHaveBeenCalledOnce()
+  })
+
+  it("unsubscribes from Mole state when the parent unmounts", () => {
+    const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+    expect(mocks.moleListeners.size).toBe(1)
+    view.unmount()
+    expect(mocks.moleListeners.size).toBe(0)
+  })
+
+  it.each(["Status", "Displays", "Token usage"])(
+    "preserves %s header refresh while Mole is busy",
+    async (tab) => {
+      mocks.moleState = { busy: "remove" }
+      render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+      const refresh = screen.getByTitle("Refresh") as HTMLButtonElement
+      expect(refresh.disabled).toBe(true)
+
+      fireEvent.click(screen.getByRole("tab", { name: tab }))
+      mocks.scanDisplays.mockClear()
+      expect(refresh.disabled).toBe(false)
+      await act(async () => { fireEvent.click(refresh) })
+      expect(mocks.scanDisplays).toHaveBeenCalledExactlyOnceWith(true)
+      expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
+      expect(mocks.refreshScans).not.toHaveBeenCalled()
+      expect(refresh.disabled).toBe(false)
+
+      fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
+      expect(refresh.disabled).toBe(true)
+    },
+  )
 })
 describe("ToolsPanel system metrics", () => {
   it("announces stale state without disguising unsupported temperature", async () => {

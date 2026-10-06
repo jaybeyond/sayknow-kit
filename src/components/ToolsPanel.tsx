@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
-import { refreshScans } from "@/lib/mole-store"
+import { getSnapshot as getMoleSnapshot, refreshScans, subscribe as subscribeMole } from "@/lib/mole-store"
 import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
@@ -77,6 +77,7 @@ export function ToolsPanel({ settings, active }: Props) {
     getSnapshot,
   )
   const metrics = useSyncExternalStore(subscribeMetrics, getMetricsSnapshot)
+  const moleBusy = useSyncExternalStore(subscribeMole, () => getMoleSnapshot().busy)
   const [tab, setTab] = useState<ToolTab>("status")
   const toolTabsRef = useRef<HTMLDivElement>(null)
   const toolPillRef = useRef<HTMLSpanElement>(null)
@@ -84,6 +85,7 @@ export function ToolsPanel({ settings, active }: Props) {
   const [refreshing, setRefreshing] = useState(false)
 
   const refreshAll = useCallback(async () => {
+    if (tab === "mole" && getMoleSnapshot().busy !== null) return
     setRefreshing(true)
     try {
       const jobs: Promise<unknown>[] = [scanDisplays(true), refreshMetrics()]
@@ -282,7 +284,7 @@ export function ToolsPanel({ settings, active }: Props) {
           variant="ghost"
           size="sm"
           className="h-7 w-7 shrink-0 px-0 active:scale-[0.98]"
-          disabled={refreshing}
+          disabled={refreshing || (tab === "mole" && moleBusy !== null)}
           onClick={() => void refreshAll()}
           title={t("tools.refresh")}
         >

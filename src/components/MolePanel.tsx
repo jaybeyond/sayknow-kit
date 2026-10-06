@@ -1,288 +1,251 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react"
-import { HardDrive, RefreshCw, Sparkles, Trash2 } from "lucide-react"
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { AlertTriangle, Folder, HardDrive, Package, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { formatBytes } from "@/lib/system-metrics-store"
 import {
-  detect,
-  getSnapshot,
-  run,
-  subscribe,
-  type SessionId,
-  type SessionState,
+  cancelRemoval, getSnapshot, initialize, openAppRemoval, refreshScans, removeSelected,
+  run, subscribe, type SessionState,
 } from "@/lib/mole-store"
-import type {
-  CleanPreviewItem,
-  MoleAnalyze,
-  MoleDiskEntry,
-  MoleResult,
-} from "@/lib/mole"
+import { MAINTENANCE_IDS, type CleanPreviewItem, type MaintenanceTask, type MoleAnalyze } from "@/lib/mole"
 
-type Props = {
-  t: (key: string) => string
-  active: boolean
+type T = (key: string) => string
+type Props = { t: T; active: boolean }
+const press = "transition-none active:scale-[0.97] motion-reduce:active:scale-100"
+const scrollList = "max-h-64 overflow-y-auto overscroll-contain rounded-lg border bg-background/40 divide-y"
+const pathStyle = "break-all text-[11px] leading-relaxed text-muted-foreground select-text"
+const time = (value: number) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+function label(t: T, key: string, fallback: string) { const value = t(key); return value === key ? fallback : value }
+function errorLabel(error: string, t: T) {
+  const code = error.match(/\bmole_[a-z_]+\b/)?.[0]
+  return code ? label(t, `tools.mole.error.${code}`, t("tools.mole.failed")) : t("tools.mole.failed")
 }
+function ErrorNote({ error, t }: { error: string | null; t: T }) {
+  if (!error) return null
+  return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5 text-xs">
+    <p className="text-destructive">{errorLabel(error, t)}</p>
+    <details className="mt-1 text-muted-foreground"><summary className="cursor-pointer text-[11px]">{t("tools.mole.technical")}</summary><p className="mt-1 break-all select-text">{error}</p></details>
+  </div>
+}
+function Section({ icon: Icon, title, hint, count, children }: { icon: typeof HardDrive; title: string; hint: string; count?: number; children: ReactNode }) {
+  return <section aria-label={title} className="space-y-2.5 border-t pt-4 first:border-t-0 first:pt-0">
+    <div className="flex items-center gap-2 text-[13px] font-semibold"><Icon aria-hidden="true" className="size-4 text-muted-foreground" /><h3>{title}</h3>{count !== undefined && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal tabular-nums text-muted-foreground">{count}</span>}</div>
+    <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
+    {children}
+  </section>
+}
+function ScanState({ state, busy, t }: { state: Pick<SessionState, "updatedAt" | "stale" | "error">; busy: boolean; t: T }) {
+  return <>
+    {busy ? <p role="status" className="text-[11px] text-muted-foreground">{t("tools.mole.scanning")}</p>
+      : state.updatedAt ? <p className="text-[11px] text-muted-foreground">{state.stale ? t("tools.mole.stale") : t("tools.mole.updated").replace("{time}", time(state.updatedAt))}</p>
+        : !state.error && <p className="text-[11px] text-muted-foreground">{t("tools.mole.waiting")}</p>}
+    <ErrorNote error={state.error} t={t} />
+  </>
+}
+function Empty({ t }: { t: T }) { return <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">{t("tools.mole.empty")}</p> }
 
 export function MolePanel({ t, active }: Props) {
-  const { info, sessions, busy } = useSyncExternalStore(subscribe, getSnapshot)
-
+  const state = useSyncExternalStore(subscribe, getSnapshot)
+  const [query, setQuery] = useState("")
+  const [selected, setSelected] = useState<string[]>([])
+  const [confirmAction, setConfirmAction] = useState<{ action: "clean" | "optimize"; snapshot: SessionState } | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [expiredToken, setExpiredToken] = useState<string | null>(null)
+  const origin = useRef<HTMLButtonElement | null>(null)
+  const cancel = useRef<HTMLButtonElement | null>(null)
+  const search = useRef<HTMLInputElement | null>(null)
+  const { info, sessions, apps, busy, preview } = state
+  const available = info !== "loading" && info?.supported === true && !state.detectionError
+  const disabled = busy !== null || !available
+  const expired = preview !== null && expiredToken === preview.token
+  const acting = busy === "remove"
+  const selectedRows = preview ? [preview.app, ...preview.related.filter((row) => selected.includes(row.id))] : []
+  const knownSizes = selectedRows.flatMap((row) => row.size_bytes !== null ? [row.size_bytes] : [])
+  const selectedBytes = knownSizes.reduce((sum, bytes) => sum + bytes, 0)
+  const hasUnknownSize = knownSizes.length !== selectedRows.length
+  const filteredApps = (apps.inventory?.apps ?? []).filter((app) => `${app.name} ${app.path}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+  const execute = (promise: Promise<void>) => { setActionError(null); void promise.catch((error: unknown) => setActionError(String(error))) }
+  const closeRemoval = () => execute(cancelRemoval())
+  const restoreFocus = () => { if (origin.current?.isConnected && !origin.current.disabled) origin.current.focus(); else search.current?.focus() }
   useEffect(() => {
-    if (!active) return
-    if (info === "loading") void detect()
-  }, [active, info])
+    if (active) void initialize().catch((error: unknown) => setActionError(String(error)))
+  }, [active])
+  useEffect(() => {
+    if (!preview) return
+    const timer = window.setTimeout(() => setExpiredToken(preview.token), Math.max(0, preview.expires_at_ms - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [preview])
+  const confirmationSession = confirmAction?.action === "clean" ? sessions.cache : sessions.tune
+  const canConfirm = confirmAction && !disabled && !confirmationSession.stale && confirmationSession === confirmAction.snapshot
 
-  const start = useCallback((id: SessionId, action: string) => {
-    void run(id, action)
-  }, [])
-
-  if (info === "loading") {
-    return <p className="p-2 text-[11px] text-muted-foreground">{t("tools.mole.detecting")}</p>
-  }
-
-  if (!info) {
-    return (
-      <section className="rounded-lg border bg-muted/30 p-2.5 text-[11px]">
-        <div className="mb-1.5 font-medium">{t("tools.mole.title")}</div>
-        <p className="text-muted-foreground">{t("tools.mole.missing")}</p>
-        <pre className="mt-2 overflow-x-auto rounded-md bg-background/70 p-2 text-[10px]">
-          brew install mole
-        </pre>
-      </section>
-    )
-  }
-
-  // The backend only audited its noninteractive contract against one release,
-  // so an unaudited Mole is reported here instead of failing on the first run.
-  if (!info.supported) {
-    return (
-      <section className="rounded-lg border bg-muted/30 p-2.5 text-[11px]">
-        <div className="mb-1.5 font-medium">{t("tools.mole.title")}</div>
-        <p className="text-muted-foreground">
-          {t("tools.mole.unsupported")
-            .replace("{required}", info.required_version)
-            .replace("{found}", info.version)}
-        </p>
-        <pre className="mt-2 overflow-x-auto rounded-md bg-background/70 p-2 text-[10px]">
-          brew upgrade mole
-        </pre>
-      </section>
-    )
-  }
-
-  return (
-    <div className="space-y-2">
-      <SessionCard
-        busy={busy === "disk"}
-        disabled={busy !== null}
-        icon={HardDrive}
-        t={t}
-        title={t("tools.mole.session.disk")}
-        hint={t("tools.mole.session.diskHint")}
-        scanLabel={t("tools.mole.analyze")}
-        onScan={() => start("disk", "analyze")}
-        state={sessions.disk}
-        kind="disk"
-      />
-      <SessionCard
-        busy={busy === "cache"}
-        disabled={busy !== null}
-        icon={Trash2}
-        t={t}
-        title={t("tools.mole.session.cache")}
-        hint={t("tools.mole.session.cacheHint")}
-        scanLabel={t("tools.mole.cleanPreview")}
-        runLabel={t("tools.mole.cleanNow")}
-        onScan={() => start("cache", "clean-preview")}
-        onRun={() => start("cache", "clean")}
-        state={sessions.cache}
-        kind="preview"
-      />
-      <SessionCard
-        busy={busy === "tune"}
-        disabled={busy !== null}
-        icon={Sparkles}
-        t={t}
-        title={t("tools.mole.session.tune")}
-        hint={t("tools.mole.session.tuneHint")}
-        scanLabel={t("tools.mole.optimizePreview")}
-        runLabel={t("tools.mole.optimizeNow")}
-        onScan={() => start("tune", "optimize-preview")}
-        onRun={() => start("tune", "optimize")}
-        state={sessions.tune}
-        kind="preview"
-      />
-    </div>
-  )
-}
-
-function SessionCard({
-  busy,
-  disabled,
-  hint,
-  icon: Icon,
-  kind,
-  onRun,
-  onScan,
-  runLabel,
-  scanLabel,
-  state,
-  t,
-  title,
-}: {
-  busy: boolean
-  disabled: boolean
-  hint: string
-  icon: typeof HardDrive
-  kind: "disk" | "preview"
-  onRun?: () => void
-  onScan: () => void
-  runLabel?: string
-  scanLabel: string
-  state: SessionState
-  t: (k: string) => string
-  title: string
-}) {
-  return (
-    <section className="rounded-lg border bg-muted/30 p-2.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium">
-        <Icon className="h-3.5 w-3.5" />
-        {title}
-      </div>
-      <p className="mb-2 text-[10px] leading-relaxed text-muted-foreground">{hint}</p>
-      <div className="flex flex-wrap gap-1.5">
-        <Button
-          className="h-7 text-[11px] active:scale-[0.98]"
-          disabled={disabled}
-          onClick={onScan}
-          size="sm"
-          variant="secondary"
-        >
-          {busy ? <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> : null}
-          {scanLabel}
+  return <div className="space-y-4 pb-1" data-testid="mole-panel">
+    <header className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold">{t("tools.mole.title")}</h2>
+        <Button size="sm" variant="ghost" className={`h-8 text-xs ${press}`} disabled={busy !== null} onClick={() => execute(refreshScans())}>
+          <RefreshCw aria-hidden="true" className="size-3.5" />{t("tools.refresh")}
         </Button>
-        {onRun && runLabel && (
-          <Button
-            className="h-7 text-[11px] active:scale-[0.98]"
-            disabled={disabled}
-            onClick={onRun}
-            size="sm"
-            variant="outline"
-          >
-            {runLabel}
-          </Button>
-        )}
       </div>
-      {state.error && (
-        <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] text-destructive">
-          {state.error === "mole_failed" ? t("tools.mole.failed") : state.error}
-        </p>
-      )}
-      {busy && <ProgressBlock lines={state.progress} t={t} />}
-      {state.result && <ResultBlock result={state.result} t={t} />}
-      {kind === "disk" && state.analyze && <AnalyzeCard analyze={state.analyze} t={t} />}
-      {kind === "preview" && state.items.length > 0 && <PreviewCard items={state.items} t={t} />}
-    </section>
-  )
-}
+      <p className="text-xs leading-relaxed text-muted-foreground">{t("tools.mole.intro")}</p>
+      {info === "loading" && <p role="status" className="text-xs text-muted-foreground">{t("tools.mole.detecting")}</p>}
+      {info !== "loading" && !info && <div className="rounded-lg border bg-muted/30 p-3 text-xs"><p>{t("tools.mole.missing")}</p><code className="mt-2 block select-text">brew install mole</code></div>}
+      {info !== "loading" && info && !info.supported && <p className="rounded-lg border bg-muted/30 p-3 text-xs">{t("tools.mole.unsupported").replace("{required}", info.required_version).replace("{found}", info.version)}</p>}
+      <ErrorNote error={state.detectionError ?? actionError} t={t} />
+    </header>
 
-function ProgressBlock({ lines, t }: { lines: string[]; t: (k: string) => string }) {
-  const last = lines[lines.length - 1] ?? t("tools.mole.running")
-  return (
-    <div className="mt-2">
-      <div className="mb-1 text-[10px] text-muted-foreground">{t("tools.mole.progress")}</div>
-      <p className="truncate text-[10px] text-muted-foreground">{last}</p>
-    </div>
-  )
-}
+    <Section icon={HardDrive} title={t("tools.mole.session.disk")} hint={t("tools.mole.session.diskHint")} count={sessions.disk.analyze?.entries.length}>
+      <ScanState state={sessions.disk} busy={busy === "disk"} t={t} />
+      {sessions.disk.analyze ? <DiskList analyze={sessions.disk.analyze} t={t} /> : <Empty t={t} />}
+    </Section>
 
-function ResultBlock({ result, t }: { result: MoleResult; t: (k: string) => string }) {
-  return (
-    <div className="mt-2 rounded-md bg-background/70 p-2">
-      <div className="text-[11px] font-medium">{t("tools.mole.result")}</div>
-      <p className="mt-0.5 text-[12px] font-semibold">{result.heading}</p>
-      <div className="mt-1.5 grid grid-cols-2 gap-2">
-        <div>
-          <div className="text-[10px] text-muted-foreground">{t("tools.mole.freed")}</div>
-          <div className="text-sm font-semibold tabular-nums">
-            {result.freedBytes != null ? formatBytes(result.freedBytes, 1000) : "—"}
+    <Section icon={Trash2} title={t("tools.mole.session.cache")} hint={t("tools.mole.session.cacheHint")} count={sessions.cache.updatedAt !== null ? sessions.cache.items.length : undefined}>
+      <ScanState state={sessions.cache} busy={busy === "cache"} t={t} />
+      {sessions.cache.scanResult && <div className="rounded-lg bg-muted/40 px-3 py-2.5">
+        <div className="text-[11px] text-muted-foreground">{t("tools.mole.expected")}</div>
+        <div className="mt-0.5 text-xl font-semibold tabular-nums">{sessions.cache.scanResult.bytes !== null ? formatBytes(sessions.cache.scanResult.bytes, 1000) : t("tools.mole.unknownSize")}</div>
+        {sessions.cache.scanResult.partial && <p className="mt-1 text-[11px] text-muted-foreground">{t("tools.mole.partialEstimate")}</p>}
+      </div>}
+      <CleanList items={sessions.cache.items} t={t} />
+      {sessions.cache.result && <div role="status" className="rounded-lg border px-3 py-2 text-xs">
+        <p className="font-medium">{t("tools.mole.lastRun")}{sessions.cache.lastRunAt ? ` · ${time(sessions.cache.lastRunAt)}` : ""}</p>
+        <p className="mt-1 text-muted-foreground">{t("tools.mole.reported")}: <span className="tabular-nums text-foreground">{sessions.cache.result.bytes !== null ? formatBytes(sessions.cache.result.bytes, 1000) : t("tools.mole.status.unknown")}</span></p>
+      </div>}
+      <Button size="sm" variant="secondary" className={`text-xs ${press}`} disabled={disabled || sessions.cache.stale || !sessions.cache.updatedAt} onClick={(event) => { origin.current = event.currentTarget; setConfirmAction({ action: "clean", snapshot: sessions.cache }) }}>
+        <Trash2 aria-hidden="true" className="size-3.5" />{t("tools.mole.cleanNow")}
+      </Button>
+    </Section>
+
+    <Section icon={SlidersHorizontal} title={t("tools.mole.session.tune")} hint={t("tools.mole.session.tuneHint")} count={sessions.tune.updatedAt !== null ? sessions.tune.maintenance.length : undefined}>
+      <ScanState state={sessions.tune} busy={busy === "tune"} t={t} />
+      <p className="rounded-lg bg-muted/40 p-2.5 text-[11px] leading-relaxed text-muted-foreground">{t("tools.mole.adminNotice")}</p>
+      <MaintenanceList tasks={sessions.tune.maintenance} t={t} />
+      {sessions.tune.maintenanceResult.length > 0 && <div className="space-y-2 text-xs">
+        <p className="font-medium">{t("tools.mole.lastRun")}{sessions.tune.lastRunAt ? ` · ${time(sessions.tune.lastRunAt)}` : ""}</p>
+        <MaintenanceList tasks={sessions.tune.maintenanceResult} t={t} />
+      </div>}
+      <Button size="sm" variant="secondary" className={`text-xs ${press}`} disabled={disabled || sessions.tune.stale || !sessions.tune.updatedAt} onClick={(event) => { origin.current = event.currentTarget; setConfirmAction({ action: "optimize", snapshot: sessions.tune }) }}>
+        <SlidersHorizontal aria-hidden="true" className="size-3.5" />{t("tools.mole.optimizeNow")}
+      </Button>
+    </Section>
+
+    <Section icon={Package} title={t("tools.mole.appsHeading")} hint={t("tools.mole.appsHint")} count={apps.inventory?.apps.length}>
+      <ScanState state={apps} busy={busy === "apps"} t={t} />
+      <Input ref={search} aria-label={t("tools.mole.searchApps")} placeholder={t("tools.mole.searchApps")} value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 text-xs" />
+      {filteredApps.length ? <ul aria-label={t("tools.mole.appsHeading")} tabIndex={0} className={`${scrollList} focus-visible:outline-ring`}>
+        {filteredApps.map((app) => <li key={app.id} className="p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0"><p className="break-words text-xs font-medium">{app.name}</p><p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{app.size_label || t("tools.mole.unknownSize")} · {app.source}</p></div>
+            <Button size="sm" variant="outline" className={`h-7 text-[11px] ${press}`} aria-label={`${app.name} · ${t("tools.mole.reviewApp")} · ${app.path}`} disabled={disabled || apps.stale || !!app.blocked_reason} onClick={(event) => {
+              origin.current = event.currentTarget
+              setSelected([])
+              execute(openAppRemoval(app))
+            }}>{t("tools.mole.reviewApp")}</Button>
           </div>
-        </div>
-        <div>
-          <div className="text-[10px] text-muted-foreground">{t("tools.mole.items")}</div>
-          <div className="text-sm font-semibold tabular-nums">{result.items ?? "—"}</div>
-        </div>
-      </div>
-    </div>
-  )
-}
+          <p className={`mt-1 ${pathStyle}`}>{app.path}</p>
+          {app.blocked_reason && <p className="mt-1 text-[11px] text-muted-foreground">{errorLabel(app.blocked_reason, t)}</p>}
+        </li>)}
+      </ul> : query ? <p className="p-3 text-xs text-muted-foreground">{t("tools.mole.noApps")}</p> : <Empty t={t} />}
+      <ErrorNote error={state.removalError} t={t} />
+      {state.removalResult && <div role="status" className="rounded-lg border p-3 text-xs">
+        <p className="font-medium">{state.removalResult.items.length > 0 && !state.removalResult.stopped_reason && state.removalResult.items.every((row) => row.status === "moved" && !row.error) ? t("tools.mole.removeDone") : t("tools.mole.removePartial")}</p>
+        <ul className="mt-2 space-y-2">{state.removalResult.items.map((row) => <li key={row.candidate_id}>
+          <div className="flex justify-between gap-2"><span>{t(`tools.mole.kind.${row.kind}`)}</span><span>{t(`tools.mole.status.${row.status}`)}</span></div>
+          <p className={pathStyle}>{row.path}</p>{row.error && <p className="mt-0.5 text-destructive">{errorLabel(row.error, t)}</p>}
+        </li>)}</ul>
+        {state.removalResult.stopped_reason && <p className="mt-2 text-destructive">{errorLabel(state.removalResult.stopped_reason, t)}</p>}
+      </div>}
+    </Section>
 
-function AnalyzeCard({ analyze, t }: { analyze: MoleAnalyze; t: (k: string) => string }) {
-  const entries = [...(analyze.entries ?? [])].sort((a, b) => b.size - a.size).slice(0, 12)
-  const max = Math.max(1, ...entries.map((e) => e.size), analyze.total_size ?? 0)
-  return (
-    <div className="mt-2 space-y-1">
-      <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
-        <span>{t("tools.mole.disk")}</span>
-        <span className="tabular-nums">
-          {analyze.total_size != null ? formatBytes(analyze.total_size, 1000) : ""}
-        </span>
-      </div>
-      {entries.map((entry) => (
-        <DiskRow key={entry.path || entry.name} entry={entry} max={max} />
-      ))}
-    </div>
-  )
-}
+    <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
+      <DialogContent animate={false} showCloseButton={false} className="w-[420px] max-h-[85vh] gap-3 overflow-y-auto p-4" onOpenAutoFocus={(event) => { event.preventDefault(); cancel.current?.focus() }} onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus() }}>
+        <DialogHeader className="text-left"><DialogTitle className="text-sm leading-relaxed">{t(confirmAction?.action === "clean" ? "tools.mole.cleanConfirm" : "tools.mole.optimizeConfirm")}</DialogTitle><DialogDescription className="text-xs leading-relaxed">{t(confirmAction?.action === "clean" ? "tools.mole.cleanWarning" : "tools.mole.optimizeWarning")}</DialogDescription></DialogHeader>
+        <p className="text-xs leading-relaxed text-muted-foreground">{t("tools.mole.previewWarning")}</p>
+        {!canConfirm && <p className="text-xs text-destructive">{t("tools.mole.stale")}</p>}
+        <DialogFooter className="flex-row flex-wrap gap-2">
+          <Button ref={cancel} variant="ghost" size="sm" className={press} onClick={() => setConfirmAction(null)}>{t("tools.mole.cancel")}</Button>
+          <Button variant="destructive" size="sm" className={`h-auto min-h-8 whitespace-normal text-xs ${press}`} disabled={!canConfirm} onClick={() => {
+            if (!confirmAction || !canConfirm) return
+            const action = confirmAction.action
+            setConfirmAction(null)
+            execute(run(action === "clean" ? "cache" : "tune", action))
+          }}>{t("tools.mole.confirm")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
-function PreviewCard({ items, t }: { items: CleanPreviewItem[]; t: (k: string) => string }) {
-  const sized = items.filter((item) => item.bytes && item.bytes > 0)
-  const max = Math.max(1, ...sized.map((item) => item.bytes ?? 0))
-  const total = sized.reduce((sum, item) => sum + (item.bytes ?? 0), 0)
-  return (
-    <div className="mt-2 space-y-1">
-      <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
-        <span>{t("tools.mole.preview")}</span>
-        <span className="tabular-nums">{total > 0 ? formatBytes(total, 1000) : `${items.length}`}</span>
-      </div>
-      {items.slice(0, 16).map((item) => (
-        <div key={`${item.name}-${item.detail}-${item.bytes ?? 0}-${item.skipped}`}>
-          <div className="flex items-baseline justify-between gap-2 text-[10px]">
-            <span className="min-w-0 truncate">{item.name}</span>
-            <span className="shrink-0 tabular-nums text-muted-foreground">
-              {item.skipped
-                ? t("tools.mole.skipped")
-                : item.bytes
-                  ? formatBytes(item.bytes, 1000)
-                  : item.detail}
-            </span>
+    <Dialog open={state.selectedApp !== null} onOpenChange={(open) => { if (!open && !acting) closeRemoval() }}>
+      <DialogContent animate={false} showCloseButton={false} className="w-[440px] max-h-[88vh] gap-3 overflow-y-auto p-4" onOpenAutoFocus={(event) => { event.preventDefault(); cancel.current?.focus() }} onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus() }} onEscapeKeyDown={(event) => { if (acting) event.preventDefault() }} onInteractOutside={(event) => { if (acting) event.preventDefault() }}>
+        <DialogHeader className="text-left"><DialogTitle className="break-words text-sm leading-relaxed">{t("tools.mole.removeHeading").replace("{name}", state.selectedApp?.name ?? "")}</DialogTitle><DialogDescription className="text-xs leading-relaxed">{t("tools.mole.relatedHint")}</DialogDescription></DialogHeader>
+        <ErrorNote error={state.previewError} t={t} />
+        {busy === "preview" && <p role="status" className="text-xs text-muted-foreground">{t("tools.mole.scanning")}</p>}
+        {preview && <>
+          <div className="rounded-lg border bg-muted/30 p-2.5"><p className="text-xs font-medium">{t("tools.mole.kind.app")}</p><p className={`mt-1 ${pathStyle}`}>{preview.app.path}</p></div>
+          {preview.related.length > 0 ? <ul className="space-y-2">{preview.related.map((row) => <li key={row.id}>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring">
+              <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-primary" disabled={acting || expired} checked={selected.includes(row.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))} />
+              <span className="min-w-0 flex-1"><span className="flex justify-between gap-2 text-xs"><span>{t(`tools.mole.kind.${row.kind}`)}</span><span className="shrink-0 tabular-nums text-muted-foreground">{row.size_bytes !== null ? formatBytes(row.size_bytes, 1000) : t("tools.mole.unknownSize")}</span></span><span className={`mt-1 block ${pathStyle}`}>{row.path}</span></span>
+            </label>
+          </li>)}</ul> : <p className="text-xs text-muted-foreground">{t("tools.mole.noneRelated")}</p>}
+          {preview.excluded.length > 0 && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{t("tools.mole.excluded")} ({preview.excluded.length})</summary><ul className="mt-2 space-y-2">{preview.excluded.map((row) => <li key={`${row.kind}:${row.path}`}><p className={pathStyle}>{row.path}</p><p>{errorLabel(row.reason, t)}</p></li>)}</ul></details>}
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs leading-relaxed"><AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><p>{t("tools.mole.dataWarning")}</p></div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">{t("tools.mole.scopeWarning")}</p>
+          <p className="text-xs font-medium">{t("tools.mole.selectionCount").replace("{count}", String(selected.length))}</p>
+          <div aria-live="polite" className="text-xs">
+            <p>{t("tools.mole.selectedSize")}: <span className="tabular-nums">{knownSizes.length > 0 ? formatBytes(selectedBytes, 1000) : t("tools.mole.unknownSize")}</span></p>
+            {hasUnknownSize && <p className="mt-1 text-[11px] text-muted-foreground">{t("tools.mole.includesUnknown")}</p>}
           </div>
-          {item.bytes != null && item.bytes > 0 && (
-            <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-background">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${Math.max(2, (item.bytes / max) * 100)}%` }}
-              />
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  )
+          {expired && <p role="alert" className="text-xs text-destructive">{t("tools.mole.previewExpired")}</p>}
+        </>}
+        {(state.previewError || expired) && <Button variant="outline" size="sm" className={`text-xs ${press}`} disabled={busy !== null} onClick={() => {
+          if (state.selectedApp) { setSelected([]); execute(openAppRemoval(state.selectedApp)) }
+        }}>{t("tools.mole.retry")}</Button>}
+        <DialogFooter className="flex-row flex-wrap gap-2">
+          <Button ref={cancel} variant="ghost" size="sm" className={press} disabled={acting} onClick={closeRemoval}>{t("tools.mole.cancel")}</Button>
+          <Button variant="destructive" size="sm" className={`h-auto min-h-8 whitespace-normal text-xs ${press}`} disabled={busy !== null || !preview || expired} onClick={() => execute(removeSelected(selected))}>{acting ? t("tools.mole.removing") : t("tools.mole.removeSelected")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </div>
 }
 
-function DiskRow({ entry, max }: { entry: MoleDiskEntry; max: number }) {
-  const pct = Math.max(2, (entry.size / max) * 100)
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2 text-[10px]">
-        <span className="min-w-0 truncate">{entry.name}</span>
-        <span className="shrink-0 tabular-nums text-muted-foreground">
-          {formatBytes(entry.size, 1000)}
-        </span>
-      </div>
-      <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-background">
-        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  )
+function DiskList({ analyze, t }: { analyze: MoleAnalyze; t: T }) {
+  const entries = [...analyze.entries].sort((a, b) => b.size - a.size)
+  const max = Math.max(1, ...entries.map((entry) => entry.size))
+  if (!entries.length) return <Empty t={t} />
+  return <>
+    <ul tabIndex={0} aria-label={t("tools.mole.session.disk")} className={scrollList}>{entries.map((entry) => <li key={`${entry.path}:${entry.name}`} className="px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2 text-xs"><span className="flex min-w-0 items-center gap-1.5 break-words"><Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />{entry.name}</span><span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(entry.size, 1000)}</span></div>
+      <p className={`mt-1 ${pathStyle}`}>{entry.path}</p>
+      <div aria-hidden="true" className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary/50" style={{ width: `${entry.size / max * 100}%` }} /></div>
+    </li>)}</ul>
+    <p className="text-[11px] text-muted-foreground">{t("tools.mole.diskOverlap")}</p>
+  </>
 }
-
+function CleanList({ items, t }: { items: CleanPreviewItem[]; t: T }) {
+  if (!items.length) return <Empty t={t} />
+  const groups = new Map<string, CleanPreviewItem[]>()
+  for (const item of items) {
+    const rows = groups.get(item.section)
+    if (rows) rows.push(item)
+    else groups.set(item.section, [item])
+  }
+  return <div tabIndex={0} role="region" aria-label={t("tools.mole.session.cache")} className={scrollList}>
+    {[...groups].map(([section, rows]) => <div key={section} className="p-3">
+      <h4 className="mb-2 text-[11px] font-medium text-muted-foreground">{label(t, `tools.mole.section.${section}`, section)}</h4>
+      <ul className="space-y-2.5">{rows.map((item) => <li key={item.id}>
+        <div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0 break-words">{label(t, `tools.mole.item.${item.name}`, item.name)}</span><span className="shrink-0 tabular-nums text-muted-foreground">{item.status === "skipped" ? t("tools.mole.status.skipped") : item.bytes !== null ? formatBytes(item.bytes, 1000) : "—"}</span></div>
+        {item.status === "manual" && <p className="mt-0.5 text-[11px] text-muted-foreground">{t("tools.mole.manual")}</p>}
+        <details className="mt-0.5 text-[11px] text-muted-foreground"><summary className="cursor-pointer">{t("tools.mole.technical")}</summary><p className="break-words leading-relaxed select-text">{item.detail}</p></details>
+      </li>)}</ul>
+    </div>)}
+  </div>
+}
+function MaintenanceList({ tasks, t }: { tasks: MaintenanceTask[]; t: T }) {
+  if (!tasks.length) return <Empty t={t} />
+  return <ul tabIndex={0} aria-label={t("tools.mole.session.tune")} className={scrollList}>{tasks.map((task) => <li key={task.id} className="p-3">
+    <div className="flex items-start justify-between gap-2 text-xs"><span className="font-medium">{label(t, `tools.mole.task.${task.id}.title`, task.name)}</span><span className="shrink-0 text-[11px] text-muted-foreground">{t(`tools.mole.status.${task.status}`)}</span></div>
+    {MAINTENANCE_IDS[task.name] && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{t(`tools.mole.task.${task.id}.hint`)}</p>}
+    <details className="mt-1 text-[11px] text-muted-foreground"><summary className="cursor-pointer">{t("tools.mole.technical")}</summary><ul className="mt-1 space-y-1">{task.details.map((line, index) => <li key={index} className="break-words select-text">{line}</li>)}</ul></details>
+  </li>)}</ul>
+}

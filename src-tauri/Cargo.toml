@@ -1,6 +1,6 @@
 [package]
 name = "sayknow"
-version = "0.3.10"
+version = "0.3.11"
 description = "SayKnow Kit — menu bar AI kit for translation, chat, and clipboard"
 authors = ["SayKnow"]
 license = ""
@@ -75,8 +75,8 @@ core-foundation = "0.9"
 # NX event parsing: the tap callback receives CGEvent, and the NX data1
 # field is only exposed through NSEvent. Already in the graph via wry.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWindow", "NSColor", "NSScreen", "NSPasteboard", "block2"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject", "NSURL", "NSError", "NSDictionary", "NSValue", "NSNotification", "NSOperation", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSView", "NSControl", "NSButton", "NSResponder", "NSMenu", "NSMenuItem", "NSEvent", "NSApplication", "NSRunningApplication", "NSWorkspace", "NSWindow", "NSColor", "NSScreen", "NSPasteboard", "block2"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSString", "NSObject", "NSURL", "NSError", "NSDictionary", "NSValue", "NSNotification", "NSOperation", "NSFileManager", "NSBundle", "NSPathUtilities", "NSData", "NSPropertyList", "block2"] }
 block2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
