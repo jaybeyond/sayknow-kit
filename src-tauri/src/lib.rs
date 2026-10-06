@@ -2336,6 +2336,10 @@ pub fn run() {
             system_metrics::get_top_processes,
             mole::detect_mole,
             mole::run_mole_action,
+            mole::removal::list_mole_apps,
+            mole::removal::preview_mole_app_removal,
+            mole::removal::cancel_mole_app_removal,
+            mole::removal::trash_mole_app_selection,
             system_monitor::set_system_monitor_config,
         ])
         .setup(|app| {

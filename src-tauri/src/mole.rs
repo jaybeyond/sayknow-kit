@@ -1,4 +1,5 @@
-//! Mole runs directly in a private output PTY, never through Terminal or a login shell.
+//! Mole actions use a private output PTY; JSON app inventory uses separate pipes.
+//! Neither transport uses Terminal or a login shell.
 //! Stdin is closed: this is an in-app operation, not an interactive terminal session.
 //! Mole 1.38.1's MOLE_TEST_NO_AUTH disables authentication without disabling real
 //! user-level work. MOLE_TEST_MODE would fake results and must never be inherited.
@@ -10,6 +11,8 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+pub mod removal;
 
 const SUPPORTED_VERSION: &str = "1.38.1";
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
@@ -559,9 +562,132 @@ fn action_args(action: &str) -> Result<(&'static [&'static str], Duration), Stri
 pub fn run_mole_action(app: AppHandle, action: String) -> Result<MoleRun, String> {
     let (args, timeout) = action_args(&action)?;
     let _permit = RunPermit::acquire(&RUN_STATE)?;
+    if matches!(action.as_str(), "clean" | "optimize") {
+        removal::invalidate_write_rights()?;
+    }
     let path = mole_bin().ok_or("mole_not_installed")?;
     require_supported_version(&read_version(&path)?.stdout)?;
     run_program(Some(&app), &path, args, timeout, &RUN_STATE)
+}
+
+/// JSON inventory must not use a PTY: Mole selects its list protocol using isatty.
+#[cfg(unix)]
+fn run_pipe_program(
+    path: &Path,
+    args: &[&str],
+    timeout: Duration,
+    state: &Mutex<RunState>,
+) -> Result<MoleRun, String> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    use std::time::Instant;
+
+    let mut command = mole_command(path, args)?;
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut group = ProcessGroup::spawn(&mut command, state)?;
+    let mut stdout = group.child.stdout.take().ok_or("mole_inventory_invalid")?;
+    let mut stderr = group.child.stderr.take().ok_or("mole_inventory_invalid")?;
+    for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
+        {
+            return Err("mole_inventory_invalid".into());
+        }
+    }
+    let deadline = Instant::now() + timeout;
+    let mut output = [Vec::new(), Vec::new()];
+    let mut closed = [false, false];
+    let mut failure = None;
+    let mut termination = None;
+    let mut status = None;
+    loop {
+        let now = Instant::now();
+        if failure.is_none() {
+            if state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .shutting_down
+            {
+                failure = Some("mole_shutting_down");
+            } else if now >= deadline {
+                failure = Some("mole_timeout");
+            }
+        }
+        if failure.is_some() && termination.is_none() {
+            group.signal(libc::SIGTERM);
+            termination = Some(now);
+        }
+        if let Some(start) = termination {
+            if now.duration_since(start) >= TERMINATION_GRACE {
+                group.signal(libc::SIGKILL);
+            }
+            if now.duration_since(start) >= TERMINATION_GRACE + REAP_TIMEOUT {
+                return Err(failure.unwrap_or("mole_inventory_invalid").into());
+            }
+        }
+        let mut drained = true;
+        // A bounded read per pipe per iteration prevents a flood starving the clock,
+        // shutdown checks, the other pipe, or child reaping.
+        for (index, pipe) in [&mut stdout as &mut dyn Read, &mut stderr as &mut dyn Read]
+            .into_iter()
+            .enumerate()
+        {
+            if closed[index] {
+                continue;
+            }
+            let mut buf = [0u8; 8192];
+            match pipe.read(&mut buf) {
+                Ok(0) => closed[index] = true,
+                Ok(n) => {
+                    drained = false;
+                    if output[0].len() + output[1].len() + n > OUTPUT_LIMIT {
+                        failure.get_or_insert("mole_output_limit");
+                    } else if failure.is_none() {
+                        output[index].extend_from_slice(&buf[..n]);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => drained = false,
+                Err(_) => {
+                    failure.get_or_insert("mole_inventory_invalid");
+                    closed[index] = true;
+                }
+            }
+        }
+        if status.is_none() {
+            status = group.poll_exit()?;
+        }
+        if status.is_some() && drained {
+            break;
+        }
+        if drained {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let [stdout, stderr] = output;
+    let stdout = String::from_utf8(stdout).map_err(|_| "mole_inventory_invalid")?;
+    let stderr = String::from_utf8_lossy(&stderr).into_owned();
+    let ok = failure.is_none() && status.is_some_and(|s| s.success());
+    Ok(MoleRun {
+        command: format!("mo {}", args.join(" ")),
+        json: if ok {
+            serde_json::from_str(&stdout).ok()
+        } else {
+            None
+        },
+        stdout,
+        stderr: failure.map(str::to_owned).unwrap_or(stderr),
+        ok,
+    })
 }
 
 #[cfg(test)]
@@ -598,7 +724,9 @@ mod tests {
     #[test]
     #[ignore = "Requires installed Mole; reads version only, never runs cleanup"]
     fn installed_mole_metadata_uses_hidden_runner() {
-        let info = detect_mole().expect("metadata command").expect("Mole installed");
+        let info = detect_mole()
+            .expect("metadata command")
+            .expect("Mole installed");
         assert_eq!(info.version, SUPPORTED_VERSION);
         assert_eq!(info.required_version, SUPPORTED_VERSION);
         assert!(info.supported);
@@ -606,7 +734,6 @@ mod tests {
         assert!(RUN_STATE.lock().unwrap().pid.is_none());
         assert!(!RUN_STATE.lock().unwrap().busy);
     }
-
 
     #[test]
     fn lookup_is_fixed_system_paths_and_never_the_user_path() {
@@ -628,9 +755,9 @@ mod tests {
             .collect::<Vec<_>>()
         );
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        assert!(!dirs.iter().any(|dir| dir.components().any(|c| {
-            matches!(c, std::path::Component::Normal(name) if name == ".local")
-        })));
+        assert!(!dirs.iter().any(|dir| dir
+            .components()
+            .any(|c| { matches!(c, std::path::Component::Normal(name) if name == ".local") })));
         if let Some(home) = home {
             assert!(!dirs.iter().any(|dir| dir.starts_with(&home)));
         }
@@ -824,5 +951,97 @@ mod tests {
         shutdown_state(&state);
         assert!(!worker.join().unwrap().unwrap().ok);
         assert!(state.lock().unwrap().pid.is_none());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pipe_tests {
+    use super::*;
+    fn fixture(script: &str, timeout: Duration) -> MoleRun {
+        run_pipe_program(
+            Path::new("/bin/sh"),
+            &["-c", script],
+            timeout,
+            &Mutex::new(RunState::default()),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn json_pipe_is_non_tty_and_stderr_is_not_json() {
+        let result = fixture(
+            "test ! -t 0 && test ! -t 1 && test ! -t 2 && printf '[]' && printf 'diagnostic' >&2",
+            Duration::from_secs(5),
+        );
+        assert!(result.ok);
+        assert_eq!(result.stdout, "[]");
+        assert_eq!(result.stderr, "diagnostic");
+        assert_eq!(result.json, Some(serde_json::json!([])));
+    }
+    #[test]
+    fn malformed_truncated_and_nonzero_output_cannot_be_inventory() {
+        for script in ["printf '['", "printf 'not json'", "printf '[]'; exit 7"] {
+            let result = fixture(script, Duration::from_secs(5));
+            assert!(result.json.is_none());
+        }
+    }
+    #[test]
+    fn separate_pipes_keep_large_stdout_complete() {
+        let result = fixture("i=0; while [ $i -lt 5000 ]; do printf 'row-%s\\n' \"$i\"; printf 'err-%s\\n' \"$i\" >&2; i=$((i+1)); done", Duration::from_secs(30));
+        assert!(result.ok);
+        assert!(result.stdout.contains("row-4999"));
+        assert!(!result.stdout.contains("err-"));
+        assert!(result.stderr.contains("err-4999"));
+    }
+    #[test]
+    fn pipe_deadlines_cover_flood_and_closed_descriptors() {
+        for script in [
+            "trap '' TERM; while :; do printf 'x'; done",
+            "exec 1>&- 2>&-; trap '' TERM; while :; do sleep 1; done",
+        ] {
+            let start = std::time::Instant::now();
+            let result = fixture(script, Duration::from_millis(100));
+            assert!(!result.ok);
+            assert_eq!(result.stderr, "mole_timeout");
+            assert!(start.elapsed() < Duration::from_secs(4));
+        }
+    }
+    #[test]
+    fn combined_pipe_output_limit_stops_stderr_flood() {
+        let result = fixture("while :; do printf '0123456789012345678901234567890123456789012345678901234567890123456789' >&2; done", Duration::from_secs(30));
+        assert!(!result.ok);
+        assert_eq!(result.stderr, "mole_output_limit");
+        assert!(result.stdout.len() <= OUTPUT_LIMIT);
+    }
+    #[test]
+    fn pipe_shutdown_terminates_registered_group() {
+        let state = std::sync::Arc::new(Mutex::new(RunState::default()));
+        let child_state = state.clone();
+        let worker = std::thread::spawn(move || {
+            run_pipe_program(
+                Path::new("/bin/sh"),
+                &["-c", "while :; do sleep 1; done"],
+                Duration::from_secs(10),
+                &child_state,
+            )
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while state.lock().unwrap().pid.is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(state.lock().unwrap().pid.is_some());
+        shutdown_state(&state);
+        assert!(!worker.join().unwrap().unwrap().ok);
+        assert!(state.lock().unwrap().pid.is_none());
+    }
+    #[test]
+    fn pipe_leader_exit_kills_background_pipe_holders() {
+        let result = fixture("(trap '' HUP TERM; while :; do sleep 1; done) & printf '%s' \"$!\"; sleep 0.05; exit 0", Duration::from_secs(5));
+        assert!(result.ok);
+        let pid: i32 = result.stdout.parse().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while unsafe { libc::kill(pid, 0) } == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
     }
 }
