@@ -78,7 +78,6 @@ vi.mock("@/i18n", () => ({
       "tools.tabs.display": "Displays",
       "tools.tabs.usage": "Token usage",
       "tools.tabs.mole": "Clean",
-      "tools.tabs.speed": "Speed",
       "tools.refresh": "Refresh",
       "tools.metrics.title": "System status",
       "tools.metrics.cpu": "CPU",
@@ -454,6 +453,7 @@ describe("ToolsPanel system metrics", () => {
 
     expect(screen.getByRole("tab", { name: "Status" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByRole("region", { name: "System status" })).toBeTruthy()
+    expect(screen.getByRole("region", { name: "Internet speed" })).toBeTruthy()
     expect(screen.queryByText("Brightness")).toBeNull()
 
     openDisplayTab()
@@ -469,10 +469,8 @@ describe("ToolsPanel system metrics", () => {
     expect(screen.getByRole("tab", { name: "Clean" }).getAttribute("aria-selected")).toBe("true")
     expect(screen.getByRole("region", { name: "Clean" })).toBeTruthy()
     expect(screen.queryByRole("region", { name: "Internet speed" })).toBeNull()
-    fireEvent.click(screen.getByRole("tab", { name: "Speed" }))
-    expect(screen.getByRole("tab", { name: "Speed" }).getAttribute("aria-selected")).toBe("true")
-    expect(screen.getByRole("region", { name: "Internet speed" })).toBeTruthy()
-    expect(screen.queryByRole("region", { name: "Clean" })).toBeNull()
+    // Speed lives in Status now, not in a tab of its own.
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Status", "Displays", "Token usage", "Clean"])
   })
 })
 

@@ -37,13 +37,10 @@ const REQUIRED_METRIC_KEYS = [
 ] as const
 
 const REQUIRED_SPEED_KEYS = [
-  "tools.tabs.speed",
-  ...[
-    "title", "intro", "dataNote", "start", "again", "cancel", "running", "measuredAt",
-    "download", "upload", "latency", "dataUsed", "connection", "server", "unknown", "previous",
-    "error.busy", "error.cancelled", "error.timeout", "error.network_error", "error.unsupported", "error.failed",
-  ].map((key) => `tools.speed.${key}`),
-]
+  "title", "intro", "dataNote", "start", "again", "cancel", "running", "measuredAt",
+  "download", "upload", "latency", "dataUsed", "connection", "server", "unknown", "previous",
+  "error.busy", "error.cancelled", "error.timeout", "error.network_error", "error.unsupported", "error.failed",
+].map((key) => `tools.speed.${key}`)
 
 describe("internet speed translations", () => {
   it("has every key, readable and with the time token, in all eight locales", () => {
@@ -57,6 +54,9 @@ describe("internet speed translations", () => {
       expect(strings["tools.speed.measuredAt"], locale).toContain("{time}")
       expect(strings["tools.speed.intro"], locale).toContain("networkQuality")
       expect(strings["tools.speed.dataNote"], locale).toMatch(/MB|Mo/)
+      // The gauges show the progress; the label must not promise a wait.
+      expect(strings["tools.speed.running"], locale).not.toMatch(/\d/)
+      expect(strings["tools.tabs.speed"], locale).toBeUndefined()
     }
   })
 })
