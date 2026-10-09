@@ -20,7 +20,7 @@ const preview = (): AppRemovalPreview => ({
   related: [
     { id: "data-a", kind: "cache", path: "/Users/test/Library/Caches/org.test.sample", size_bytes: 100 },
     { id: "data-b", kind: "preferences", path: "/Users/test/Library/Preferences/org.test.sample.plist", size_bytes: 50 },
-  ], excluded: [],
+  ], excluded: [], running: false, needs_admin: false,
 })
 const success = (action: string): MoleRun => ({
   ok: true, command: "mo", stderr: "",

@@ -578,12 +578,29 @@ fn run_pipe_program(
     timeout: Duration,
     state: &Mutex<RunState>,
 ) -> Result<MoleRun, String> {
+    run_pipe_command(
+        mole_command(path, args)?,
+        format!("mo {}", args.join(" ")),
+        timeout,
+        state,
+    )
+}
+
+/// Runs a prepared command in its own process group with bounded output, a
+/// deadline, and shutdown cancellation. Shared by Mole and the Finder Trash
+/// fallback, so both are registered with the same run state.
+#[cfg(unix)]
+fn run_pipe_command(
+    mut command: Command,
+    label: String,
+    timeout: Duration,
+    state: &Mutex<RunState>,
+) -> Result<MoleRun, String> {
     use std::io::Read;
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
     use std::time::Instant;
 
-    let mut command = mole_command(path, args)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     unsafe {
         command.pre_exec(|| {
@@ -678,7 +695,7 @@ fn run_pipe_program(
     let stderr = String::from_utf8_lossy(&stderr).into_owned();
     let ok = failure.is_none() && status.is_some_and(|s| s.success());
     Ok(MoleRun {
-        command: format!("mo {}", args.join(" ")),
+        command: label,
         json: if ok {
             serde_json::from_str(&stdout).ok()
         } else {

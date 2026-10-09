@@ -195,7 +195,7 @@ export function MolePanel({ t, active }: Props) {
           <div className="flex justify-between gap-2"><span>{t(`tools.mole.kind.${row.kind}`)}</span><span>{t(`tools.mole.status.${row.status}`)}</span></div>
           <p className={pathStyle}>{row.path}</p>{row.error && <p className="mt-0.5 text-destructive">{errorLabel(row.error, t)}</p>}
         </li>)}</ul>
-        {state.removalResult.stopped_reason && <p className="mt-2 text-destructive">{errorLabel(state.removalResult.stopped_reason, t)}</p>}
+        {state.removalResult.stopped_reason && <div className="mt-2"><ErrorNote error={state.removalResult.stopped_reason} t={t} /></div>}
       </div>}
     </Section>}
 
@@ -230,6 +230,8 @@ export function MolePanel({ t, active }: Props) {
             </label>
           </li>)}</ul> : <p className="text-xs text-muted-foreground">{t("tools.mole.noneRelated")}</p>}
           {preview.excluded.length > 0 && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{t("tools.mole.excluded")} ({preview.excluded.length})</summary><ul className="mt-2 space-y-2">{preview.excluded.map((row) => <li key={`${row.kind}:${row.path}`}><p className={pathStyle}>{row.path}</p><p>{errorLabel(row.reason, t)}</p></li>)}</ul></details>}
+          {preview.running && <p role="note" className="rounded-lg bg-muted/40 p-2.5 text-xs leading-relaxed">{t("tools.mole.runningNotice")}</p>}
+          {preview.needs_admin && <p role="note" className="rounded-lg bg-muted/40 p-2.5 text-xs leading-relaxed">{t("tools.mole.adminNoticeRemoval")}</p>}
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs leading-relaxed"><AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><p>{t("tools.mole.dataWarning")}</p></div>
           <p className="text-[11px] leading-relaxed text-muted-foreground">{t("tools.mole.scopeWarning")}</p>
           <p className="text-xs font-medium">{t("tools.mole.selectionCount").replace("{count}", String(selected.length))}</p>

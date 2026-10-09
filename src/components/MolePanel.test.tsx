@@ -25,7 +25,7 @@ const makePreview = (): AppRemovalPreview => ({
   related: [
     { id: "cache", kind: "cache", path: "/Users/test/Library/Caches/org.test.sample", size_bytes: 100 },
     { id: "prefs", kind: "preferences", path: "/Users/test/Library/Preferences/org.test.sample.plist", size_bytes: null },
-  ], excluded: [],
+  ], excluded: [], running: false, needs_admin: false,
 })
 const empty = (): SessionState => ({
   progress: [], items: [], analyze: null, maintenance: [], scanResult: null, result: null,
@@ -257,5 +257,25 @@ describe("selected related-data removal", () => {
     expect(screen.getByText(t("tools.mole.removePartial"))).toBeTruthy()
     expect(screen.queryByText(t("tools.mole.removeDone"))).toBeNull()
     expect(screen.getByText(t("tools.mole.status.unknown"))).toBeTruthy()
+  })
+  it("shows the native Trash failure detail, not only the generic label", () => {
+    const reason = "mole_trash_failed: denied (NSCocoaErrorDomain 513); underlying NSPOSIXErrorDomain 1"
+    mocks.state.removalResult = { items: [{ candidate_id: "bundle", kind: "app", path: app.path, status: "failed", error: reason, trash_path: null }], stopped_reason: reason }
+    render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
+    expect(screen.getAllByText(t("tools.mole.error.mole_trash_failed")).length).toBeGreaterThan(0)
+    expect(screen.getByText(reason)).toBeTruthy()
+  })
+  it("warns that a running app is quit and an administrator-owned app needs a password", () => {
+    mocks.state.selectedApp = app
+    mocks.state.preview = makePreview()
+    const { unmount } = render(<MolePanel active t={t} />)
+    expect(screen.queryByText(t("tools.mole.runningNotice"))).toBeNull()
+    expect(screen.queryByText(t("tools.mole.adminNoticeRemoval"))).toBeNull()
+    unmount()
+    mocks.state.preview = { ...makePreview(), running: true, needs_admin: true }
+    render(<MolePanel active t={t} />)
+    expect(screen.getByText(t("tools.mole.runningNotice"))).toBeTruthy()
+    expect(screen.getByText(t("tools.mole.adminNoticeRemoval"))).toBeTruthy()
   })
 })

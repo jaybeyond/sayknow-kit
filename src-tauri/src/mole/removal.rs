@@ -56,6 +56,11 @@ pub struct AppRemovalPreview {
     pub app: RemovalCandidate,
     pub related: Vec<RemovalCandidate>,
     pub excluded: Vec<RemovalExclusion>,
+    /// The app is open now and will be quit before it is moved, as Mole does.
+    pub running: bool,
+    /// The bundle is owned by another user or root, so the move goes through
+    /// the macOS administrator prompt, like Mole's `sudo mv` to the user Trash.
+    pub needs_admin: bool,
 }
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -237,6 +242,11 @@ struct NativeResult {
     destination: Option<PathBuf>,
 }
 trait Adapter {
+    /// Runs once after confirmation and before any guard: Mole quits the app
+    /// right before deleting it rather than refusing a running one.
+    fn prepare(&self, _preview: &Preview) -> Result<(), String> {
+        Ok(())
+    }
     fn guard(&self, preview: &Preview, item: &Guarded, app_present: bool) -> Result<(), String>;
     fn trash(&self, item: &Guarded) -> NativeResult;
     fn reconcile(&self, item: &Guarded, result: &NativeResult) -> RemovalStatus;
@@ -261,6 +271,11 @@ fn execute(
             .collect(),
         stopped_reason: None,
     };
+    if let Err(error) = adapter.prepare(preview) {
+        outcome.stopped_reason = Some(error.clone());
+        outcome.items[0].error = Some(error);
+        return Ok(outcome);
+    }
     // Once selection is valid, even a zero-write rejection has per-row results.
     for (index, row) in rows.iter().enumerate() {
         if let Err(error) = adapter.guard(preview, row, true) {
@@ -381,7 +396,22 @@ pub fn trash_mole_app_selection(
         .consume(&preview_token, Instant::now())?;
     #[cfg(target_os = "macos")]
     {
-        execute(&preview, &selected_candidate_ids, &native::Foundation)
+        let outcome = execute(&preview, &selected_candidate_ids, &native::Foundation)?;
+        // The webview is the only other place this outcome lands, and a
+        // removal that "does nothing" is undiagnosable without the reason.
+        for item in &outcome.items {
+            log::info!(
+                "app removal: {:?} {:?} {} error={:?}",
+                item.kind,
+                item.status,
+                item.path,
+                item.error
+            );
+        }
+        if let Some(reason) = &outcome.stopped_reason {
+            log::warn!("app removal stopped: {reason}");
+        }
+        Ok(outcome)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -455,6 +485,12 @@ mod native {
         })
     }
     fn unchanged(item: &Guarded) -> Result<(), String> {
+        unchanged_identity(item)?;
+        permissions(Path::new(&item.row.path))
+    }
+    /// The identity half of `unchanged`, without the user-permission check, so
+    /// a root-owned bundle (admin move) is still tied to what the preview saw.
+    fn unchanged_identity(item: &Guarded) -> Result<(), String> {
         for (path, expected) in &item.chain {
             if identity(path)? != *expected {
                 return Err("mole_app_changed".into());
@@ -464,7 +500,39 @@ mod native {
         if m.modified().ok() != Some(item.modified) || m.len() != item.len {
             return Err("mole_app_changed".into());
         }
-        permissions(Path::new(&item.row.path))
+        Ok(())
+    }
+    /// Mole's `needs_sudo`: an app bundle the user cannot move themselves —
+    /// owned by root or another user, or in a folder they cannot write — is
+    /// moved through the macOS administrator prompt instead of being refused.
+    /// Everything else that blocks a user move (immutable flags, read-only or
+    /// remote volumes, symlinks, hard links) stays a hard refusal.
+    fn needs_admin(path: &Path) -> Result<bool, String> {
+        match permissions(path) {
+            Ok(()) => Ok(false),
+            Err(error) if error == "mole_permission_required" => {
+                let m = std::fs::symlink_metadata(path).map_err(|_| "mole_identity_unavailable")?;
+                let parent = path.parent().ok_or("mole_path_unsupported")?;
+                let parent_metadata =
+                    std::fs::symlink_metadata(parent).map_err(|_| "mole_identity_unavailable")?;
+                let flags = std::os::macos::fs::MetadataExt::st_flags(&m);
+                let parent_flags = std::os::macos::fs::MetadataExt::st_flags(&parent_metadata);
+                let name = std::ffi::CString::new(path.as_os_str().as_bytes())
+                    .map_err(|_| "mole_path_unsupported")?;
+                let mut volume = std::mem::MaybeUninit::<libc::statfs>::uninit();
+                if unsafe { libc::statfs(name.as_ptr(), volume.as_mut_ptr()) } != 0
+                    || !writable_local_volume(unsafe { volume.assume_init() }.f_flags)
+                    || protected_flags(flags)
+                    || protected_parent_flags(parent_flags)
+                    || !m.is_dir()
+                    || !parent_metadata.is_dir()
+                {
+                    return Err(error);
+                }
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
     }
     fn permissions(path: &Path) -> Result<(), String> {
         let uid = unsafe { libc::geteuid() };
@@ -613,7 +681,8 @@ mod native {
         }
         Ok(value)
     }
-    fn runtime_guard(path: &Path, bid: &str) -> Result<(), String> {
+    /// Refusals that no confirmation can override: this app itself and macOS.
+    fn identity_guard(path: &Path, bid: &str) -> Result<(), String> {
         let main = NSBundle::mainBundle();
         let runtime = PathBuf::from(main.bundlePath().to_string());
         let executable = std::env::current_exe().map_err(|_| "mole_identity_unavailable")?;
@@ -632,28 +701,97 @@ mod native {
         {
             return Err("mole_protected_app".into());
         }
-        let workspace = NSWorkspace::sharedWorkspace();
-        for running in workspace.runningApplications().iter() {
-            let bundle = running
-                .bundleURL()
-                .and_then(|u| u.path())
-                .map(|s| PathBuf::from(s.to_string()));
-            let executable = running
-                .executableURL()
-                .and_then(|u| u.path())
-                .map(|s| PathBuf::from(s.to_string()));
-            let running_id = running.bundleIdentifier().map(|s| s.to_string());
-            if running_match(
-                path,
-                bid,
-                running_id.as_deref(),
-                bundle.as_deref(),
-                executable.as_deref(),
-            ) {
-                return Err("mole_app_running".into());
+        Ok(())
+    }
+    fn running_apps(
+        path: &Path,
+        bid: &str,
+    ) -> Vec<objc2::rc::Retained<objc2_app_kit::NSRunningApplication>> {
+        NSWorkspace::sharedWorkspace()
+            .runningApplications()
+            .iter()
+            .filter(|running| {
+                let bundle = running
+                    .bundleURL()
+                    .and_then(|u| u.path())
+                    .map(|s| PathBuf::from(s.to_string()));
+                let executable = running
+                    .executableURL()
+                    .and_then(|u| u.path())
+                    .map(|s| PathBuf::from(s.to_string()));
+                let running_id = running.bundleIdentifier().map(|s| s.to_string());
+                running_match(
+                    path,
+                    bid,
+                    running_id.as_deref(),
+                    bundle.as_deref(),
+                    executable.as_deref(),
+                )
+            })
+            .collect()
+    }
+    fn running_now(path: &Path, bid: &str) -> Result<bool, String> {
+        Ok(!running_apps(path, bid).is_empty() || !bundle_pids(path)?.is_empty())
+    }
+    fn runtime_guard(path: &Path, bid: &str) -> Result<(), String> {
+        identity_guard(path, bid)?;
+        if running_now(path, bid)? {
+            return Err("mole_app_running".into());
+        }
+        Ok(())
+    }
+    fn wait_until(limit: Duration, done: impl Fn() -> bool) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < limit {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        done()
+    }
+    /// Mole's `force_kill_app`, without a shell: ask the app to quit (the same
+    /// Quit Apple Event its menu sends, so it can save), force it if it is
+    /// still up, then stop helpers running from inside the bundle. Whatever
+    /// survives is caught by the guard that runs right after, which refuses.
+    fn quit_app(path: &Path, bid: &str) {
+        let apps = running_apps(path, bid);
+        let all_gone = || apps.iter().all(|app| app.isTerminated());
+        if !apps.is_empty() {
+            log::info!(
+                "app removal: quitting {} running instance(s) of {bid}",
+                apps.len()
+            );
+            for app in &apps {
+                app.terminate();
+            }
+            if !wait_until(Duration::from_secs(5), all_gone) {
+                log::warn!("app removal: {bid} did not quit, forcing it");
+                for app in &apps {
+                    app.forceTerminate();
+                }
+                wait_until(Duration::from_secs(3), all_gone);
             }
         }
-        process_guard(path)
+        for signal in [libc::SIGTERM, libc::SIGKILL] {
+            let helpers = bundle_pids(path).unwrap_or_default();
+            if helpers.is_empty() {
+                return;
+            }
+            log::info!(
+                "app removal: signalling {} helper process(es) in {}",
+                helpers.len(),
+                path.display()
+            );
+            for pid in helpers {
+                unsafe {
+                    libc::kill(pid, signal);
+                }
+            }
+            wait_until(Duration::from_secs(2), || {
+                bundle_pids(path).is_ok_and(|p| p.is_empty())
+            });
+        }
     }
     fn running_match(
         target: &Path,
@@ -666,12 +804,15 @@ mod native {
             || bundle.is_some_and(|p| p.starts_with(target))
             || executable.is_some_and(|p| p.starts_with(target))
     }
-    fn inspect_processes(
+    /// Pids whose executable lives inside `target`. Uncertainty fails closed:
+    /// an unreadable live process is an error, not evidence that it is unrelated.
+    fn matching_processes(
         target: &Path,
         pids: &[libc::pid_t],
         started: Instant,
         mut executable: impl FnMut(libc::pid_t) -> Result<Option<PathBuf>, String>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<libc::pid_t>, String> {
+        let mut matches = Vec::new();
         for &pid in pids {
             // PID 0 is the kernel, not an executable app/helper.
             if pid == 0 {
@@ -685,16 +826,16 @@ mod native {
                     return Err("mole_identity_unavailable: process executable unavailable".into());
                 }
                 if path.starts_with(target) {
-                    return Err("mole_app_running".into());
+                    matches.push(pid);
                 }
             }
         }
         if started.elapsed() >= Duration::from_secs(2) {
             return Err("mole_identity_unavailable: process inventory timeout".into());
         }
-        Ok(())
+        Ok(matches)
     }
-    fn process_guard(target: &Path) -> Result<(), String> {
+    fn bundle_pids(target: &Path) -> Result<Vec<libc::pid_t>, String> {
         // libproc.h / sys/proc_info.h. A fixed cap, one enumeration, no shell,
         // no retry; full buffers and inaccessible live processes fail closed.
         const MAX_PIDS: usize = 16_384;
@@ -716,7 +857,7 @@ mod native {
             return Err("mole_identity_unavailable: process inventory incomplete".into());
         }
         pids.truncate(bytes as usize / std::mem::size_of::<libc::pid_t>());
-        inspect_processes(target, &pids, started, |pid| {
+        matching_processes(target, &pids, started, |pid| {
             let mut buffer = [0u8; 4096]; // PROC_PIDPATHINFO_MAXSIZE
             let count =
                 unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
@@ -741,8 +882,11 @@ mod native {
             ))))
         })
     }
-    fn app_guard(path: &Path, bid: &str) -> Result<(), String> {
-        runtime_guard(path, bid)?;
+    /// Where the app is and who may move it, without the running check: a
+    /// running app is quit at removal time, not refused (Mole's behaviour).
+    /// Returns whether the move needs the administrator prompt.
+    fn app_location(path: &Path, bid: &str) -> Result<bool, String> {
+        identity_guard(path, bid)?;
         let home = home()?;
         if path.extension().and_then(|s| s.to_str()) != Some("app")
             || (path.parent() != Some(Path::new("/Applications"))
@@ -753,7 +897,13 @@ mod native {
         if bundle_id(path)? != bid {
             return Err("mole_app_changed".into());
         }
-        permissions(path)
+        needs_admin(path)
+    }
+    /// Right before a write: everything in `app_location`, and nothing from the
+    /// bundle may still be running.
+    fn app_guard(path: &Path, bid: &str) -> Result<(), String> {
+        app_location(path, bid)?;
+        runtime_guard(path, bid)
     }
     fn shared(
         preview_path: &Path,
@@ -800,10 +950,12 @@ mod native {
             if let Ok(actual) = bundle_id(path) {
                 row.bundle_id = actual;
             }
+            // Running and admin-owned apps are removable (quit / admin prompt at
+            // removal time); only location, identity and protection block here.
             let blocked = guard
                 .as_ref()
                 .map_err(Clone::clone)
-                .and_then(|_| app_guard(path, &row.bundle_id))
+                .and_then(|_| app_location(path, &row.bundle_id))
                 .err();
             entries.push(InventoryEntry {
                 summary: AppSummary {
@@ -855,8 +1007,10 @@ mod native {
         generation: String,
     ) -> Result<Preview, String> {
         let app = entry.guard.ok_or("mole_identity_unavailable")?;
-        unchanged(&app)?;
-        app_guard(Path::new(&app.row.path), &entry.summary.bundle_id)?;
+        unchanged_identity(&app)?;
+        let app_path = Path::new(&app.row.path);
+        let needs_admin = app_location(app_path, &entry.summary.bundle_id)?;
+        let running = running_now(app_path, &entry.summary.bundle_id)?;
         let duplicate = shared(
             Path::new(&app.row.path),
             &entry.summary.bundle_id,
@@ -907,6 +1061,8 @@ mod native {
             app: app.row.clone(),
             related: related.iter().map(|r| r.row.clone()).collect(),
             excluded,
+            running,
+            needs_admin,
         };
         Ok(Preview {
             wire,
@@ -918,13 +1074,8 @@ mod native {
         })
     }
     pub(super) struct Foundation;
-    impl Adapter for Foundation {
-        fn guard(
-            &self,
-            preview: &Preview,
-            item: &Guarded,
-            app_present: bool,
-        ) -> Result<(), String> {
+    impl Foundation {
+        fn alive(preview: &Preview) -> Result<(), String> {
             if RUN_STATE
                 .lock()
                 .map_err(|_| "mole_shutting_down")?
@@ -935,23 +1086,43 @@ mod native {
             if Instant::now() >= preview.deadline {
                 return Err("mole_preview_stale".into());
             }
-            runtime_guard(Path::new(&preview.app.row.path), &preview.bundle_id)?;
+            Ok(())
+        }
+    }
+    impl Adapter for Foundation {
+        fn prepare(&self, preview: &Preview) -> Result<(), String> {
+            Self::alive(preview)?;
+            let path = Path::new(&preview.app.row.path);
+            // Never quit anything the preview did not resolve to this exact bundle.
+            identity_guard(path, &preview.bundle_id)?;
+            unchanged_identity(&preview.app)?;
+            quit_app(path, &preview.bundle_id);
+            Ok(())
+        }
+        fn guard(
+            &self,
+            preview: &Preview,
+            item: &Guarded,
+            app_present: bool,
+        ) -> Result<(), String> {
+            Self::alive(preview)?;
+            let app_path = Path::new(&preview.app.row.path);
             if app_present {
-                unchanged(&preview.app)?;
-                app_guard(Path::new(&preview.app.row.path), &preview.bundle_id)?;
+                unchanged_identity(&preview.app)?;
+                app_guard(app_path, &preview.bundle_id)?;
                 if !preview.related.is_empty() {
-                    shared(
-                        Path::new(&preview.app.row.path),
-                        &preview.bundle_id,
-                        &preview.known_paths,
-                        true,
-                    )?;
+                    shared(app_path, &preview.bundle_id, &preview.known_paths, true)?;
                 }
+            } else {
+                runtime_guard(app_path, &preview.bundle_id)?;
             }
-            unchanged(item)?;
-            if item.row.kind != RemovalKind::App {
+            if item.row.kind == RemovalKind::App {
+                // Ownership was settled by app_guard: user-movable or admin move.
+                unchanged_identity(item)?;
+            } else {
+                unchanged(item)?;
                 shared(
-                    Path::new(&preview.app.row.path),
+                    app_path,
                     &preview.bundle_id,
                     &preview.known_paths,
                     app_present,
@@ -965,18 +1136,43 @@ mod native {
             }
             Ok(())
         }
+        /// Mole's routing: a bundle the user cannot move goes through the
+        /// administrator prompt (`sudo mv -n` to the user Trash); everything
+        /// else is a direct Trash move, and an app that the direct move cannot
+        /// take (App Management, Finder-only rights) is retried through Finder.
+        /// There is no permanent-delete fallback.
         fn trash(&self, item: &Guarded) -> NativeResult {
-            let url = NSURL::fileURLWithPath(&NSString::from_str(&item.row.path));
-            let mut destination = None;
-            let result = NSFileManager::defaultManager()
-                .trashItemAtURL_resultingItemURL_error(&url, Some(&mut destination));
+            let path = Path::new(&item.row.path);
+            if item.row.kind == RemovalKind::App {
+                match needs_admin(path) {
+                    Ok(true) => {
+                        log::info!("app removal: {} needs administrator rights", path.display());
+                        return admin_trash(path);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        return NativeResult {
+                            error: Some(error),
+                            destination: None,
+                        }
+                    }
+                }
+            }
+            let direct = foundation_trash(path);
+            if direct.error.is_none() || item.row.kind != RemovalKind::App {
+                return direct;
+            }
+            // Retry only an untouched source; a half-known first attempt is
+            // reconciled as is, never repeated.
+            if unchanged_identity(item).is_err() {
+                return direct;
+            }
+            let first = direct.error.unwrap_or_default();
+            log::warn!("app removal: direct Trash move failed ({first}); retrying through Finder");
+            let finder = finder_trash(path);
             NativeResult {
-                error: result
-                    .err()
-                    .map(|e| format!("mole_trash_failed: {}", e.localizedDescription())),
-                destination: destination
-                    .and_then(|u| u.path())
-                    .map(|s| PathBuf::from(s.to_string())),
+                error: finder.error.map(|e| format!("{first}; {e}")),
+                destination: finder.destination,
             }
         }
         fn reconcile(&self, item: &Guarded, result: &NativeResult) -> RemovalStatus {
@@ -1004,10 +1200,208 @@ mod native {
         }
     }
 
+    /// Keep the domain/code (and the underlying POSIX cause) next to the
+    /// localized text: "you don't have permission" alone cannot tell a TCC
+    /// App Management denial from an ownership or volume problem.
+    fn trash_error(error: &objc2_foundation::NSError) -> String {
+        let mut text = format!(
+            "mole_trash_failed: {} ({} {})",
+            error.localizedDescription(),
+            error.domain(),
+            error.code()
+        );
+        let underlying = error
+            .userInfo()
+            .objectForKey(unsafe { objc2_foundation::NSUnderlyingErrorKey })
+            .and_then(|value| value.downcast::<objc2_foundation::NSError>().ok());
+        if let Some(cause) = underlying {
+            text.push_str(&format!("; underlying {} {}", cause.domain(), cause.code()));
+        }
+        text
+    }
+
+    fn foundation_trash(path: &Path) -> NativeResult {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        let mut destination = None;
+        let result = NSFileManager::defaultManager()
+            .trashItemAtURL_resultingItemURL_error(&url, Some(&mut destination));
+        NativeResult {
+            error: result.err().map(|e| trash_error(&e)),
+            destination: destination
+                .and_then(|u| u.path())
+                .map(|s| PathBuf::from(s.to_string())),
+        }
+    }
+
+    /// AppleScript error numbers that are not a generic failure.
+    fn osascript_error(context: &str, stderr: &str) -> String {
+        let stderr = stderr.trim();
+        if stderr.contains("(-128)") {
+            format!("mole_cancelled: {context} was cancelled")
+        } else if stderr.contains("(-1743)") {
+            format!("mole_permission_required: {context} is not allowed in Privacy & Security > Automation ({stderr})")
+        } else {
+            format!("mole_trash_failed: {context}: {stderr}")
+        }
+    }
+
+    fn osascript(lines: &[&str], args: &[&str], label: &str) -> Result<String, String> {
+        let mut command = std::process::Command::new("/usr/bin/osascript");
+        for line in lines {
+            command.arg("-e").arg(line);
+        }
+        command.args(args).stdin(std::process::Stdio::null());
+        // Long enough for the user to answer an Automation or password prompt.
+        let run = super::super::run_pipe_command(
+            command,
+            label.into(),
+            Duration::from_secs(180),
+            &RUN_STATE,
+        )?;
+        if run.ok {
+            Ok(run.stdout.trim().to_string())
+        } else {
+            Err(osascript_error(label, &run.stderr))
+        }
+    }
+
+    /// Mole's AppleScript fallback (`tell application "Finder" to delete`).
+    /// Finder may move app bundles that a direct call from another app cannot.
+    fn finder_trash(path: &Path) -> NativeResult {
+        let result = osascript(
+            &[
+                "on run argv",
+                "tell application \"Finder\" to set moved to delete (POSIX file (item 1 of argv))",
+                "return POSIX path of (moved as alias)",
+                "end run",
+            ],
+            &[&path.to_string_lossy()],
+            "Finder Trash move",
+        );
+        match result {
+            Ok(moved) => NativeResult {
+                error: None,
+                destination: Some(PathBuf::from(moved.trim_end_matches('/'))),
+            },
+            Err(error) => NativeResult {
+                error: Some(error),
+                destination: None,
+            },
+        }
+    }
+
+    /// First free "Name.app", "Name 2.app", … in the Trash folder.
+    fn trash_destination(trash: &Path, name: &std::ffi::OsStr) -> Option<PathBuf> {
+        let source = Path::new(name);
+        let stem = source.file_stem()?.to_string_lossy().into_owned();
+        let extension = source.extension().map(|e| e.to_string_lossy().into_owned());
+        (1..100)
+            .map(|n| {
+                let base = if n == 1 {
+                    stem.clone()
+                } else {
+                    format!("{stem} {n}")
+                };
+                trash.join(match &extension {
+                    Some(e) => format!("{base}.{e}"),
+                    None => base,
+                })
+            })
+            .find(|candidate| {
+                std::fs::symlink_metadata(candidate)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            })
+    }
+
+    /// Mole's `_mole_move_sudo_path_to_user_trash`: the macOS administrator
+    /// prompt authorizes one `mv -n` of the bundle into the user's own Trash.
+    /// No shell string is built from the path; both paths are argv items.
+    fn admin_trash(path: &Path) -> NativeResult {
+        let fail = |error: String| NativeResult {
+            error: Some(error),
+            destination: None,
+        };
+        let trash = match home() {
+            Ok(home) => home.join(".Trash"),
+            Err(error) => return fail(error),
+        };
+        let trash_metadata = match std::fs::symlink_metadata(&trash) {
+            Ok(m) if m.is_dir() && !m.file_type().is_symlink() => m,
+            _ => return fail("mole_trash_failed: the user Trash folder is unavailable".into()),
+        };
+        // A rename keeps the bundle's identity; a cross-volume copy would not,
+        // and must not be done with administrator rights.
+        let same_volume = path
+            .parent()
+            .and_then(|parent| std::fs::symlink_metadata(parent).ok())
+            .is_some_and(|parent| parent.dev() == trash_metadata.dev());
+        if !same_volume {
+            return fail(
+                "mole_path_unsupported: the app and the Trash are on different volumes".into(),
+            );
+        }
+        let Some(destination) = path
+            .file_name()
+            .and_then(|name| trash_destination(&trash, name))
+        else {
+            return fail("mole_trash_failed: no free name in the Trash".into());
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let result = osascript(
+            &[
+                "on run argv",
+                "do shell script \"/bin/mv -n \" & quoted form of (item 1 of argv) & \" \" & quoted form of (item 2 of argv) with prompt (item 3 of argv) with administrator privileges",
+                "end run",
+            ],
+            &[
+                &path.to_string_lossy(),
+                &destination.to_string_lossy(),
+                &format!("SayKnow Kit wants to move “{name}” to the Trash."),
+            ],
+            "administrator Trash move",
+        );
+        match result {
+            Ok(_) => NativeResult {
+                error: None,
+                destination: Some(destination),
+            },
+            Err(error) => fail(error),
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
         use std::os::unix::fs::{symlink, PermissionsExt};
+
+        #[test]
+        fn trash_errors_keep_domain_code_and_underlying_cause() {
+            use objc2_foundation::{
+                NSCocoaErrorDomain, NSDictionary, NSError, NSPOSIXErrorDomain, NSUnderlyingErrorKey,
+            };
+            let cause =
+                unsafe { NSError::errorWithDomain_code_userInfo(NSPOSIXErrorDomain, 1, None) };
+            let info = NSDictionary::from_slices(
+                &[unsafe { NSUnderlyingErrorKey }],
+                &[&*cause as &objc2::runtime::AnyObject],
+            );
+            let error = unsafe {
+                NSError::errorWithDomain_code_userInfo(NSCocoaErrorDomain, 513, Some(&info))
+            };
+            let text = trash_error(&error);
+            assert!(text.starts_with("mole_trash_failed: "), "{text}");
+            assert!(text.contains("(NSCocoaErrorDomain 513)"), "{text}");
+            assert!(
+                text.ends_with("; underlying NSPOSIXErrorDomain 1"),
+                "{text}"
+            );
+            let bare =
+                unsafe { NSError::errorWithDomain_code_userInfo(NSCocoaErrorDomain, 4, None) };
+            assert!(trash_error(&bare).ends_with("(NSCocoaErrorDomain 4)"));
+        }
 
         #[test]
         fn running_helpers_match_components_not_string_prefixes() {
@@ -1057,14 +1451,18 @@ mod native {
         fn native_process_inventory_helpers_uncertainty_and_deadline() {
             let target = Path::new("/Applications/A.app");
             assert_eq!(
-                inspect_processes(target, &[42], Instant::now(), |_| {
-                    Ok(Some(target.join("Contents/Helpers/no-bundle")))
+                matching_processes(target, &[42, 43], Instant::now(), |pid| {
+                    Ok(Some(if pid == 42 {
+                        target.join("Contents/Helpers/no-bundle")
+                    } else {
+                        PathBuf::from("/usr/bin/true")
+                    }))
                 })
-                .unwrap_err(),
-                "mole_app_running"
+                .unwrap(),
+                [42]
             );
             assert!(
-                inspect_processes(target, &[0, 42, 43], Instant::now(), |pid| {
+                matching_processes(target, &[0, 42, 43], Instant::now(), |pid| {
                     assert_ne!(pid, 0);
                     Ok(if pid == 42 {
                         None
@@ -1072,25 +1470,82 @@ mod native {
                         Some(PathBuf::from("/Applications/A.app.backup/helper"))
                     })
                 })
-                .is_ok()
+                .unwrap()
+                .is_empty()
             );
-            assert!(inspect_processes(target, &[42], Instant::now(), |_| Err(
+            assert!(matching_processes(target, &[42], Instant::now(), |_| Err(
                 "mole_identity_unavailable: permission denied".into()
             ))
             .is_err());
             assert!(
-                inspect_processes(target, &[42], Instant::now(), |_| Ok(Some(PathBuf::from(
+                matching_processes(target, &[42], Instant::now(), |_| Ok(Some(PathBuf::from(
                     "relative"
                 ))))
                 .is_err()
             );
-            assert!(inspect_processes(
+            assert!(matching_processes(
                 target,
                 &[42],
                 Instant::now() - Duration::from_secs(3),
                 |_| panic!("expired inventory must not query")
             )
             .is_err());
+        }
+        #[test]
+        fn trash_destination_never_reuses_an_existing_name() {
+            let f = Fixture::new();
+            assert_eq!(
+                trash_destination(&f.0, std::ffi::OsStr::new("Tool.app")).unwrap(),
+                f.0.join("Tool.app")
+            );
+            std::fs::create_dir(f.0.join("Tool.app")).unwrap();
+            std::fs::create_dir(f.0.join("Tool 2.app")).unwrap();
+            assert_eq!(
+                trash_destination(&f.0, std::ffi::OsStr::new("Tool.app")).unwrap(),
+                f.0.join("Tool 3.app")
+            );
+            symlink(f.0.join("missing"), f.0.join("Tool 3.app")).unwrap();
+            assert_eq!(
+                trash_destination(&f.0, std::ffi::OsStr::new("Tool.app")).unwrap(),
+                f.0.join("Tool 4.app")
+            );
+        }
+        #[test]
+        fn osascript_failures_keep_cancel_and_automation_distinct() {
+            assert!(
+                osascript_error("move", "execution error: User canceled. (-128)")
+                    .starts_with("mole_cancelled")
+            );
+            assert!(osascript_error(
+                "move",
+                "Not authorized to send Apple events to Finder. (-1743)"
+            )
+            .starts_with("mole_permission_required"));
+            let other = osascript_error("move", "  Finder got an error (-10000)\n");
+            assert_eq!(
+                other,
+                "mole_trash_failed: move: Finder got an error (-10000)"
+            );
+        }
+        #[test]
+        fn user_owned_bundles_do_not_need_the_admin_prompt_but_immutable_ones_are_refused() {
+            let f = Fixture::new();
+            let app = f.0.join("Fixture.app");
+            std::fs::create_dir(&app).unwrap();
+            assert!(!needs_admin(&app).unwrap());
+            // A user cannot unlock a user-immutable bundle with an admin move.
+            let name = std::ffi::CString::new(app.as_os_str().as_bytes()).unwrap();
+            assert_eq!(
+                unsafe { libc::chflags(name.as_ptr(), libc::UF_IMMUTABLE) },
+                0
+            );
+            let refused = needs_admin(&app);
+            assert_eq!(unsafe { libc::chflags(name.as_ptr(), 0) }, 0);
+            assert_eq!(refused.unwrap_err(), "mole_permission_required");
+            // A plain file is never an app bundle the admin path would move.
+            let file = f.file("plain");
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o400)).unwrap();
+            assert!(needs_admin(&file).is_err());
         }
         #[test]
         fn protected_entry_parent_flags_and_volume_states_fail_closed() {
@@ -1248,6 +1703,8 @@ mod native {
                     app: app.row.clone(),
                     related: vec![related.row.clone()],
                     excluded: vec![],
+                    running: false,
+                    needs_admin: false,
                 },
                 deadline: Instant::now() + TTL,
                 bundle_id: "org.fixture.acl".into(),
@@ -1502,6 +1959,8 @@ mod native {
                     app: app.row.clone(),
                     related: related.iter().map(|item| item.row.clone()).collect(),
                     excluded: vec![],
+                    running: false,
+                    needs_admin: false,
                 },
                 deadline: Instant::now() + TTL,
                 bundle_id: format!("org.sayknow.fixture.{}", id()),
@@ -1603,6 +2062,8 @@ mod tests {
                 app: app.row.clone(),
                 related: related.iter().map(|r| r.row.clone()).collect(),
                 excluded: vec![],
+                running: false,
+                needs_admin: false,
             },
             deadline: now + TTL,
             bundle_id: "org.fixture.app".into(),
@@ -1615,6 +2076,8 @@ mod tests {
         calls: RefCell<Vec<String>>,
         guards: Cell<usize>,
         fail_guard: Option<(usize, &'static str)>,
+        fail_prepare: Option<&'static str>,
+        prepared: Cell<usize>,
         statuses: Vec<RemovalStatus>,
         native_error: Option<usize>,
     }
@@ -1624,12 +2087,23 @@ mod tests {
                 calls: RefCell::new(vec![]),
                 guards: Cell::new(0),
                 fail_guard: None,
+                fail_prepare: None,
+                prepared: Cell::new(0),
                 statuses,
                 native_error: None,
             }
         }
     }
     impl Adapter for Fake {
+        fn prepare(&self, _: &Preview) -> Result<(), String> {
+            self.prepared.set(self.prepared.get() + 1);
+            // Quitting must happen before any guard reads the running state.
+            assert_eq!(self.guards.get(), 0, "prepare runs before every guard");
+            match self.fail_prepare {
+                Some(reason) => Err(reason.into()),
+                None => Ok(()),
+            }
+        }
         fn guard(&self, _: &Preview, _: &Guarded, _: bool) -> Result<(), String> {
             let n = self.guards.get();
             self.guards.set(n + 1);
@@ -1738,6 +2212,29 @@ mod tests {
         state.preview = Some(preview(now));
         assert!(state.cancel("wrong").is_err());
         assert!(state.consume("token", now).is_err());
+    }
+    #[test]
+    fn the_app_is_quit_once_before_guards_and_a_failed_quit_writes_nothing() {
+        let p = preview(Instant::now());
+        let fake = Fake::new(vec![RemovalStatus::Moved; 2]);
+        execute(&p, &["cache".into()], &fake).unwrap();
+        assert_eq!(fake.prepared.get(), 1);
+        assert_eq!(*fake.calls.borrow(), ["app", "cache"]);
+        let mut fake = Fake::new(vec![]);
+        fake.fail_prepare = Some("mole_app_changed");
+        let out = execute(&p, &["cache".into()], &fake).unwrap();
+        assert_eq!(out.stopped_reason.as_deref(), Some("mole_app_changed"));
+        assert_eq!(out.items[0].error.as_deref(), Some("mole_app_changed"));
+        assert!(out
+            .items
+            .iter()
+            .all(|r| r.status == RemovalStatus::NotAttempted));
+        assert_eq!(fake.guards.get(), 0);
+        assert!(fake.calls.borrow().is_empty());
+        // Invalid selections are rejected before anything is quit.
+        let fake = Fake::new(vec![]);
+        assert!(execute(&p, &["unknown".into()], &fake).is_err());
+        assert_eq!(fake.prepared.get(), 0);
     }
     #[test]
     fn unknown_duplicate_and_app_ids_reject_before_any_invocation() {
