@@ -40,7 +40,7 @@ const snapshot: MetricsSnapshot = {
     sampled_at_ms: 1_000,
   },
   cpu_package_temperature: { state: "unavailable", reason: "no_verified_package_sensor" },
-  battery: { state: "available", percent: 82, is_charging: true, adapter_name: "140W", max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
+  battery: { state: "available", percent: 82, is_charging: true, external_connected: true, adapter_name: "140W", max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
   network: { state: "available", interface: "en0", ip_address: "192.0.2.1", upload_bytes_per_sec: 50700, download_bytes_per_sec: 1700 },
 }
 
@@ -136,6 +136,14 @@ describe("system metrics decoder", () => {
         adapter_id: "unknown",
       },
     }, "unverified temperature"],
+    [{
+      ...snapshot,
+      battery: { state: "available", percent: 80, is_charging: false, adapter_name: null, max_capacity_percent: null, cycle_count: null, temperature_celsius: null },
+    }, "battery without external_connected"],
+    [{
+      ...snapshot,
+      battery: { ...snapshot.battery, external_connected: "yes" },
+    }, "non-boolean external_connected"],
   ])("rejects malformed payloads: %s", (payload, label) => {
     expect(label).toBeTruthy()
     expect(() => decodeMetricsSnapshot(payload)).toThrow()

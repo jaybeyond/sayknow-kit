@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react"
 import {
   Clipboard as ClipboardIcon,
   Languages as TranslateIcon,
@@ -102,6 +102,7 @@ export function TabbedPanel(props: Props) {
   const tabsRef = useRef<HTMLDivElement>(null)
   const tabPillRef = useRef<HTMLSpanElement>(null)
   useSlidingPill(tabsRef, tabPillRef, tab)
+  useTabsFit(tabsRef, props.settings.uiLocale)
   useEffect(() => {
     tabRef.current = tab
   }, [tab])
@@ -269,7 +270,11 @@ export function TabbedPanel(props: Props) {
         className="flex shrink-0 items-center gap-0.5 border-b bg-muted/40 px-1.5 py-1"
         data-tauri-drag-region
       >
-        <div ref={tabsRef} className="relative flex items-center gap-0.5">
+        {/* The tabs give way before the controls do. In locales whose labels
+            do not fit the 480px popover (es, de, vi), the inactive tabs fold
+            to their icon and keep the label as their accessible name, so the
+            active one still reads in full and settings stays on screen. */}
+        <div ref={tabsRef} className="relative flex min-w-0 items-center gap-0.5">
         <span
           ref={tabPillRef}
           aria-hidden
@@ -309,7 +314,7 @@ export function TabbedPanel(props: Props) {
         {/* Window and app-level controls. They used to sit in the translate
             tab's own header, which meant pin, resize and settings vanished the
             moment you switched tabs. */}
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex shrink-0 items-center">
           <Button
             variant="ghost"
             size="icon"
@@ -427,14 +432,47 @@ function TabButton({
       data-pill-active={active}
       className={cn(
         // The active background is the sliding pill behind the tabs.
-        "relative z-[1] inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-[color,background-color]",
+        "relative z-[1] inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs transition-[color,background-color]",
         active
           ? "text-foreground"
           : "text-muted-foreground hover:bg-background/50 hover:text-foreground dark:hover:bg-white/[0.06]",
       )}
     >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
+      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      <span className={cn(!active && "in-data-[tabs-fit=icons]:sr-only")}>{label}</span>
     </button>
   )
+}
+
+/**
+ * Marks the top tabs `data-tabs-fit="icons"` when their full labels do not
+ * fit beside the window controls, else `"labels"`. Measured with the labels
+ * out every time, so a wider popover (compact mode is 720px) brings them back.
+ * Set on the DOM rather than through state: the measurement has to flip the
+ * attribute and read layout in one go, before the frame is painted.
+ */
+function useTabsFit(ref: RefObject<HTMLDivElement | null>, locale: string) {
+  useLayoutEffect(() => {
+    const tabs = ref.current
+    const strip = tabs?.parentElement
+    if (!tabs || !strip) return
+    const measure = () => {
+      tabs.dataset.tabsFit = "labels"
+      // The container may shrink (min-w-0) but its buttons do not, so labels
+      // that do not fit show up as content wider than the container.
+      tabs.dataset.tabsFit = tabs.scrollWidth > tabs.clientWidth + 0.5 ? "icons" : "labels"
+    }
+    measure()
+    let live = true
+    void document.fonts?.ready.then(() => {
+      if (live) measure()
+    })
+    // The strip spans the window, so folding the labels never resizes it.
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure)
+    ro?.observe(strip)
+    return () => {
+      live = false
+      ro?.disconnect()
+    }
+  }, [ref, locale])
 }

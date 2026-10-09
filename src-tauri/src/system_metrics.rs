@@ -101,6 +101,7 @@ pub enum BatteryStatus {
     Available {
         percent: f32,
         is_charging: bool,
+        external_connected: bool,
         adapter_name: Option<String>,
         max_capacity_percent: Option<f32>,
         cycle_count: Option<u32>,
@@ -825,6 +826,7 @@ fn battery_status() -> BatteryStatus {
             Some(crate::battery_macos::BatteryReading::Installed {
                 percent,
                 is_charging,
+                external_connected,
                 adapter_name,
                 max_capacity_percent,
                 cycle_count,
@@ -832,6 +834,7 @@ fn battery_status() -> BatteryStatus {
             }) => BatteryStatus::Available {
                 percent,
                 is_charging,
+                external_connected,
                 adapter_name,
                 max_capacity_percent,
                 cycle_count,
@@ -1257,6 +1260,44 @@ mod tests {
             NO_PACKAGE_SENSOR
         );
         assert!(value["cpu_package_temperature"].get("celsius").is_none());
+    }
+
+    /// The webview decoder rejects any key set but this exact one, so a field
+    /// added here without the decoder (or the reverse) blanks the whole card.
+    #[test]
+    fn battery_wire_shape_matches_the_webview_decoder() {
+        let value = serde_json::to_value(BatteryStatus::Available {
+            percent: 80.0,
+            is_charging: false,
+            external_connected: true,
+            adapter_name: Some("140W USB-C Power Adapter".into()),
+            max_capacity_percent: Some(99.0),
+            cycle_count: Some(16),
+            temperature_celsius: Some(35.0),
+        })
+        .unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "adapter_name",
+                "cycle_count",
+                "external_connected",
+                "is_charging",
+                "max_capacity_percent",
+                "percent",
+                "state",
+                "temperature_celsius",
+            ]
+        );
+        assert_eq!(value["external_connected"], true);
+        assert_eq!(value["is_charging"], false);
     }
 
     #[test]

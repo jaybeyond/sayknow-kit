@@ -117,7 +117,10 @@ describe("SpeedTestPanel", () => {
     expect(dial("tools.speed.download").value).toBe("155")
     expect(dial("tools.speed.upload").value).toBe("9.4")
     expect(screen.getByText("115 ms")).toBeTruthy()
-    expect(screen.getByText("jptyo5-edge-fx-005.aaplimg.com")).toBeTruthy()
+    const server = screen.getByText("jptyo5-edge-fx-005.aaplimg.com")
+    // A long host name must wrap itself, not squeeze its label into one word per line.
+    expect(server.className.split(" ")).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]))
+    expect((server.previousElementSibling as HTMLElement).className.split(" ")).toContain("shrink-0")
     expect(screen.queryByRole("button", { name: "tools.speed.cancel" })).toBeNull()
     expect(screen.getByRole("button", { name: "tools.speed.again" })).toBeTruthy()
     expect(mocks.holds.at(-1)).toBe(false)

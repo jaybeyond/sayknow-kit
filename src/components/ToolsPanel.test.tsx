@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   moleState: { busy: null as MoleStore["busy"] },
   moleListeners: new Set<() => void>(),
   refreshScans: vi.fn(() => Promise.resolve()),
+  scanAgentUsage: vi.fn(() => Promise.resolve()),
   setActivityActive: vi.fn(),
   activityState: {
     points: [] as {
@@ -56,7 +57,7 @@ const mocks = vi.hoisted(() => ({
       memory: { state: "available" as const, total_bytes: 2_048, used_bytes: 1_024, available_bytes: 1_024, sampled_at_ms: 1_000 },
       storage: { state: "unavailable" as const, reason: "system_volume_unavailable" },
       cpu_package_temperature: { state: "unavailable" as const, reason: "no_verified_package_sensor" },
-      battery: { state: "available" as const, percent: 82, is_charging: true, adapter_name: "140W", max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
+      battery: { state: "available" as const, percent: 82, is_charging: true, external_connected: true, adapter_name: "140W" as string | null, max_capacity_percent: 95.7, cycle_count: 12, temperature_celsius: 30.2 },
       network: { state: "available" as const, interface: "en0", ip_address: "192.0.2.1", upload_bytes_per_sec: 50700, download_bytes_per_sec: 1700 },
     },
     error: "collection_timeout",
@@ -96,7 +97,8 @@ vi.mock("@/i18n", () => ({
       "tools.metrics.temperature": "CPU temperature",
       "tools.metrics.battery": "Battery",
       "tools.metrics.charging": "Charging",
-      "tools.metrics.notCharging": "On battery",
+      "tools.metrics.onBattery": "On battery",
+      "tools.metrics.pluggedIn": "Plugged in · not charging",
       "tools.metrics.notInstalled": "Not installed",
       "tools.metrics.powerSource": "Power source",
       "tools.metrics.maxCapacity": "Max capacity",
@@ -175,6 +177,7 @@ vi.mock("@/lib/mole-store", () => ({
   },
   refreshScans: mocks.refreshScans,
 }))
+vi.mock("@/lib/agent-usage-store", () => ({ scanAgentUsage: mocks.scanAgentUsage }))
 vi.mock("@/components/UsagePanel", () => ({
   UsagePanel: ({ active }: { active: boolean }) => (
     <section aria-label="Usage" data-active={String(active)} />
@@ -218,6 +221,7 @@ afterEach(() => {
   mocks.moleState = { busy: null }
   mocks.moleListeners.clear()
   mocks.refreshScans.mockImplementation(() => Promise.resolve())
+  mocks.scanAgentUsage.mockImplementation(() => Promise.resolve())
 })
 
 describe("ToolsPanel polling eligibility", () => {
@@ -402,12 +406,29 @@ describe("ToolsPanel cleanup header refresh", () => {
       expect(mocks.scanDisplays).toHaveBeenCalledExactlyOnceWith(true)
       expect(mocks.refreshMetrics).toHaveBeenCalledOnce()
       expect(mocks.refreshScans).not.toHaveBeenCalled()
+      if (tab === "Token usage") expect(mocks.scanAgentUsage).toHaveBeenCalledExactlyOnceWith(true, undefined)
+      else expect(mocks.scanAgentUsage).not.toHaveBeenCalled()
       expect(refresh.disabled).toBe(false)
 
       fireEvent.click(screen.getByRole("tab", { name: "Clean" }))
       expect(refresh.disabled).toBe(true)
     },
   )
+})
+
+describe("ToolsPanel token usage header refresh", () => {
+  it("rescans agent usage with the DeepL key and spins until the scan settles", async () => {
+    let finish!: () => void
+    mocks.scanAgentUsage.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve }))
+    render(<ToolsPanel settings={{ uiLocale: "en", deeplKey: "dk" } as Settings} active />)
+    fireEvent.click(screen.getByRole("tab", { name: "Token usage" }))
+    const refresh = screen.getByTitle("Refresh") as HTMLButtonElement
+    fireEvent.click(refresh)
+    expect(mocks.scanAgentUsage).toHaveBeenCalledExactlyOnceWith(true, "dk")
+    expect(refresh.disabled).toBe(true)
+    await act(async () => { finish() })
+    expect(refresh.disabled).toBe(false)
+  })
 })
 describe("ToolsPanel system metrics", () => {
   it("announces stale state without disguising unsupported temperature", async () => {
@@ -419,6 +440,47 @@ describe("ToolsPanel system metrics", () => {
     expect(temperature?.textContent).toContain("No verified CPU package sensor")
     expect(temperature?.textContent).not.toContain("Stale")
     await waitFor(() => expect(mocks.setMetricsActive).toHaveBeenCalledWith(true))
+  })
+
+  it("tells plugged in apart from charging and from running on battery", () => {
+    const original = mocks.metricsState.snapshot.battery
+    const powerSource = () => {
+      const region = screen.getByRole("region", { name: "System status" })
+      return within(region).getByText("Power source").nextElementSibling?.textContent
+    }
+    try {
+      // The live Mac at 80%: adapter attached, macOS holding the charge.
+      mocks.metricsState.snapshot.battery = { ...original, is_charging: false, external_connected: true, adapter_name: "140W USB-C Power Adapter" }
+      const view = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      expect(powerSource()).toBe("Plugged in · not charging · 140W USB-C Power Adapter")
+      view.unmount()
+
+      mocks.metricsState.snapshot.battery = { ...original, is_charging: true, external_connected: true, adapter_name: "140W" }
+      const charging = render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      expect(powerSource()).toBe("Charging · 140W")
+      charging.unmount()
+
+      mocks.metricsState.snapshot.battery = { ...original, is_charging: false, external_connected: false, adapter_name: null }
+      render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      expect(powerSource()).toBe("On battery")
+    } finally {
+      mocks.metricsState.snapshot.battery = original
+    }
+  })
+
+  it("keeps metric labels whole and wraps a long value instead", () => {
+    // jsdom has no layout; the 320px browser QA showed "전원" stacking one syllable per line once the value grew.
+    const original = mocks.metricsState.snapshot.battery
+    try {
+      mocks.metricsState.snapshot.battery = { ...original, is_charging: false, external_connected: true, adapter_name: "140W USB-C Power Adapter" }
+      render(<ToolsPanel settings={{ uiLocale: "en" } as Settings} active />)
+      const label = within(screen.getByRole("region", { name: "System status" })).getByText("Power source")
+      const value = label.nextElementSibling as HTMLElement
+      expect(label.className.split(" ")).toContain("shrink-0")
+      expect(value.className.split(" ")).toEqual(expect.arrayContaining(["min-w-0", "text-right", "[overflow-wrap:anywhere]"]))
+    } finally {
+      mocks.metricsState.snapshot.battery = original
+    }
   })
 
   it("retries metrics without forcing another display scan", async () => {

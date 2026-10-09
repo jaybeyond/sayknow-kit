@@ -570,6 +570,53 @@ pub fn run_mole_action(app: AppHandle, action: String) -> Result<MoleRun, String
     run_program(Some(&app), &path, args, timeout, &RUN_STATE)
 }
 
+/// Mole runs as this app's child, so macOS applies this app's Full Disk Access
+/// to every path Mole touches. Without it, protected folders such as the Trash
+/// fail quietly, and Mole can report them as empty instead of failing.
+#[tauri::command(async)]
+pub fn mole_full_disk_access() -> Option<bool> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    full_disk_access_in(&home)
+}
+
+/// The protected folders Mole 1.38.1 itself checks. One readable folder proves
+/// access; only folders that exist and refuse listing prove its absence.
+fn full_disk_access_in(home: &Path) -> Option<bool> {
+    let mut denied = false;
+    for relative in ["Library/Safari", "Library/Mail", "Library/Messages"] {
+        let path = home.join(relative);
+        if std::fs::symlink_metadata(&path).is_err() {
+            continue;
+        }
+        match std::fs::read_dir(&path) {
+            Ok(_) => return Some(true),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => denied = true,
+            Err(_) => return None,
+        }
+    }
+    denied.then_some(false)
+}
+
+#[tauri::command]
+pub fn open_full_disk_access_settings(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        // A fixed system URL: nothing supplied by the webview reaches the opener.
+        app.opener()
+            .open_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("mole_not_installed".into())
+    }
+}
+
 /// JSON inventory must not use a PTY: Mole selects its list protocol using isatty.
 #[cfg(unix)]
 fn run_pipe_program(
@@ -789,6 +836,27 @@ mod tests {
         std::fs::set_permissions(&path, perms).unwrap();
         assert!(!is_trusted_executable(&std::fs::metadata(&path).unwrap()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_disk_access_needs_a_readable_protected_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!("sayknow-mole-fda-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("Library")).unwrap();
+        assert_eq!(full_disk_access_in(&home), None);
+        let mail = home.join("Library/Mail");
+        std::fs::create_dir_all(&mail).unwrap();
+        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads anything, so the denial case only means something for a user.
+        if unsafe { libc::geteuid() } != 0 {
+            assert_eq!(full_disk_access_in(&home), Some(false));
+        }
+        std::fs::create_dir_all(home.join("Library/Safari")).unwrap();
+        assert_eq!(full_disk_access_in(&home), Some(true));
+        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

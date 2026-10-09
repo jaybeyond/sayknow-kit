@@ -28,6 +28,7 @@
         "skipTaskbar": true,
         "visible": false,
         "focus": true,
+        "acceptFirstMouse": true,
         "shadow": true
       }
     ],

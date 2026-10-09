@@ -25,13 +25,15 @@ export type MoleResult = {
   items: number | null
   partial: boolean
 }
+/** One row Mole printed as done during a real clean. */
+export type CleanedItem = { id: string; section: string; name: string; detail: string; bytes: number | null }
 export type HistorySession = { command: string; started_at: string; items: number; size: string; removed: number; trashed: number }
-export type AppSummary = { id: string; name: string; bundle_id: string; path: string; size_label: string; source: string; blocked_reason: string | null }
+export type AppSummary = { id: string; name: string; bundle_id: string; path: string; resolved_path: string | null; size_label: string; source: string; blocked_reason: string | null }
 export type AppInventory = { generation: string; apps: AppSummary[] }
-export type RemovalKind = "app" | "cache" | "preferences" | "saved_state" | "webkit" | "http_storage" | "support" | "container"
+export type RemovalKind = "app" | "shortcut" | "cache" | "preferences" | "saved_state" | "webkit" | "http_storage" | "support" | "container"
 export type RemovalCandidate = { id: string; kind: RemovalKind; path: string; size_bytes: number | null }
 export type RemovalExclusion = { kind: RemovalKind; path: string; reason: string }
-export type AppRemovalPreview = { token: string; generation: string; expires_at_ms: number; app: RemovalCandidate; related: RemovalCandidate[]; excluded: RemovalExclusion[] }
+export type AppRemovalPreview = { token: string; generation: string; expires_at_ms: number; app: RemovalCandidate; shortcut: RemovalCandidate | null; related: RemovalCandidate[]; excluded: RemovalExclusion[] }
 export type RemovalStatus = "moved" | "failed" | "unknown" | "not_attempted"
 export type RemovalItemResult = { candidate_id: string; kind: RemovalKind; path: string; status: RemovalStatus; error: string | null; trash_path: string | null }
 export type AppRemovalOutcome = { items: RemovalItemResult[]; stopped_reason: string | null }
@@ -48,6 +50,12 @@ export const cancelMoleAppRemoval = (previewToken: string) =>
   invoke<void>("cancel_mole_app_removal", { previewToken })
 export const trashMoleAppSelection = (previewToken: string, selectedCandidateIds: string[]) =>
   invoke<AppRemovalOutcome>("trash_mole_app_selection", { previewToken, selectedCandidateIds })
+/** Whether this app (and so every Mole child it runs) has Full Disk Access; null when it cannot be told. */
+export async function checkFullDiskAccess(): Promise<boolean | null> {
+  if (!isTauri()) return null
+  return invoke<boolean | null>("mole_full_disk_access")
+}
+export const openFullDiskAccessSettings = () => invoke<void>("open_full_disk_access_settings")
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -127,11 +135,34 @@ export function parseResult(text: string, mode: MoleResult["mode"]): MoleResult 
     }
   }
   // An execution without an explicit summary cannot borrow preview or free-disk figures.
-  if (mode === "clean") return { mode, bytes: null, items: null, partial: false }
+  if (mode === "clean") return { mode, bytes: lines.some((line) => /no additional space freed/i.test(line)) ? 0 : null, items: null, partial: false }
   const candidates = parseCleanPreview(text).filter((item) => item.status === "candidate")
   if (!candidates.length) return null
   const measured = candidates.filter((item) => item.bytes !== null)
   return { mode, bytes: measured.length ? measured.reduce((sum, item) => sum + item.bytes!, 0) : null, items: null, partial: true }
+}
+
+/** A ✓ row is a deletion only when Mole did not say it skipped, found, or had nothing to do. */
+// "removed 3, skipped 2 protected" still removed something; "· skipped (whitelist)" did not.
+const NOT_CLEANED = /(?:·|,)\s*skipped(?:\s*\(|\s+whitelist|$)|already|nothing to clean|\bfound\b|^no\b|^great\b|^whitelist|admin access|protected items|\bwould\b|\bdry\b/i
+export function parseCleanRun(text: string): CleanedItem[] {
+  const rows: CleanedItem[] = []
+  let section = ""
+  for (const raw of stripAnsi(text).split("\n")) {
+    const line = raw.trim()
+    if (line.startsWith("➤")) { section = line.slice(1).trim(); continue }
+    const body = line.match(/^✓\s+(.+)$/)?.[1]
+    if (!body || !section || NOT_CLEANED.test(body)) continue
+    const name = body.split(/[·,]/)[0].replace(/\s+\d+\s+(?:old\s+)?items?$/i, "").trim()
+    rows.push({ id: `${section}:${name}:${rows.length}`, section, name, detail: body, bytes: parseSizeToBytes(body) })
+  }
+  return rows
+}
+/** Only Mole's own row and summary lines; spinner frames and terminal residue are dropped. */
+export function cleanRunLog(text: string): string[] {
+  return stripAnsi(text).split("\n").map((line) => line.trim())
+    .filter((line) => /^(?:➤|[✓◎→●○•☞])\s|^(?:Space freed|System was already clean|Free space now)/.test(line))
+    .slice(-300)
 }
 
 export const MAINTENANCE_IDS: Record<string, string> = {

@@ -313,3 +313,38 @@ describe("TabbedPanel in-app shortcuts", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("hide_window")
   })
 })
+
+describe("TabbedPanel tab strip fit", () => {
+  // jsdom has no layout, so the overflow the 480px popover shows in es/de/vi
+  // (settings pushed off the edge, Vietnamese labels on two lines) is stood in
+  // for by the two widths the measurement compares.
+  function sizeTabs(content: number, box: number) {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.querySelector("[data-pill-active]") ? content : 0
+    })
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.querySelector("[data-pill-active]") ? box : 0
+    })
+  }
+  const tabs = () => document.querySelector<HTMLElement>("[data-tabs-fit]")!
+  const label = (name: string) => screen.getByRole("button", { name }).querySelector("span")!
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it("keeps every label when the tabs fit", async () => {
+    sizeTabs(329, 329)
+    await mount("chat")
+    expect(tabs().dataset.tabsFit).toBe("labels")
+  })
+
+  it("folds inactive tabs to their icon, keeping the label for screen readers, when they do not fit", async () => {
+    sizeTabs(413, 360)
+    await mount("chat")
+    expect(tabs().dataset.tabsFit).toBe("icons")
+    // The rule hides only the inactive labels, and only while folded.
+    expect(label("tab.chat").className).not.toMatch(/sr-only/)
+    expect(label("tab.translate").className).toContain("in-data-[tabs-fit=icons]:sr-only")
+    // The label still names the button, so it stays reachable by name.
+    expect(screen.getByRole("button", { name: "tab.clipboard" })).toBeTruthy()
+  })
+})
