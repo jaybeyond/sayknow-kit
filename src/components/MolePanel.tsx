@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { AlertTriangle, Folder, HardDrive, Package, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronLeft, ChevronRight, Folder, HardDrive, Package, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -12,6 +12,9 @@ import { MAINTENANCE_IDS, type CleanPreviewItem, type MaintenanceTask, type Mole
 
 type T = (key: string) => string
 type Props = { t: T; active: boolean }
+/** The storage overview is the landing page; every other tool opens on its own page. */
+type Page = "home" | "cache" | "tune" | "apps"
+type ToolPage = Exclude<Page, "home">
 const press = "transition-none active:scale-[0.97] motion-reduce:active:scale-100"
 const scrollList = "max-h-64 overflow-y-auto overscroll-contain rounded-lg border bg-background/40 divide-y"
 const pathStyle = "break-all text-[11px] leading-relaxed text-muted-foreground select-text"
@@ -55,6 +58,10 @@ export function MolePanel({ t, active }: Props) {
   const origin = useRef<HTMLButtonElement | null>(null)
   const cancel = useRef<HTMLButtonElement | null>(null)
   const search = useRef<HTMLInputElement | null>(null)
+  const [page, setPage] = useState<Page>("home")
+  const back = useRef<HTMLButtonElement | null>(null)
+  const openedFrom = useRef<ToolPage | null>(null)
+  const pageButtons = useRef<Partial<Record<ToolPage, HTMLButtonElement | null>>>({})
   const { info, sessions, apps, busy, preview } = state
   const available = info !== "loading" && info?.supported === true && !state.detectionError
   const disabled = busy !== null || !available
@@ -76,6 +83,22 @@ export function MolePanel({ t, active }: Props) {
     const timer = window.setTimeout(() => setExpiredToken(preview.token), Math.max(0, preview.expires_at_ms - Date.now()))
     return () => window.clearTimeout(timer)
   }, [preview])
+  // Moving between pages moves focus with it: into the page on the way in,
+  // back to the button that opened it on the way out. Nothing on first render.
+  useEffect(() => {
+    if (page !== "home") back.current?.focus()
+    else if (openedFrom.current) pageButtons.current[openedFrom.current]?.focus()
+  }, [page])
+  const openPage = (next: ToolPage) => { openedFrom.current = next; setPage(next) }
+  const tools: { page: ToolPage; icon: typeof HardDrive; title: string; hint: string; count?: number; busy: boolean; summary: string | null }[] = [
+    { page: "cache", icon: Trash2, title: t("tools.mole.session.cache"), hint: t("tools.mole.session.cacheHint"), busy: busy === "cache",
+      count: sessions.cache.updatedAt !== null ? sessions.cache.items.length : undefined,
+      summary: sessions.cache.scanResult?.bytes != null ? `${t("tools.mole.expected")} ${formatBytes(sessions.cache.scanResult.bytes, 1000)}` : null },
+    { page: "tune", icon: SlidersHorizontal, title: t("tools.mole.session.tune"), hint: t("tools.mole.session.tuneHint"), busy: busy === "tune",
+      count: sessions.tune.updatedAt !== null ? sessions.tune.maintenance.length : undefined, summary: null },
+    { page: "apps", icon: Package, title: t("tools.mole.appsHeading"), hint: t("tools.mole.appsHint"), busy: busy === "apps" || busy === "preview" || busy === "remove",
+      count: apps.inventory?.apps.length, summary: null },
+  ]
   const confirmationSession = confirmAction?.action === "clean" ? sessions.cache : sessions.tune
   const canConfirm = confirmAction && !disabled && !confirmationSession.stale && confirmationSession === confirmAction.snapshot
 
@@ -94,12 +117,31 @@ export function MolePanel({ t, active }: Props) {
       <ErrorNote error={state.detectionError ?? actionError} t={t} />
     </header>
 
+    {page !== "home" && <Button ref={back} size="sm" variant="ghost" className={`-ml-2 h-8 text-xs ${press}`} onClick={() => setPage("home")}>
+      <ChevronLeft aria-hidden="true" className="size-3.5" />{t("tools.mole.back")}
+    </Button>}
+
+    {page === "home" && <>
     <Section icon={HardDrive} title={t("tools.mole.session.disk")} hint={t("tools.mole.session.diskHint")} count={sessions.disk.analyze?.entries.length}>
       <ScanState state={sessions.disk} busy={busy === "disk"} t={t} />
       {sessions.disk.analyze ? <DiskList analyze={sessions.disk.analyze} t={t} /> : <Empty t={t} />}
     </Section>
 
-    <Section icon={Trash2} title={t("tools.mole.session.cache")} hint={t("tools.mole.session.cacheHint")} count={sessions.cache.updatedAt !== null ? sessions.cache.items.length : undefined}>
+    <nav aria-label={t("tools.mole.moreTools")} className="space-y-2 border-t pt-4">
+      <h3 className="text-[13px] font-semibold">{t("tools.mole.moreTools")}</h3>
+      {tools.map((tool) => <button key={tool.page} ref={(node) => { pageButtons.current[tool.page] = node }} type="button" onClick={() => openPage(tool.page)}
+        className={`flex w-full items-center gap-3 rounded-lg border bg-background/40 p-3 text-left hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring ${press}`}>
+        <tool.icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2 text-xs font-medium">{tool.title}{tool.count !== undefined && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal tabular-nums text-muted-foreground">{tool.count}</span>}</span>
+          <span className="mt-0.5 line-clamp-2 block text-[11px] leading-relaxed text-muted-foreground">{tool.busy ? t("tools.mole.scanning") : tool.summary ?? tool.hint}</span>
+        </span>
+        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      </button>)}
+    </nav>
+    </>}
+
+    {page === "cache" && <Section icon={Trash2} title={t("tools.mole.session.cache")} hint={t("tools.mole.session.cacheHint")} count={sessions.cache.updatedAt !== null ? sessions.cache.items.length : undefined}>
       <ScanState state={sessions.cache} busy={busy === "cache"} t={t} />
       {sessions.cache.scanResult && <div className="rounded-lg bg-muted/40 px-3 py-2.5">
         <div className="text-[11px] text-muted-foreground">{t("tools.mole.expected")}</div>
@@ -114,9 +156,9 @@ export function MolePanel({ t, active }: Props) {
       <Button size="sm" variant="secondary" className={`text-xs ${press}`} disabled={disabled || sessions.cache.stale || !sessions.cache.updatedAt} onClick={(event) => { origin.current = event.currentTarget; setConfirmAction({ action: "clean", snapshot: sessions.cache }) }}>
         <Trash2 aria-hidden="true" className="size-3.5" />{t("tools.mole.cleanNow")}
       </Button>
-    </Section>
+    </Section>}
 
-    <Section icon={SlidersHorizontal} title={t("tools.mole.session.tune")} hint={t("tools.mole.session.tuneHint")} count={sessions.tune.updatedAt !== null ? sessions.tune.maintenance.length : undefined}>
+    {page === "tune" && <Section icon={SlidersHorizontal} title={t("tools.mole.session.tune")} hint={t("tools.mole.session.tuneHint")} count={sessions.tune.updatedAt !== null ? sessions.tune.maintenance.length : undefined}>
       <ScanState state={sessions.tune} busy={busy === "tune"} t={t} />
       <p className="rounded-lg bg-muted/40 p-2.5 text-[11px] leading-relaxed text-muted-foreground">{t("tools.mole.adminNotice")}</p>
       <MaintenanceList tasks={sessions.tune.maintenance} t={t} />
@@ -127,9 +169,9 @@ export function MolePanel({ t, active }: Props) {
       <Button size="sm" variant="secondary" className={`text-xs ${press}`} disabled={disabled || sessions.tune.stale || !sessions.tune.updatedAt} onClick={(event) => { origin.current = event.currentTarget; setConfirmAction({ action: "optimize", snapshot: sessions.tune }) }}>
         <SlidersHorizontal aria-hidden="true" className="size-3.5" />{t("tools.mole.optimizeNow")}
       </Button>
-    </Section>
+    </Section>}
 
-    <Section icon={Package} title={t("tools.mole.appsHeading")} hint={t("tools.mole.appsHint")} count={apps.inventory?.apps.length}>
+    {page === "apps" && <Section icon={Package} title={t("tools.mole.appsHeading")} hint={t("tools.mole.appsHint")} count={apps.inventory?.apps.length}>
       <ScanState state={apps} busy={busy === "apps"} t={t} />
       <Input ref={search} aria-label={t("tools.mole.searchApps")} placeholder={t("tools.mole.searchApps")} value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 text-xs" />
       {filteredApps.length ? <ul aria-label={t("tools.mole.appsHeading")} tabIndex={0} className={`${scrollList} focus-visible:outline-ring`}>
@@ -155,7 +197,7 @@ export function MolePanel({ t, active }: Props) {
         </li>)}</ul>
         {state.removalResult.stopped_reason && <p className="mt-2 text-destructive">{errorLabel(state.removalResult.stopped_reason, t)}</p>}
       </div>}
-    </Section>
+    </Section>}
 
     <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
       <DialogContent animate={false} showCloseButton={false} className="w-[420px] max-h-[85vh] gap-3 overflow-y-auto p-4" onOpenAutoFocus={(event) => { event.preventDefault(); cancel.current?.focus() }} onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus() }}>

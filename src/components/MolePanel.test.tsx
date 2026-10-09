@@ -54,6 +54,9 @@ beforeEach(() => {
   mocks.cancel.mockImplementation(async () => publish({ selectedApp: null, preview: null }))
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
+/** Opens one tool page from the overview through its button. */
+const openPage = (title: string) => fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${title}`) }))
+const goBack = () => fireEvent.click(screen.getByRole("button", { name: t("tools.mole.back") }))
 
 describe("always-visible cleanup workspace", () => {
   it("activates only while visible and displays every complete list without scan buttons", () => {
@@ -61,13 +64,18 @@ describe("always-visible cleanup workspace", () => {
     expect(mocks.initialize).not.toHaveBeenCalled()
     view.rerender(<MolePanel active t={t} />)
     expect(mocks.initialize).toHaveBeenCalledOnce()
-    for (const key of ["session.disk", "session.cache", "session.tune", "appsHeading"]) expect(screen.getByRole("heading", { name: t(`tools.mole.${key}`) })).toBeTruthy()
+    expect(screen.getByRole("heading", { name: t("tools.mole.session.disk") })).toBeTruthy()
     expect(screen.getByText("Home")).toBeTruthy()
+    openPage(t("tools.mole.session.cache"))
     expect(screen.getByText(t("tools.mole.item.User app cache"))).toBeTruthy()
-    expect(screen.getByText(t("tools.mole.task.dock.title"))).toBeTruthy()
-    expect(screen.getByText(app.path)).toBeTruthy()
     expect(screen.getByText(t("tools.mole.expected"))).toBeTruthy()
     expect(screen.queryByText(t("tools.mole.reported"))).toBeNull()
+    goBack()
+    openPage(t("tools.mole.session.tune"))
+    expect(screen.getByText(t("tools.mole.task.dock.title"))).toBeTruthy()
+    goBack()
+    openPage(t("tools.mole.appsHeading"))
+    expect(screen.getByText(app.path)).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: t("tools.refresh") }))
     expect(mocks.refresh).toHaveBeenCalledOnce()
     expect(mocks.run).not.toHaveBeenCalled()
@@ -76,15 +84,23 @@ describe("always-visible cleanup workspace", () => {
   it("keeps previous rows visible while busy and disables every destructive entry", () => {
     mocks.state.busy = "cache"
     render(<MolePanel active t={t} />)
-    for (const name of [t("tools.mole.cleanNow"), t("tools.mole.optimizeNow"), /Sample.*삭제 검토/]) {
+    // The overview button says the page behind it is busy; the page itself is still reachable.
+    expect(screen.getByRole("button", { name: new RegExp(`^${t("tools.mole.session.cache")}.*${t("tools.mole.scanning")}`) })).toBeTruthy()
+    for (const [page, name] of [[t("tools.mole.session.cache"), t("tools.mole.cleanNow")], [t("tools.mole.session.tune"), t("tools.mole.optimizeNow")], [t("tools.mole.appsHeading"), /Sample.*삭제 검토/]] as const) {
+      openPage(page)
       expect(screen.getByRole<HTMLButtonElement>("button", { name }).disabled).toBe(true)
+      if (page === t("tools.mole.session.cache")) {
+        expect(screen.getByText(t("tools.mole.item.User app cache"))).toBeTruthy()
+        expect(screen.getByRole("status").textContent).toContain(t("tools.mole.scanning"))
+      }
+      goBack()
     }
-    expect(screen.getByText(t("tools.mole.item.User app cache"))).toBeTruthy()
-    expect(screen.getByRole("status").textContent).toContain(t("tools.mole.scanning"))
   })
   it("shows missing/version support instead of allowing native operations", () => {
     mocks.state.info = { version: "9", path: "/mo", supported: false, required_version: "1.38.1" }
     const view = render(<MolePanel active t={t} />)
+    expect(screen.getByText(/현재 버전: 9/)).toBeTruthy()
+    openPage(t("tools.mole.session.cache"))
     expect(screen.getByText(/현재 버전: 9/)).toBeTruthy()
     expect(screen.getByRole<HTMLButtonElement>("button", { name: t("tools.mole.cleanNow") }).disabled).toBe(true)
     mocks.state = { ...mocks.state, info: null }
@@ -95,6 +111,7 @@ describe("always-visible cleanup workspace", () => {
   it("requires an in-app exact-action confirmation and never uses window.confirm", () => {
     const nativeConfirm = vi.spyOn(window, "confirm")
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.session.cache"))
     fireEvent.click(screen.getByRole("button", { name: t("tools.mole.cleanNow") }))
     const dialog = screen.getByRole("dialog")
     expect(within(dialog).getByText(t("tools.mole.cleanWarning"))).toBeTruthy()
@@ -116,6 +133,7 @@ describe("always-visible cleanup workspace", () => {
       ],
     }
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.session.tune"))
     for (const status of ["preview", "completed", "admin_skipped", "manual"]) {
       const label = screen.getByText(t(`tools.mole.status.${status}`))
       expect(label.closest("details")).toBeNull()
@@ -124,6 +142,7 @@ describe("always-visible cleanup workspace", () => {
   })
   it("cannot confirm an old maintenance snapshot after refresh, even with an identical clock timestamp", () => {
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.session.tune"))
     fireEvent.click(screen.getByRole("button", { name: t("tools.mole.optimizeNow") }))
     expect(screen.getByText(t("tools.mole.optimizeWarning"))).toBeTruthy()
     act(() => publish({ sessions: { ...mocks.state.sessions, tune: { ...mocks.state.sessions.tune } } }))
@@ -134,10 +153,42 @@ describe("always-visible cleanup workspace", () => {
   })
 })
 
+describe("tool pages", () => {
+  it("keeps storage on the overview and opens each other tool on its own page", () => {
+    render(<MolePanel active t={t} />)
+    expect(screen.getByRole("navigation", { name: t("tools.mole.moreTools") })).toBeTruthy()
+    for (const title of [t("tools.mole.session.cache"), t("tools.mole.session.tune"), t("tools.mole.appsHeading")]) {
+      expect(screen.queryByRole("heading", { name: title })).toBeNull()
+    }
+    openPage(t("tools.mole.session.tune"))
+    expect(screen.getByRole("heading", { name: t("tools.mole.session.tune") })).toBeTruthy()
+    expect(screen.queryByRole("heading", { name: t("tools.mole.session.disk") })).toBeNull()
+    expect(screen.queryByRole("heading", { name: t("tools.mole.session.cache") })).toBeNull()
+    expect(screen.queryByRole("navigation")).toBeNull()
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+  it("shows counts and the cleanable size on the overview buttons", () => {
+    render(<MolePanel active t={t} />)
+    const cache = screen.getByRole("button", { name: new RegExp(`^${t("tools.mole.session.cache")}`) })
+    expect(cache.textContent).toContain(`${t("tools.mole.expected")} 1000 B`)
+    expect(screen.getByRole("button", { name: new RegExp(`^${t("tools.mole.appsHeading")}`) }).textContent).toContain("1")
+  })
+  it("moves focus into a page and back to the button that opened it", () => {
+    render(<MolePanel active t={t} />)
+    const trigger = screen.getByRole("button", { name: new RegExp(`^${t("tools.mole.appsHeading")}`) })
+    expect(document.activeElement).not.toBe(trigger)
+    fireEvent.click(trigger)
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: t("tools.mole.back") }))
+    goBack()
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: new RegExp(`^${t("tools.mole.appsHeading")}`) }))
+  })
+})
+
 describe("selected related-data removal", () => {
   it("keeps duplicate names distinct by full path and search", () => {
     mocks.state.apps.inventory!.apps = [app, { ...app, id: "a2", path: "/Users/test/Applications/Sample.app" }]
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
     expect(screen.getAllByRole("button", { name: /Sample.*삭제 검토/ })).toHaveLength(2)
     fireEvent.change(screen.getByRole("textbox", { name: t("tools.mole.searchApps") }), { target: { value: "/Users/test/Applications" } })
     expect(screen.getAllByRole("button", { name: /Sample.*삭제 검토/ })).toHaveLength(1)
@@ -145,6 +196,7 @@ describe("selected related-data removal", () => {
   })
   it("defaults all related data unchecked, shows exact paths/loss warnings, and sends only selected IDs", async () => {
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
     fireEvent.click(screen.getByRole("button", { name: /Sample.*삭제 검토/ }))
     const dialog = screen.getByRole("dialog")
     const checks = within(dialog).getAllByRole<HTMLInputElement>("checkbox")
@@ -168,6 +220,7 @@ describe("selected related-data removal", () => {
   })
   it("cancels without removing and returns focus to the app action", async () => {
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
     const trigger = screen.getByRole<HTMLButtonElement>("button", { name: /Sample.*삭제 검토/ })
     fireEvent.click(trigger)
     fireEvent.click(screen.getByRole("button", { name: t("tools.mole.cancel") }))
@@ -179,6 +232,7 @@ describe("selected related-data removal", () => {
   })
   it("returns focus to app search when reconciliation disables the original action", async () => {
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
     fireEvent.click(screen.getByRole("button", { name: /Sample.*삭제 검토/ }))
     act(() => publish({ selectedApp: null, preview: null, busy: "apps" }))
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: t("tools.mole.searchApps") })))
@@ -198,6 +252,7 @@ describe("selected related-data removal", () => {
     mocks.state.apps.stale = true
     mocks.state.removalResult = { items: [{ candidate_id: "bundle", kind: "app", path: app.path, status: "unknown", error: "mole_result_unknown", trash_path: null }], stopped_reason: "mole_result_unknown" }
     render(<MolePanel active t={t} />)
+    openPage(t("tools.mole.appsHeading"))
     expect(screen.getByRole<HTMLButtonElement>("button", { name: /Sample.*삭제 검토/ }).disabled).toBe(true)
     expect(screen.getByText(t("tools.mole.removePartial"))).toBeTruthy()
     expect(screen.queryByText(t("tools.mole.removeDone"))).toBeNull()
