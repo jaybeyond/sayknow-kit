@@ -2,25 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AppInventory, AppRemovalOutcome, AppRemovalPreview, MoleRun } from "./mole"
 const mocks = vi.hoisted(() => ({
   listen: vi.fn(), unlisten: vi.fn(), detect: vi.fn(), run: vi.fn(), list: vi.fn(),
-  preview: vi.fn(), cancel: vi.fn(), trash: vi.fn(), release: vi.fn(),
+  preview: vi.fn(), cancel: vi.fn(), trash: vi.fn(), release: vi.fn(), fda: vi.fn(),
 }))
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }))
 vi.mock("./idle-reload", () => ({ holdReload: () => mocks.release }))
 vi.mock("./mole", async (original) => ({
   ...await original<typeof import("./mole")>(), detectMole: mocks.detect, runMoleAction: mocks.run,
   listMoleApps: mocks.list, previewMoleAppRemoval: mocks.preview, cancelMoleAppRemoval: mocks.cancel,
-  trashMoleAppSelection: mocks.trash,
+  trashMoleAppSelection: mocks.trash, checkFullDiskAccess: mocks.fda,
 }))
 const inventory: AppInventory = { generation: "g1", apps: [
-  { id: "a1", name: "Sample", bundle_id: "org.test.sample", path: "/Applications/Sample.app", size_label: "1MB", source: "App", blocked_reason: null },
+  { id: "a1", name: "Sample", bundle_id: "org.test.sample", path: "/Applications/Sample.app", resolved_path: null, size_label: "1MB", source: "App", blocked_reason: null },
 ] }
 const preview = (): AppRemovalPreview => ({
   token: "p1", generation: "g1", expires_at_ms: Date.now() + 60_000,
-  app: { id: "bundle", kind: "app", path: inventory.apps[0].path, size_bytes: 1000 },
+  app: { id: "bundle", kind: "app", path: inventory.apps[0].path, size_bytes: 1000 }, shortcut: null,
   related: [
     { id: "data-a", kind: "cache", path: "/Users/test/Library/Caches/org.test.sample", size_bytes: 100 },
     { id: "data-b", kind: "preferences", path: "/Users/test/Library/Preferences/org.test.sample.plist", size_bytes: 50 },
-  ], excluded: [],
+  ], excluded: [], running: false, needs_admin: false,
 })
 const success = (action: string): MoleRun => ({
   ok: true, command: "mo", stderr: "",
@@ -46,6 +46,7 @@ beforeEach(() => {
   mocks.preview.mockImplementation(async () => preview())
   mocks.cancel.mockResolvedValue(undefined)
   mocks.trash.mockResolvedValue({ items: [], stopped_reason: null })
+  mocks.fda.mockResolvedValue(true)
 })
 afterEach(() => vi.useRealTimers())
 
@@ -138,7 +139,7 @@ describe("automatic read-only scan lifecycle", () => {
     })
     mocks.run.mockClear()
     await store.run("cache", "clean")
-    expect(mocks.run).toHaveBeenCalledExactlyOnceWith("clean")
+    expect(mocks.run.mock.calls.flat()).toEqual(["clean", "clean-preview"])
   })
   it("accepts recognizable preview rows with unknown sizes as a valid scan", async () => {
     const store = await loadStore()
@@ -152,7 +153,7 @@ describe("automatic read-only scan lifecycle", () => {
     expect(current.error).toBeNull()
     mocks.run.mockClear()
     await store.run("cache", "clean")
-    expect(mocks.run).toHaveBeenCalledExactlyOnceWith("clean")
+    expect(mocks.run.mock.calls.flat()).toEqual(["clean", "clean-preview"])
   })
   it("treats unsuccessful or malformed analyze output as failure without discarding the old inventory", async () => {
     const store = await loadStore()
@@ -179,6 +180,162 @@ describe("automatic read-only scan lifecycle", () => {
   })
 })
 
+describe("line progress lifecycle", () => {
+  describe.each([
+    { id: "cache" as const, action: "clean", previewAction: "clean-preview" },
+    { id: "tune" as const, action: "optimize", previewAction: "optimize-preview" },
+  ])("$action", ({ id, action, previewAction }) => {
+    // A successful clean is followed by a fresh scan; that path has its own test below.
+    it.each(id === "cache" ? ["failed outcome", "rejected invocation"] : ["success", "failed outcome", "rejected invocation"])("retains real lines after %s, ignores late events, and clears them for the next invocation", async (settlement) => {
+      const store = await loadStore()
+      await store.initialize()
+      const old = store.getSnapshot().sessions[id]
+      const pending = deferred<MoleRun>()
+      const callbacks: Array<(event: { payload: string }) => void> = []
+      mocks.listen.mockClear()
+      mocks.unlisten.mockClear()
+      mocks.run.mockClear()
+      mocks.listen.mockImplementation(async (_event, callback: (event: { payload: string }) => void) => { callbacks.push(callback); return mocks.unlisten })
+      mocks.run.mockReturnValueOnce(pending.promise)
+      const running = store.run(id, action)
+      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledExactlyOnceWith(action))
+      expect(mocks.listen).toHaveBeenCalledWith("mole:line", expect.any(Function))
+      expect(store.getSnapshot().sessions[id].progress).toEqual([])
+      callbacks[0]({ payload: "  \u001b[32mReading actual phase\u001b[0m  " })
+      for (const payload of ["", " \n\t", '{"items": []}', "[", '"json fragment"', "}"]) callbacks[0]({ payload })
+      expect(store.getSnapshot().sessions[id].progress).toEqual(["Reading actual phase"])
+      for (let i = 0; i < 45; i++) callbacks[0]({ payload: `\u001b[32mPhase ${i}\u001b[0m` })
+      const retained = Array.from({ length: 40 }, (_, i) => `Phase ${i + 5}`)
+      expect(store.getSnapshot().sessions[id].progress).toEqual(retained)
+      expect(store.getSnapshot().busy).toBe(id)
+      expect(store.getSnapshot().sessions[id].result).toBeNull()
+      expect(store.getSnapshot().sessions[id].maintenanceResult).toEqual([])
+      expect(store.getSnapshot().sessions[id].lastRunAt).toBeNull()
+      if (settlement === "rejected invocation") pending.reject(new Error("command rejected"))
+      else pending.resolve(settlement === "success" ? success(action) : { ...success(action), ok: false, stderr: "command failed" })
+      await running
+      const completed = store.getSnapshot().sessions[id]
+      expect(completed.progress).toEqual(retained)
+      expect(completed.items).toBe(old.items)
+      expect(completed.scanResult).toBe(old.scanResult)
+      expect(completed.maintenance).toBe(old.maintenance)
+      expect(completed.updatedAt).toBe(old.updatedAt)
+      expect(completed.stale).toBe(true)
+      expect(store.getSnapshot().busy).toBeNull()
+      expect(mocks.unlisten).toHaveBeenCalledOnce()
+      if (settlement === "success") {
+        expect(completed.error).toBeNull()
+        expect(completed.lastRunAt).not.toBeNull()
+        if (id === "cache") expect(completed.result?.bytes).toBe(1_000_000)
+        else expect(completed.maintenanceResult).toEqual([expect.objectContaining({ status: "completed" })])
+      } else {
+        expect(completed.error).toContain(settlement === "rejected invocation" ? "command rejected" : "command failed")
+        expect(completed.result).toBeNull()
+        expect(completed.maintenanceResult).toEqual([])
+        expect(completed.lastRunAt).toBeNull()
+      }
+      callbacks[0]({ payload: "late destructive callback" })
+      expect(store.getSnapshot().sessions[id].progress).toEqual(retained)
+      const nextPending = deferred<MoleRun>()
+      mocks.run.mockReturnValueOnce(nextPending.promise)
+      const next = store.run(id, previewAction)
+      await vi.waitFor(() => expect(callbacks).toHaveLength(2))
+      expect(store.getSnapshot().sessions[id].progress).toEqual([])
+      callbacks[0]({ payload: "old callback during next run" })
+      expect(store.getSnapshot().sessions[id].progress).toEqual([])
+      callbacks[1]({ payload: "Current preview phase" })
+      expect(store.getSnapshot().sessions[id].progress).toEqual(["Current preview phase"])
+      nextPending.resolve(success(previewAction))
+      await next
+      expect(store.getSnapshot().sessions[id].progress).toEqual([])
+      expect(mocks.unlisten).toHaveBeenCalledTimes(2)
+      callbacks[0]({ payload: "old callback after next run" })
+      callbacks[1]({ payload: "late preview callback" })
+      expect(store.getSnapshot().sessions[id].progress).toEqual([])
+      expect(store.getSnapshot().sessions[id].result).toBe(completed.result)
+      expect(store.getSnapshot().sessions[id].maintenanceResult).toBe(completed.maintenanceResult)
+    })
+  })
+  it("re-scans after a real clean, keeps what Mole deleted, and drops the stale estimate", async () => {
+    const store = await loadStore()
+    await store.initialize()
+    const pending = deferred<MoleRun>()
+    const scan = deferred<MoleRun>()
+    const callbacks: Array<(event: { payload: string }) => void> = []
+    mocks.run.mockClear()
+    mocks.listen.mockImplementation(async (_event, callback: (event: { payload: string }) => void) => { callbacks.push(callback); return mocks.unlisten })
+    mocks.run.mockReturnValueOnce(pending.promise).mockReturnValueOnce(scan.promise)
+    const running = store.run("cache", "clean")
+    await vi.waitFor(() => expect(callbacks).toHaveLength(1))
+    callbacks[0]({ payload: "➤ User essentials" })
+    pending.resolve({ ...success("clean"), stdout: [
+      "➤ User essentials", "  ✓ User app cache 64 items, 851.3MB", "  ✓ Trash · already empty", "  ✓ Whitelist: 3 core patterns active",
+      "➤ Developer tools", "  ✓ Go build cache, 369.5MB", "  ✓ npm cache · skipped (whitelist)", "  ✓ Homebrew · removed 3, skipped 2 protected",
+      "Space freed: 1.22GB | Items cleaned: 66 | Categories: 2",
+    ].join("\n") })
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2))
+    const between = store.getSnapshot().sessions.cache
+    expect(between.scanResult).toBeNull()
+    expect(between.items).toEqual([])
+    // The follow-up scan reports its own phases; the clean's log moved to runLog.
+    expect(between.progress).toEqual([])
+    expect(between.runLog).toContain("➤ Developer tools")
+    expect(store.getSnapshot()).toMatchObject({ busy: "cache", refreshing: true })
+    scan.resolve({ ...success("clean-preview"), stdout: "➤ User essentials\n→ User app cache 1 items, 40KB dry\nPotential space: 40KB | Items: 1" })
+    await running
+    const after = store.getSnapshot().sessions.cache
+    expect(mocks.run.mock.calls.flat()).toEqual(["clean", "clean-preview"])
+    expect(after.result).toEqual({ mode: "clean", bytes: 1_220_000_000, items: 66, partial: false })
+    expect(after.cleaned.map((row) => [row.name, row.bytes])).toEqual([["User app cache", 851_300_000], ["Go build cache", 369_500_000], ["Homebrew", null]])
+    expect(after.runLog).toContain("Space freed: 1.22GB | Items cleaned: 66 | Categories: 2")
+    expect(after.scanResult?.bytes).toBe(40_000)
+    expect(after).toMatchObject({ stale: false, error: null, progress: [] })
+    expect(store.getSnapshot()).toMatchObject({ busy: null, refreshing: false })
+  })
+  it("keeps a failed clean's error instead of hiding it behind a re-scan", async () => {
+    const store = await loadStore()
+    await store.initialize()
+    mocks.run.mockClear()
+    mocks.run.mockResolvedValueOnce({ ...success("clean"), ok: false, stderr: "command failed" })
+    await store.run("cache", "clean")
+    expect(mocks.run.mock.calls.flat()).toEqual(["clean"])
+    expect(store.getSnapshot().sessions.cache.error).toContain("command failed")
+    expect(store.getSnapshot().sessions.cache.scanResult?.bytes).toBe(2_000_000)
+  })
+  it("records whether Full Disk Access was granted during detection", async () => {
+    mocks.fda.mockResolvedValueOnce(false)
+    const store = await loadStore()
+    await store.initialize()
+    expect(store.getSnapshot().fullDiskAccess).toBe(false)
+  })
+  it.each([
+    { id: "disk" as const, action: "analyze" },
+    { id: "cache" as const, action: "clean-preview" },
+    { id: "tune" as const, action: "optimize-preview" },
+  ].flatMap((command) => ["success", "failed outcome", "rejected invocation"].map((settlement) => ({ ...command, settlement }))))("clears $action lines and detaches its callback after $settlement", async ({ id, action, settlement }) => {
+    const store = await loadStore()
+    await store.initialize()
+    const pending = deferred<MoleRun>()
+    const callbacks: Array<(event: { payload: string }) => void> = []
+    mocks.unlisten.mockClear()
+    mocks.run.mockClear()
+    mocks.listen.mockImplementation(async (_event, callback: (event: { payload: string }) => void) => { callbacks.push(callback); return mocks.unlisten })
+    mocks.run.mockReturnValueOnce(pending.promise)
+    const running = store.run(id, action)
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledExactlyOnceWith(action))
+    callbacks[0]({ payload: "Current read-only phase" })
+    expect(store.getSnapshot().sessions[id].progress).toEqual(["Current read-only phase"])
+    if (settlement === "rejected invocation") pending.reject(new Error("read-only command rejected"))
+    else pending.resolve(settlement === "success" ? success(action) : { ...success(action), ok: false, stderr: "read-only command failed" })
+    await running
+    expect(store.getSnapshot().sessions[id].error).toEqual(settlement === "success" ? null : expect.stringContaining(settlement === "rejected invocation" ? "read-only command rejected" : "read-only command failed"))
+    expect(store.getSnapshot().sessions[id].progress).toEqual([])
+    expect(mocks.unlisten).toHaveBeenCalledOnce()
+    callbacks[0]({ payload: "late read-only callback" })
+    expect(store.getSnapshot().sessions[id].progress).toEqual([])
+  })
+})
+
 describe("destructive admission and preview authorization", () => {
   it("rejects, rather than queues or coalesces, repeated writes while listener setup is pending", async () => {
     const store = await loadStore()
@@ -192,9 +349,10 @@ describe("destructive admission and preview authorization", () => {
     expect(mocks.run).not.toHaveBeenCalled()
     listener.resolve(mocks.unlisten)
     await first
-    expect(mocks.run.mock.calls.flat()).toEqual(["clean"])
+    expect(mocks.run.mock.calls.flat()).toEqual(["clean", "clean-preview"])
     expect(store.getSnapshot().sessions.cache.result?.bytes).toBe(1_000_000)
-    expect(store.getSnapshot().sessions.cache.stale).toBe(true)
+    expect(store.getSnapshot().sessions.cache.stale).toBe(false)
+    expect(store.getSnapshot().sessions.tune.stale).toBe(true)
     await store.refreshScans()
     expect(store.getSnapshot().sessions.cache.result?.bytes).toBe(1_000_000)
     expect(store.getSnapshot().sessions.cache.scanResult?.bytes).toBe(2_000_000)

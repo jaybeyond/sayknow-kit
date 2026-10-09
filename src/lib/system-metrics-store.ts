@@ -12,7 +12,7 @@ export type TemperatureMetric =
   | { state: "available"; celsius: number; sampled_at_ms: number; provenance: TemperatureProvenance; adapter_id: string }
   | { state: "unavailable"; reason: string }
 export type BatteryMetric =
-  | { state: "available"; percent: number; is_charging: boolean; adapter_name: string | null; max_capacity_percent: number | null; cycle_count: number | null; temperature_celsius: number | null }
+  | { state: "available"; percent: number; is_charging: boolean; external_connected: boolean; adapter_name: string | null; max_capacity_percent: number | null; cycle_count: number | null; temperature_celsius: number | null }
   | { state: "not_installed" }
   | { state: "unavailable"; reason: string }
 export type GpuMetric =
@@ -146,11 +146,12 @@ function decodeBattery(value: unknown): BatteryMetric {
   }
   if (
     value.state !== "available" ||
-    !exactKeys(value, ["state", "percent", "is_charging", "adapter_name", "max_capacity_percent", "cycle_count", "temperature_celsius"]) ||
+    !exactKeys(value, ["state", "percent", "is_charging", "external_connected", "adapter_name", "max_capacity_percent", "cycle_count", "temperature_celsius"]) ||
     !finiteNumber(value.percent) ||
     value.percent < 0 ||
     value.percent > 100 ||
     typeof value.is_charging !== "boolean" ||
+    typeof value.external_connected !== "boolean" ||
     !(value.adapter_name === null || typeof value.adapter_name === "string") ||
     !optionalPercent(value.max_capacity_percent) ||
     !optionalCount(value.cycle_count) ||
@@ -162,6 +163,7 @@ function decodeBattery(value: unknown): BatteryMetric {
     state: "available",
     percent: value.percent,
     is_charging: value.is_charging,
+    external_connected: value.external_connected,
     adapter_name: typeof value.adapter_name === "string" ? value.adapter_name : null,
     max_capacity_percent: asOptionalNumber(value.max_capacity_percent),
     cycle_count: typeof value.cycle_count === "number" ? value.cycle_count : null,

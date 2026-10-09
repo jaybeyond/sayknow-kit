@@ -59,8 +59,8 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 - 🧰 **Lives in Tools** — the usage cards sit in the Tools tab, right under screen brightness
 
 ### Tools
-- **In-app cleanup (macOS)** — requires Mole **1.38.1**, whose noninteractive/no-auth behavior has been checked. No external Terminal or login-shell startup is used. Cleanup and maintenance run one at a time with user-level access; administrator-only tasks are skipped. Other Mole versions are rejected until their no-auth behavior is checked. Preview does not delete cleanup targets, but Mole can write its preview report. Actual cleanup/maintenance still modifies user files and settings; header refresh only runs previews. On timeout or app exit, the app terminates its own process group, not unrelated Terminal sessions.
-- **App removal (macOS)** — lists apps through Mole and shows related data that matches each app's exact bundle ID (caches, preferences, saved state, WebKit, Application Support). Only the app and the related items you tick go to the Trash; none are ticked by default. Running, system and protected apps are refused, and nothing is permanently deleted.
+- **In-app cleanup (macOS)** — requires Mole **1.38.1**, whose noninteractive/no-auth behavior has been checked. No external Terminal or login-shell startup is used. **Clean up** and **History & settings cleanup** run one at a time with user-level access; administrator-only tasks are skipped. History & settings cleanup cleans download, notification and usage history, old app states and damaged settings, and rebuilds Finder and Dock caches and file associations. It does not quit running apps; only the Dock and Notification Center may restart. It checks memory pressure but does not run the administrator-only memory release (`purge`). Deleting the usage database WAL can lose records. Other Mole versions are rejected until their no-auth behavior is checked. Preview does not delete cleanup targets, but Mole can write its preview report. Actual cleanup still modifies user files and settings; header refresh only runs previews. After **Clean up** finishes, the items Mole reports as deleted and the space freed are shown first, and the list is scanned again. Caches that apps rebuild while running come back soon, and items Mole protects are not deleted. The Trash and other apps’ data can only be deleted when this app has Full Disk Access; without it, a notice with a button to the settings is shown (restart the app after granting it). On timeout or app exit, the app terminates its own process group, not unrelated Terminal sessions.
+- **App removal (macOS)** — **Remove…** opens a confirmation; it does not delete immediately. Mole lists the apps and related data that matches each app's exact bundle ID. Related items are unchecked by default. Direct `/Applications` and `~/Applications` installations are checked, as are one-hop absolute shortcuts from those locations to `/Volumes/<mount>/APPS/<name>.app` on a writable local APFS volume. The confirmation shows the shortcut and real bundle separately. The shortcut moves first, then the bundle, then only the related items you tick. Results are reported per item: a moved shortcut does not mean the app was removed, and an unknown result is not success. Like Mole, a running app is quit before it is moved, an administrator-owned app in `/Applications` asks for the macOS administrator password, and an app the direct move cannot take is retried through Finder. This app itself, macOS system apps, and protected, changed or unverifiable targets are refused. If a live process's relationship to the target cannot be verified, removal stays blocked and its PID is shown; quit the owning app normally and scan again. There is no automatic retry, rollback or permanent-delete fallback.
 - 📶 **Internet speed test (macOS 12+)** — measures download, upload and idle latency against Apple's test servers with the built-in `networkQuality`. It only runs when you press Start test, sits in Tools › Status, shows download and upload speed live on two dials during the roughly 20-second run, uses a few hundred MB of data, and can be cancelled.
 - 🌞 **Screen brightness (macOS-specific)** — hardware-level control for connected displays: DDC/CI for externals (HDMI/DisplayPort/USB-C), IOKit backlight for built-in Mac panels where available. On newer supported Macs where direct IOKit access is unavailable, it uses Control Center accessibility automation. External DDC capabilities vary by hardware; both built-in paths are macOS-only.
 - 🔌 **Display power (macOS-specific)** — Lunar-style BlackOut: disconnect the external from WindowServer so macOS stops driving it (USB/charging stay alive). Not mirroring. DDC panels also get backlight and contrast pulled to 0 first. DDC standby is not used; some panels take it into a sleep this app cannot reverse.
@@ -97,11 +97,11 @@ Three providers, one window: **OpenRouter BYOK** (Bring Your Own Key, 360+ model
 
 ## Install
 
-### v0.3.12 prebuilt installers (recommended)
+### v0.3.13 prebuilt installers (recommended)
 
 Download only from the [official GitHub Release](https://github.com/jaybeyond/sayknow-kit/releases), and verify the matching file in `SHA256SUMS.txt`.
 
-**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.12_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.12 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
+**macOS (Apple Silicon):** Download `SayKnow-Kit_0.3.13_aarch64.dmg`, open it, and drag `SayKnow Kit.app` into `/Applications`. The v0.3.13 app has an **ad-hoc signature only**—no Developer ID or notarization—so Gatekeeper warnings are expected. macOS 13 and newer no longer accept the right-click bypass: open the app once, then go to **System Settings → Privacy & Security → Open Anyway**. Or clear the quarantine flag yourself:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/SayKnow Kit.app"
@@ -115,7 +115,7 @@ tccutil reset Accessibility com.sayknow.app
 
 Always move the app to `/Applications` first. Launched from the DMG or Downloads, macOS runs it from a randomized read-only copy where Accessibility permission for built-in brightness can never be stored.
 
-**Windows (x64):** Download `SayKnow-Kit_0.3.12_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.12_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
+**Windows (x64):** Download `SayKnow-Kit_0.3.13_x64-setup.exe` (NSIS) or `SayKnow-Kit_0.3.13_x64_en-US.msi`, run it, and follow the prompts. The installers are **unsigned**; Windows SmartScreen warnings are expected. Choose **More info → Run anyway** only after checking the official Release and `SHA256SUMS.txt`.
 
 ### Uninstall
 
@@ -191,7 +191,7 @@ Your OpenRouter key is a **billable credential**, so SayKnow Kit never stores it
 - macOS **Keychain** (`com.sayknow.app`)
 - Windows **Credential Manager**
 
-Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.12 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
+Download installers only from the official GitHub Release and verify `SHA256SUMS.txt`. The v0.3.13 macOS app is ad-hoc signed without Developer ID or notarization; Windows installers are unsigned without Authenticode. Gatekeeper and SmartScreen warnings are expected.
 
 ## Development
 

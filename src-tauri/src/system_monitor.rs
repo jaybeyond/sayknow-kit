@@ -228,11 +228,15 @@ fn level(kind: AlertKind, latest: &MetricsSnapshot, history: &[HistoryPoint]) ->
             BatteryStatus::Available {
                 percent,
                 is_charging,
+                external_connected,
                 ..
             } => {
-                if !is_charging && percent <= 15.0 {
+                // On the adapter the battery is not draining even when macOS
+                // holds it without charging, so "plug in a charger" is wrong.
+                let on_power = is_charging || external_connected;
+                if !on_power && percent <= 15.0 {
                     Level::Over(format!("{percent:.0}%"))
-                } else if is_charging || percent > 20.0 {
+                } else if on_power || percent > 20.0 {
                     Level::Under
                 } else {
                     Level::Between
@@ -505,6 +509,7 @@ mod tests {
         snapshot.battery = BatteryStatus::Available {
             percent: 12.0,
             is_charging: false,
+            external_connected: false,
             adapter_name: None,
             max_capacity_percent: None,
             cycle_count: None,
@@ -515,7 +520,20 @@ mod tests {
         snapshot.battery = BatteryStatus::Available {
             percent: 12.0,
             is_charging: true,
+            external_connected: true,
             adapter_name: None,
+            max_capacity_percent: None,
+            cycle_count: None,
+            temperature_celsius: None,
+        };
+        assert_eq!(level(AlertKind::Battery, &snapshot, &[]), Level::Under);
+        // On the adapter but held without charging (optimised charging, or a
+        // charge limit): still not draining, so still no alert.
+        snapshot.battery = BatteryStatus::Available {
+            percent: 12.0,
+            is_charging: false,
+            external_connected: true,
+            adapter_name: Some("140W USB-C Power Adapter".into()),
             max_capacity_percent: None,
             cycle_count: None,
             temperature_celsius: None,

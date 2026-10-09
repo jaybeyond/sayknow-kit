@@ -9,6 +9,9 @@ pub enum BatteryReading {
     Installed {
         percent: f32,
         is_charging: bool,
+        /// Wall power is attached. Separate from `is_charging`: macOS holds a
+        /// full or optimised battery on the adapter without charging it.
+        external_connected: bool,
         adapter_name: Option<String>,
         max_capacity_percent: Option<f32>,
         cycle_count: Option<u32>,
@@ -68,7 +71,8 @@ pub fn read_battery() -> Option<BatteryReading> {
 
     let percent = percent?;
     let is_charging = int_value(&dict, "IsCharging").unwrap_or(0) == 1;
-    let adapter_name = if int_value(&dict, "ExternalConnected").unwrap_or(0) == 1 {
+    let external_connected = int_value(&dict, "ExternalConnected").unwrap_or(0) == 1;
+    let adapter_name = if external_connected {
         dict_value(&dict, "AdapterDetails").and_then(|adapter| {
             string_value(&adapter, "Name").or_else(|| {
                 int_value(&adapter, "Watts").filter(|w| *w > 0).map(|w| format!("{w}W"))
@@ -82,6 +86,7 @@ pub fn read_battery() -> Option<BatteryReading> {
     Some(BatteryReading::Installed {
         percent,
         is_charging,
+        external_connected,
         adapter_name,
         max_capacity_percent,
         cycle_count,
@@ -98,8 +103,15 @@ mod tests {
         match read_battery() {
             None => eprintln!("live battery: iokit unavailable"),
             Some(BatteryReading::NotInstalled) => eprintln!("live battery: not installed"),
-            Some(BatteryReading::Installed { percent, is_charging, .. }) => {
-                eprintln!("live battery: {percent:.1}% charging={is_charging}");
+            Some(BatteryReading::Installed {
+                percent,
+                is_charging,
+                external_connected,
+                ..
+            }) => {
+                eprintln!(
+                    "live battery: {percent:.1}% charging={is_charging} external={external_connected}"
+                );
                 assert!((0.0..=100.0).contains(&percent));
             }
         }

@@ -231,8 +231,8 @@ export function SpeedTestPanel({ t }: { t: T }) {
           {!running &&
             rows.map(([label, value]) => (
               <div key={label} className="flex items-baseline justify-between gap-2 py-0.5 text-xs">
-                <span className="text-muted-foreground">{label}</span>
-                <span className="min-w-0 break-all text-right font-medium tabular-nums select-text">
+                <span className="shrink-0 text-muted-foreground">{label}</span>
+                <span className="min-w-0 text-right font-medium tabular-nums select-text [overflow-wrap:anywhere]">
                   {value ?? t("tools.speed.unknown")}
                 </span>
               </div>

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
-  cancelMoleAppRemoval, listMoleApps, parseAnalyze, parseCleanPreview, parseHistory,
-  parseMaintenance, parseResult, parseSizeToBytes, previewMoleAppRemoval, stripAnsi,
-  trashMoleAppSelection,
+  cancelMoleAppRemoval, checkFullDiskAccess, cleanRunLog, listMoleApps, openFullDiskAccessSettings, parseAnalyze,
+  parseCleanPreview, parseCleanRun, parseHistory, parseMaintenance, parseResult, parseSizeToBytes,
+  previewMoleAppRemoval, stripAnsi, trashMoleAppSelection,
 } from "./mole"
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
@@ -106,6 +106,36 @@ describe("Mole output semantics", () => {
   })
   it("preserves the existing history reader", () => {
     expect(parseHistory({ sessions: [{ command: "clean", started_at: "2026-09-21", items: 12, size: "1.2GB", actions: { removed: 10, trashed: 2 } }] })[0].removed).toBe(10)
+  })
+  it("lists only rows Mole reported as deleted in a real clean", () => {
+    const run = [
+      "\u001b[0;32m✓\u001b[0m Admin access already available", "✓ Protected items found",
+      "➤ User essentials", "  ✓ User app cache 64 items, 851.3MB", "  ✓ Trash · already empty", "  ✓ Nothing to clean",
+      "  ✓ Whitelist: 3 core patterns active", "  → Old download 1.0MB dry",
+      "➤ Developer tools", "  ✓ Go build cache, 369.5MB", "  ✓ npm cache · skipped (whitelist)", "  ✓ Homebrew · removed 3, skipped 2 protected",
+      "Space freed: 1.22GB | Items cleaned: 66 | Categories: 2", "Free space now: 100GB",
+    ].join("\n")
+    expect(parseCleanRun(run).map(({ section, name, bytes }) => ({ section, name, bytes }))).toEqual([
+      { section: "User essentials", name: "User app cache", bytes: 851_300_000 },
+      { section: "Developer tools", name: "Go build cache", bytes: 369_500_000 },
+      { section: "Developer tools", name: "Homebrew", bytes: null },
+    ])
+    expect(new Set(parseCleanRun(`${run}\n➤ Developer tools\n  ✓ Go build cache, 1MB`).map((row) => row.id)).size).toBe(4)
+    expect(parseCleanRun(preview)).toEqual([])
+    expect(parseResult(run, "clean")).toEqual({ mode: "clean", bytes: 1_220_000_000, items: 66, partial: false })
+    expect(parseResult("➤ User essentials\n  ✓ Nothing to clean\nSystem was already clean, no additional space freed", "clean")?.bytes).toBe(0)
+  })
+  it("keeps Mole's own run lines and drops terminal residue from the log", () => {
+    const log = cleanRunLog("\u001b[2K⠋ Scanning caches\n➤ User essentials\n  ✓ User app cache, 1MB\nrandom noise\nSpace freed: 1MB | Items cleaned: 1")
+    expect(log).toEqual(["➤ User essentials", "✓ User app cache, 1MB", "Space freed: 1MB | Items cleaned: 1"])
+    expect(cleanRunLog(Array.from({ length: 400 }, (_, i) => `✓ row ${i}`).join("\n"))).toHaveLength(300)
+  })
+  it("asks the native side about Full Disk Access only inside the app", async () => {
+    expect(await checkFullDiskAccess()).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+    invoke.mockResolvedValueOnce(undefined)
+    await openFullDiskAccessSettings()
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("open_full_disk_access_settings")
   })
 })
 

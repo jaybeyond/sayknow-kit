@@ -167,11 +167,27 @@ export function UsagePanel({ settings, active }: Props) {
           <Gauge className="h-3.5 w-3.5" />
           {t("usage.heading")}
         </div>
-        {refreshButton}
+        <div className="flex min-w-0 items-center gap-1">
+          {/* How fresh the numbers are, so a stale screen can be told from a quiet day.
+              The spinning refresh icon shows a scan in flight; the time stays put. */}
+          {scannedAt !== null && (
+            <span className="truncate text-[10px] tabular-nums text-muted-foreground">
+              {t("usage.updated").replace("{time}", formatClock(scannedAt))}
+            </span>
+          )}
+          {refreshButton}
+        </div>
       </div>
       {body}
     </section>
   )
+}
+
+/** Local wall-clock time of a scan, to the second: scans can be seconds apart. */
+function formatClock(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 /** DeepL's character quota. The one number on this panel that is actually

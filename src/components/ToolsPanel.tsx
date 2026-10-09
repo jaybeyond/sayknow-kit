@@ -16,6 +16,7 @@ import { Slider } from "@/components/ui/slider"
 import type { Settings } from "@/hooks/useSettings"
 import { useT } from "@/i18n"
 import { getSnapshot as getMoleSnapshot, refreshScans, subscribe as subscribeMole } from "@/lib/mole-store"
+import { scanAgentUsage } from "@/lib/agent-usage-store"
 import { isTauri } from "@/lib/runtime"
 import {
   getSnapshot,
@@ -91,11 +92,13 @@ export function ToolsPanel({ settings, active }: Props) {
     try {
       const jobs: Promise<unknown>[] = [scanDisplays(true), refreshMetrics()]
       if (tab === "mole") jobs.push(refreshScans())
+      // The header refresh is the one users reach for; on this tab it must read the logs again.
+      if (tab === "usage") jobs.push(scanAgentUsage(true, settings.deeplKey))
       await Promise.all(jobs)
     } finally {
       setRefreshing(false)
     }
-  }, [tab])
+  }, [tab, settings.deeplKey])
 
   // DDC reads take tens of ms per display, so only scan while visible. The
   // effect is a pure trigger; state lands in the store.
@@ -249,13 +252,13 @@ export function ToolsPanel({ settings, active }: Props) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
-        {/* Four tabs share ~430px. Equal columns clipped "Token usage" in es/de,
-            so each column takes what its label needs and short labels give the
-            rest to long ones; truncation still guards the extreme. */}
+        {/* A segmented control: each tab starts at its label's width and the
+            spare room is shared equally, so gaps stay even in every locale and
+            "Token usage" in es/de still fits; truncation guards the extreme. */}
         <div
           ref={toolTabsRef}
           aria-label={t("tools.tabs.label")}
-          className="relative grid min-w-0 flex-1 grid-cols-[repeat(4,minmax(0,auto))] justify-between gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
+          className="relative flex min-w-0 flex-1 gap-0.5 rounded-lg bg-black/10 p-0.5 dark:bg-white/10"
           role="tablist"
         >
           <span
@@ -296,7 +299,8 @@ export function ToolsPanel({ settings, active }: Props) {
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2.5">
+      {/* Cleanup owns its page bar and scroll area, so its bar stays attached under these tabs. */}
+      {tab === "mole" ? <MolePanel t={t} active={active} /> : <div className="min-h-0 flex-1 overflow-y-auto p-2.5" data-tools-scroll>
         {tab === "status" && (
           <div className="space-y-2">
             <SystemMetricsSection state={metrics} t={t} />
@@ -369,8 +373,7 @@ export function ToolsPanel({ settings, active }: Props) {
         )}
 
         {tab === "usage" && <UsagePanel settings={settings} active={active} />}
-        {tab === "mole" && <MolePanel t={t} active={active} />}
-      </div>
+      </div>}
     </div>
   )
 }
@@ -392,7 +395,7 @@ function ToolTabButton({
       className={cn(
         // A longer label in some locale must not wrap out of the 28px pill.
         // The active background is the sliding pill behind the tabs.
-        "relative z-[1] h-7 min-w-0 truncate rounded-md px-1.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98]",
+        "relative z-[1] h-7 min-w-0 flex-auto truncate rounded-md px-1.5 text-[11px] font-medium transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.98]",
         active ? "text-foreground" : "text-foreground/70 hover:bg-background/60 hover:text-foreground",
       )}
       onClick={onClick}
@@ -478,8 +481,8 @@ function AccessibilityNotice({
 function metricLine(label: string, value: string) {
   return (
     <div key={label} className="flex items-baseline justify-between gap-2 text-[11px]">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium tabular-nums">{value}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-right font-medium tabular-nums [overflow-wrap:anywhere]">{value}</span>
     </div>
   )
 }
@@ -517,13 +520,16 @@ function temperatureLines(metric: TemperatureMetric, label: (kind: string) => st
 function batteryLines(metric: BatteryMetric, label: (kind: string) => string): [string, string][] {
   if (metric.state === "not_installed") return [[label("battery"), label("notInstalled")]]
   if (metric.state === "unavailable") return [[label("battery"), label("unavailable")]]
-  const powerSource = metric.adapter_name
-    ? metric.is_charging
-      ? metric.adapter_name
-      : `${label("notCharging")} · ${metric.adapter_name}`
-    : metric.is_charging
-      ? label("charging")
-      : label("notCharging")
+  // Wall power and charging are separate: macOS holds a full or optimised
+  // battery on the adapter without charging it, which is not "on battery".
+  const state = metric.is_charging
+    ? label("charging")
+    : metric.external_connected
+      ? label("pluggedIn")
+      : label("onBattery")
+  const powerSource = metric.adapter_name && (metric.is_charging || metric.external_connected)
+    ? `${state} · ${metric.adapter_name}`
+    : state
   const lines: [string, string][] = [
     [label("battery"), formatPercent(metric.percent)],
     [label("powerSource"), powerSource],

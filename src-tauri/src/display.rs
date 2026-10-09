@@ -2801,10 +2801,11 @@ pub fn accessibility_status() -> AccessibilityStatus {
         static LOGGED: std::sync::Once = std::sync::Once::new();
         LOGGED.call_once(|| {
             log::info!(
-                "accessibility: trusted={} translocated={} adhoc={} exe={:?}",
+                "accessibility: trusted={} translocated={} adhoc={} {} exe={:?}",
                 status.trusted,
                 status.translocated,
                 status.adhoc,
+                crate::accessibility_backlight::describe_layout(),
                 std::env::current_exe().ok(),
             );
         });

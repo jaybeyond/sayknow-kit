@@ -1,9 +1,9 @@
 import {
-  cancelMoleAppRemoval, detectMole, listMoleApps, parseAnalyze, parseCleanPreview,
-  parseMaintenance, parseResult, previewMoleAppRemoval, runMoleAction, stripAnsi,
-  trashMoleAppSelection,
+  cancelMoleAppRemoval, checkFullDiskAccess, cleanRunLog, detectMole, listMoleApps, parseAnalyze,
+  parseCleanPreview, parseCleanRun, parseMaintenance, parseResult, previewMoleAppRemoval, runMoleAction,
+  stripAnsi, trashMoleAppSelection,
   type AppInventory, type AppRemovalOutcome, type AppRemovalPreview, type AppSummary,
-  type CleanPreviewItem, type MaintenanceTask, type MoleAnalyze, type MoleInfo, type MoleResult,
+  type CleanedItem, type CleanPreviewItem, type MaintenanceTask, type MoleAnalyze, type MoleInfo, type MoleResult,
 } from "./mole"
 import { holdReload } from "./idle-reload"
 
@@ -15,6 +15,9 @@ export type SessionState = {
   maintenance: MaintenanceTask[]
   scanResult: MoleResult | null
   result: MoleResult | null
+  /** Rows Mole reported as deleted by the last real clean, and that run's own log. */
+  cleaned: CleanedItem[]
+  runLog: string[]
   maintenanceResult: MaintenanceTask[]
   error: string | null
   updatedAt: number | null
@@ -24,6 +27,8 @@ export type SessionState = {
 export type MoleStore = {
   info: MoleInfo | null | "loading"
   detectionError: string | null
+  /** Mole inherits this app's Full Disk Access; null when it could not be determined. */
+  fullDiskAccess: boolean | null
   initialized: boolean
   refreshing: boolean
   sessions: Record<SessionId, SessionState>
@@ -37,10 +42,10 @@ export type MoleStore = {
 }
 const emptySession = (): SessionState => ({
   progress: [], items: [], analyze: null, maintenance: [], scanResult: null,
-  result: null, maintenanceResult: [], error: null, updatedAt: null, lastRunAt: null, stale: false,
+  result: null, cleaned: [], runLog: [], maintenanceResult: [], error: null, updatedAt: null, lastRunAt: null, stale: false,
 })
 let state: MoleStore = {
-  info: "loading", detectionError: null, initialized: false, refreshing: false,
+  info: "loading", detectionError: null, fullDiskAccess: null, initialized: false, refreshing: false,
   sessions: { disk: emptySession(), cache: emptySession(), tune: emptySession() },
   apps: { inventory: null, error: null, updatedAt: null, stale: false },
   busy: null, selectedApp: null, preview: null, previewError: null, removalResult: null, removalError: null,
@@ -134,7 +139,10 @@ async function executeRun(id: SessionId, action: string) {
         const scanResult = parseResult(text, "preview")
         if (!scanResult) throw new Error("mole_inventory_invalid")
         patchSession(id, { items: parseCleanPreview(text), scanResult })
-      } else patchSession(id, { result: parseResult(text, "clean"), lastRunAt: Date.now() })
+      } else {
+        // The pre-clean estimate no longer describes the disk; the follow-up scan replaces it.
+        patchSession(id, { result: parseResult(text, "clean"), cleaned: parseCleanRun(text), runLog: cleanRunLog(text), items: [], scanResult: null, updatedAt: null, lastRunAt: Date.now() })
+      }
     } else if (id === "tune") {
       const maintenance = parseMaintenance(text, preview)
       if (!maintenance.length) throw new Error("mole_inventory_invalid")
@@ -147,7 +155,7 @@ async function executeRun(id: SessionId, action: string) {
   } finally {
     acceptingLines = false
     unlisten?.()
-    patchSession(id, { progress: [] })
+    if (preview) patchSession(id, { progress: [] })
   }
 }
 async function scanApps() {
@@ -170,6 +178,7 @@ async function scanAll() {
     set({ detectionError: String(error) })
     return
   }
+  set({ fullDiskAccess: await checkFullDiskAccess().catch(() => null) })
   if (!supported()) return
   await executeRun("disk", "analyze")
   await executeRun("cache", "clean-preview")
@@ -191,6 +200,12 @@ export function run(id: SessionId, action: string): Promise<void> {
     await discardPreview()
     if (destructive) markStale()
     await executeRun(id, action)
+    // The list must describe the disk after the clean, not the preview taken before it.
+    // A failed clean keeps its error on screen instead of being replaced by a scan.
+    if (action === "clean" && !state.sessions.cache.error) {
+      set({ refreshing: true })
+      await executeRun("cache", "clean-preview")
+    }
   })
 }
 export function openAppRemoval(app: AppSummary): Promise<void> {

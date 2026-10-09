@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SayKnow Kit",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "identifier": "com.sayknow.app",
   "build": {
     "frontendDist": "../dist",
@@ -28,6 +28,7 @@
         "skipTaskbar": true,
         "visible": false,
         "focus": true,
+        "acceptFirstMouse": true,
         "shadow": true
       }
     ],

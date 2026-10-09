@@ -1054,7 +1054,9 @@ function ApiKeyRow({
 
   return (
     <Row label={label}>
-      <div className="w-full max-w-[400px]">
+      {/* A set width: sized by content, the localized hint below widened the
+          field until the provider name beside it broke over two lines. */}
+      <div className="w-64">
         <div className="relative">
           <Input
             id="settings-api-key"
@@ -1077,7 +1079,7 @@ function ApiKeyRow({
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
-        <p className="mt-1 text-[11px] text-muted-foreground">
+        <p className="mt-1 text-[11px] break-keep text-muted-foreground">
           {t("settings.connection.apiKeyShown")}
         </p>
       </div>

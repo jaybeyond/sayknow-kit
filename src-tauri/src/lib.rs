@@ -2337,6 +2337,8 @@ pub fn run() {
             system_metrics::get_top_processes,
             mole::detect_mole,
             mole::run_mole_action,
+            mole::mole_full_disk_access,
+            mole::open_full_disk_access_settings,
             mole::removal::list_mole_apps,
             mole::removal::preview_mole_app_removal,
             mole::removal::cancel_mole_app_removal,
@@ -3040,5 +3042,21 @@ mod capability_tests {
             urls.contains(&"http://localhost:**") && urls.contains(&"http://127.0.0.1:**"),
             "local model servers and OAuth callbacks still need loopback http"
         );
+    }
+
+    /// The popover stays up while the user works in another app (pinned, or
+    /// shown again without focus). Without this, the first click on a tab or
+    /// button only activates the window and the user has to click again.
+    #[test]
+    fn popover_takes_the_first_click_while_inactive() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json is valid JSON");
+        let main = conf["app"]["windows"]
+            .as_array()
+            .expect("windows is a list")
+            .iter()
+            .find(|w| w["label"] == "main")
+            .expect("the popover window is declared");
+        assert_eq!(main["acceptFirstMouse"], serde_json::Value::Bool(true));
     }
 }

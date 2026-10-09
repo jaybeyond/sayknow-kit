@@ -13,7 +13,8 @@ const REQUIRED_METRIC_KEYS = [
   "tools.metrics.temperature",
   "tools.metrics.battery",
   "tools.metrics.charging",
-  "tools.metrics.notCharging",
+  "tools.metrics.onBattery",
+  "tools.metrics.pluggedIn",
   "tools.metrics.notInstalled",
   "tools.metrics.powerSource",
   "tools.metrics.maxCapacity",
@@ -148,6 +149,15 @@ const REQUIRED_MOLE_KEYS = [
   "unsupported",
   "failed",
   "running",
+  "cleanResult",
+  "cleanedCount",
+  "cleanedNone",
+  "cleanedAll",
+  "afterClean",
+  "fdaMissing",
+  "fdaOpen",
+  "fdaRestart",
+  "progress",
   "scanning",
   "waiting",
   "empty",
@@ -187,9 +197,13 @@ const REQUIRED_MOLE_KEYS = [
   "noApps",
   "reviewApp",
   "removeHeading",
+  "resolvedPath",
+  "shortcutNotice",
   "relatedHint",
   "noneRelated",
   "dataWarning",
+  "runningNotice",
+  "adminNoticeRemoval",
   "scopeWarning",
   "previewExpired",
   "removeSelected",
@@ -204,7 +218,7 @@ const REQUIRED_MOLE_KEYS = [
   ...["preview", "completed", "unchanged", "skipped", "admin_skipped", "manual", "failed", "unknown", "moved", "not_attempted"].map(
     (status) => `status.${status}`,
   ),
-  ...["app", "cache", "preferences", "saved_state", "webkit", "http_storage", "support", "container"].map(
+  ...["app", "shortcut", "cache", "preferences", "saved_state", "webkit", "http_storage", "support", "container"].map(
     (kind) => `kind.${kind}`,
   ),
   ...[
@@ -217,6 +231,7 @@ const REQUIRED_MOLE_KEYS = [
     "invalid_selection",
     "app_changed",
     "app_running",
+    "app_running_unverified",
     "self_app",
     "protected_app",
     "path_unsupported",
@@ -278,7 +293,7 @@ const REQUIRED_MOLE_KEYS = [
 describe("Mac cleanup translations", () => {
   it("has exactly the approved keys in all eight product locales, without obsolete aliases", () => {
     expect([...UI_LOCALES].sort()).toEqual(["de", "en", "es", "fr", "ja", "ko", "vi", "zh"])
-    expect(REQUIRED_MOLE_KEYS).toHaveLength(163)
+    expect(REQUIRED_MOLE_KEYS).toHaveLength(178)
     for (const locale of UI_LOCALES) {
       const keys = Object.keys(UI_STRINGS[locale]).filter((key) => key.startsWith("tools.mole."))
       expect(keys.sort(), locale).toEqual([...REQUIRED_MOLE_KEYS].sort())
@@ -291,6 +306,8 @@ describe("Mac cleanup translations", () => {
       "tools.mole.updated": ["{time}"],
       "tools.mole.removeHeading": ["{name}"],
       "tools.mole.selectionCount": ["{count}"],
+      "tools.mole.cleanedCount": ["{count}"],
+      "tools.mole.error.mole_app_running_unverified": ["{pid}"],
     }
     for (const locale of UI_LOCALES) {
       for (const key of REQUIRED_MOLE_KEYS) {
@@ -347,38 +364,62 @@ describe("Mac cleanup translations", () => {
     }
   })
 
-  it("preserves the frozen Korean delta exactly", () => {
+  it("preserves the reviewed Korean safety wording exactly", () => {
     const expected = {
+      "tools.mole.session.tune": "기록·설정 정리",
+      "tools.mole.session.tuneHint": "다운로드·알림·사용 기록과 오래된 앱 상태, 손상된 설정을 정리하고 Finder·Dock 캐시와 파일 연결 정보를 새로 만듭니다. 실행 중인 앱을 종료하거나 메모리를 비우지 않습니다.",
+      "tools.mole.optimizeNow": "기록·설정 정리…",
+      "tools.mole.optimizeConfirm": "Mole의 전체 기록·설정 정리를 실행할까요?",
       "tools.mole.selectedSize": "선택한 항목의 크기",
       "tools.mole.includesUnknown": "일부 크기 미확인 · 확인된 크기만 합산",
       "tools.mole.status.admin_skipped": "관리자 권한 작업 제외",
       "tools.mole.status.manual": "직접 확인 필요",
-      "tools.mole.optimizeWarning": "Dock이 재시작될 수 있고, 네트워크·USB 저장장치의 Finder 설정과 일부 데이터베이스가 변경됩니다. 네트워크·Bluetooth 갱신은 연결을 잠시 끊을 수 있는 작업입니다. 관리자 권한 작업은 건너뛰며, 개별 작업 선택 실행은 아닙니다.",
+      "tools.mole.optimizeWarning": "오래된 앱 상태·손상된 설정·다운로드·알림·사용 기록이 삭제될 수 있으며, 일부 데이터베이스와 네트워크·USB 저장장치의 Finder 설정이 변경됩니다. Dock·알림 센터가 재시작될 수 있습니다. 사용 기록 DB의 WAL 삭제로 기록이 손실될 수 있습니다. 메모리 해제와 네트워크·Bluetooth 재시작 등 관리자 작업은 실행하지 않으며, 개별 작업 선택 실행은 아닙니다.",
     }
     for (const [key, value] of Object.entries(expected)) {
       expect(UI_STRINGS.ko[key], key).toBe(value)
     }
   })
 
-  it("explains partial size totals, excluded administrator tasks, and transient disconnections in every locale", () => {
+  it("explains partial totals, excluded administrator tasks and history loss in every locale", () => {
     const safetyCopy = {
-      ko: ["일부 크기 미확인", "확인된 크기만 합산", "관리자 권한 작업 제외", "직접 확인 필요", "네트워크·Bluetooth 갱신은 연결을 잠시 끊을 수 있는 작업입니다"],
-      en: ["Some sizes unknown", "Only known sizes are totaled", "Administrator tasks excluded", "Manual review required", "Refreshing network and Bluetooth connections may briefly disconnect them"],
-      ja: ["一部のサイズが未確認", "確認済みのサイズのみ合計", "管理者権限が必要な作業を除外", "手動での確認が必要", "ネットワーク・Bluetoothの更新で接続が一時的に切れる場合があります"],
-      zh: ["部分大小未知", "仅合计已确认的大小", "已排除需管理员权限的操作", "需手动检查", "刷新网络和 Bluetooth 连接可能导致连接短暂中断"],
-      es: ["Algunos tamaños desconocidos", "Solo se suman los tamaños conocidos", "Tareas de administrador excluidas", "Revisión manual necesaria", "Actualizar las conexiones de red y Bluetooth puede interrumpirlas brevemente"],
-      fr: ["Certaines tailles inconnues", "Seules les tailles connues sont additionnées", "Tâches d’administration exclues", "Vérification manuelle nécessaire", "L’actualisation des connexions réseau et Bluetooth peut les interrompre brièvement"],
-      de: ["Einige Größen unbekannt", "Nur bekannte Größen werden addiert", "Aufgaben mit Administratorrechten ausgeschlossen", "Manuelle Prüfung erforderlich", "Das Aktualisieren der Netzwerk- und Bluetooth-Verbindungen kann diese kurzzeitig unterbrechen"],
-      vi: ["Một số kích thước chưa rõ", "Chỉ cộng các kích thước đã xác định", "Đã loại trừ tác vụ cần quyền quản trị viên", "Cần kiểm tra thủ công", "Làm mới kết nối mạng và Bluetooth có thể khiến kết nối tạm thời bị ngắt"],
+      ko: ["일부 크기 미확인", "확인된 크기만 합산", "관리자 권한 작업 제외", "직접 확인 필요", "관리자 작업은 실행하지 않으며"],
+      en: ["Some sizes unknown", "Only known sizes are totaled", "Administrator tasks excluded", "Manual review required", "restarts are not performed"],
+      ja: ["一部のサイズが未確認", "確認済みのサイズのみ合計", "管理者権限が必要な作業を除外", "手動での確認が必要", "管理者権限が必要な作業は行いません"],
+      zh: ["部分大小未知", "仅合计已确认的大小", "已排除需管理员权限的操作", "需手动检查", "不执行内存释放"],
+      es: ["Algunos tamaños desconocidos", "Solo se suman los tamaños conocidos", "Tareas de administrador excluidas", "Revisión manual necesaria", "No se ejecutan tareas de administrador"],
+      fr: ["Certaines tailles inconnues", "Seules les tailles connues sont additionnées", "Tâches d’administration exclues", "Vérification manuelle nécessaire", "ne sont pas exécutées"],
+      de: ["Einige Größen unbekannt", "Nur bekannte Größen werden addiert", "Aufgaben mit Administratorrechten ausgeschlossen", "Manuelle Prüfung erforderlich", "werden nicht ausgeführt"],
+      vi: ["Một số kích thước chưa rõ", "Chỉ cộng các kích thước đã xác định", "Đã loại trừ tác vụ cần quyền quản trị viên", "Cần kiểm tra thủ công", "Không chạy tác vụ quản trị"],
     }
     for (const locale of UI_LOCALES) {
       const strings = UI_STRINGS[locale]
-      const [unknown, total, admin, manual, disconnection] = safetyCopy[locale]
+      const [unknown, total, admin, manual, excluded] = safetyCopy[locale]
       expect(strings["tools.mole.includesUnknown"], locale).toContain(unknown)
       expect(strings["tools.mole.includesUnknown"], locale).toContain(total)
       expect(strings["tools.mole.status.admin_skipped"], locale).toBe(admin)
       expect(strings["tools.mole.status.manual"], locale).toBe(manual)
-      expect(strings["tools.mole.optimizeWarning"], locale).toContain(disconnection)
+      expect(strings["tools.mole.optimizeWarning"], locale).toContain(excluded)
+      expect(strings["tools.mole.optimizeWarning"], locale).toContain("WAL")
+      for (const detail of ["100MiB", "90", "WAL", "SHM"]) {
+        expect(strings["tools.mole.task.usageData.hint"], `${locale}:${detail}`).toContain(detail)
+      }
+    }
+  })
+  it("does not advertise purge as an available memory-release capability in any locale", () => {
+    const unavailable = {
+      ko: "이 앱에서 실행하지 않습니다",
+      en: "not performed by this app",
+      ja: "このアプリでは行いません",
+      zh: "本应用不执行",
+      es: "esta app no lo ejecuta",
+      fr: "n’est pas exécutée par cette app",
+      de: "wird von dieser App nicht ausgeführt",
+      vi: "không được ứng dụng này thực hiện",
+    }
+    for (const locale of UI_LOCALES) {
+      expect(UI_STRINGS[locale]["tools.mole.task.memory.hint"], locale).toContain("purge")
+      expect(UI_STRINGS[locale]["tools.mole.task.memory.hint"], locale).toContain(unavailable[locale])
     }
   })
 })
