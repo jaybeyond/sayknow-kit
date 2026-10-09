@@ -2,9 +2,17 @@
 //!
 //! New AppleARMBacklight Macs reject every public/private direct setter, but
 //! Control Center still owns the real backlight. With Accessibility permission
-//! we can open its Display menu extra and physically drag the built-in slider.
-//! This is deliberately local UI automation: no shell, AppleScript, or helper
-//! binary, and the value we read back is Control Center's live value.
+//! we drive its brightness slider. This is deliberately local UI automation:
+//! no shell, AppleScript, or helper binary, and the value we read back is
+//! Control Center's live value.
+//!
+//! Control Center is laid out differently before and from macOS 27, so there
+//! are two mechanisms, chosen once per run by `layout()`:
+//!
+//! - `Layout::Modern` (macOS 27+): the slider stays alive in Control Center's
+//!   AX tree, and writing its `AXValue` moves the backlight.
+//! - `Layout::Legacy` (earlier): the Display menu extra is clicked open and the
+//!   slider thumb is dragged with synthetic mouse events.
 
 use core_foundation::{
     base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString,
@@ -24,6 +32,20 @@ type AxElement = *mut c_void;
 type CgEvent = *mut c_void;
 type CgEventSource = *mut c_void;
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Size {
+    width: f64,
+    height: f64,
+}
+
 
 
 const UTF8: u32 = 0x0800_0100;
@@ -33,6 +55,13 @@ const CF_NUMBER_FLOAT: isize = 12;
 const HID_EVENT_TAP: u32 = 0;
 const HID_SYSTEM_STATE: i32 = 1;
 const KEY_ESCAPE: u16 = 53;
+const AX_VALUE_POINT: i32 = 1;
+const AX_VALUE_SIZE: i32 = 2;
+const LEFT_MOUSE_DOWN: u32 = 1;
+const LEFT_MOUSE_UP: u32 = 2;
+const LEFT_MOUSE_DRAGGED: u32 = 6;
+/// First macOS with the layout `Layout::Modern` drives.
+const MODERN_MIN_MAJOR: u32 = 27;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -50,6 +79,7 @@ extern "C" {
         value: CfTypeRef,
     ) -> i32;
     fn AXUIElementPerformAction(element: AxElement, action: CfStringRef) -> i32;
+    fn AXValueGetValue(value: CfTypeRef, value_type: i32, out: *mut c_void) -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -93,6 +123,15 @@ extern "C" {
         key_down: bool,
     ) -> CgEvent;
     fn CGEventPost(tap: u32, event: CgEvent);
+    fn CGEventCreate(source: CgEventSource) -> CgEvent;
+    fn CGEventGetLocation(event: CgEvent) -> Point;
+    fn CGEventCreateMouseEvent(
+        source: CgEventSource,
+        event_type: u32,
+        position: Point,
+        button: u32,
+    ) -> CgEvent;
+    fn CGWarpMouseCursorPosition(position: Point) -> i32;
 }
 
 extern "C" {
@@ -172,6 +211,88 @@ unsafe fn value_number(element: AxElement) -> Option<f64> {
     let value = copy_attribute(element, "AXValue")?;
     let mut out = 0.0f64;
     CFNumberGetValue(value.0, CF_NUMBER_DOUBLE, &mut out as *mut _ as *mut c_void).then_some(out)
+}
+
+unsafe fn point_attribute(element: AxElement, attribute: &str) -> Option<Point> {
+    let value = copy_attribute(element, attribute)?;
+    let mut out = Point::default();
+    AXValueGetValue(value.0, AX_VALUE_POINT, &mut out as *mut _ as *mut c_void).then_some(out)
+}
+
+unsafe fn size_attribute(element: AxElement, attribute: &str) -> Option<Size> {
+    let value = copy_attribute(element, attribute)?;
+    let mut out = Size::default();
+    AXValueGetValue(value.0, AX_VALUE_SIZE, &mut out as *mut _ as *mut c_void).then_some(out)
+}
+
+/// Which Control Center layout this Mac has. Decided by the macOS version and
+/// nothing else, so one machine never flips between mechanisms mid-run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Layout {
+    Legacy,
+    Modern,
+}
+
+/// `27.0` -> 27. An unreadable version keeps the current (modern) mechanism
+/// rather than guessing a different one.
+fn layout_for(version: Option<&str>) -> Layout {
+    let major = version
+        .and_then(|v| v.split('.').next())
+        .and_then(|m| m.trim().parse::<u32>().ok());
+    match major {
+        Some(m) if m < MODERN_MIN_MAJOR => Layout::Legacy,
+        _ => Layout::Modern,
+    }
+}
+
+/// `kern.osproductversion`, e.g. "27.0" or "15.6.1".
+fn os_product_version() -> Option<String> {
+    static VERSION: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| unsafe {
+            let name = std::ffi::CString::new("kern.osproductversion").ok()?;
+            let mut len = 0usize;
+            if libc::sysctlbyname(name.as_ptr(), ptr::null_mut(), &mut len, ptr::null_mut(), 0) != 0
+                || len == 0
+            {
+                return None;
+            }
+            let mut buffer = vec![0u8; len];
+            if libc::sysctlbyname(
+                name.as_ptr(),
+                buffer.as_mut_ptr() as *mut c_void,
+                &mut len,
+                ptr::null_mut(),
+                0,
+            ) != 0
+            {
+                return None;
+            }
+            buffer.truncate(len);
+            while buffer.last() == Some(&0) {
+                buffer.pop();
+            }
+            String::from_utf8(buffer).ok()
+        })
+        .clone()
+}
+
+fn layout() -> Layout {
+    static LAYOUT: std::sync::OnceLock<Layout> = std::sync::OnceLock::new();
+    *LAYOUT.get_or_init(|| layout_for(os_product_version().as_deref()))
+}
+
+/// One line for the launch log, so "works on one Mac, not another" is answered
+/// from the log: which macOS, and which mechanism it selected.
+pub fn describe_layout() -> String {
+    format!(
+        "macos={} layout={}",
+        os_product_version().as_deref().unwrap_or("unknown"),
+        match layout() {
+            Layout::Legacy => "legacy",
+            Layout::Modern => "modern",
+        }
+    )
 }
 
 /// `proc_name` on a single pid, used to keep a cached ControlCenter pid honest
@@ -333,6 +454,19 @@ unsafe fn press_escape(source: CgEventSource) {
     post_event(CGEventCreateKeyboardEvent(source, KEY_ESCAPE, false));
 }
 
+unsafe fn click(source: CgEventSource, position: Point) {
+    let _ = CGWarpMouseCursorPosition(position);
+    thread::sleep(Duration::from_millis(35));
+    post_event(CGEventCreateMouseEvent(
+        source,
+        LEFT_MOUSE_DOWN,
+        position,
+        0,
+    ));
+    thread::sleep(Duration::from_millis(45));
+    post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_UP, position, 0));
+}
+
 unsafe fn application_windows(app: AxElement) -> Vec<AxElement> {
     let Some(array) = copy_attribute(app, "AXWindows") else {
         return Vec::new();
@@ -351,7 +485,7 @@ unsafe fn application_windows(app: AxElement) -> Vec<AxElement> {
 /// writing `AXValue` on it moves the real backlight — the same thing the
 /// brightness keys do. The old code explicitly *excluded* this id and went
 /// looking for a per-display group instead, which no longer exists here.
-unsafe fn builtin_slider(app: AxElement) -> Option<AxElement> {
+unsafe fn builtin_slider_modern(app: AxElement) -> Option<AxElement> {
     let windows = application_windows(app);
     let mut fallback: Option<AxElement> = None;
     for window in windows {
@@ -383,6 +517,50 @@ unsafe fn builtin_slider(app: AxElement) -> Option<AxElement> {
         CFRelease(window as CfTypeRef);
     }
     fallback
+}
+
+/// Before macOS 27 Control Center lists one slider group per display inside the
+/// Display module. The built-in is the "Retina" one; on non-Retina or localized
+/// names it is the last group listed, after any external displays.
+unsafe fn builtin_slider_legacy(app: AxElement) -> Option<AxElement> {
+    let windows = application_windows(app);
+    let mut fallback: Option<AxElement> = None;
+    for window in windows {
+        if let Some(group) = find(window, 0, &|id, _| {
+            id.starts_with("controlcenter-display-")
+                && id != "controlcenter-display-brightness-slider"
+                && id.contains("Retina")
+        }) {
+            let slider = find(group, 0, &|_, role| role == "AXSlider");
+            CFRelease(group as CfTypeRef);
+            CFRelease(window as CfTypeRef);
+            if let Some(old) = fallback.take() {
+                CFRelease(old as CfTypeRef);
+            }
+            return slider;
+        }
+        if let Some(group) = find(window, 0, &|id, _| {
+            id.starts_with("controlcenter-display-")
+                && id != "controlcenter-display-brightness-slider"
+        }) {
+            if let Some(slider) = find(group, 0, &|_, role| role == "AXSlider") {
+                if let Some(old) = fallback.replace(slider) {
+                    CFRelease(old as CfTypeRef);
+                }
+            }
+            CFRelease(group as CfTypeRef);
+        }
+        CFRelease(window as CfTypeRef);
+    }
+    fallback
+}
+
+/// The built-in slider for whichever layout this macOS has.
+unsafe fn builtin_slider(app: AxElement) -> Option<AxElement> {
+    match layout() {
+        Layout::Modern => builtin_slider_modern(app),
+        Layout::Legacy => builtin_slider_legacy(app),
+    }
 }
 
 /// Process that owns the menu-bar extras. macOS 27 moved them out of
@@ -452,21 +630,51 @@ unsafe fn open_control_center() -> Result<(), String> {
 /// The built-in brightness slider, opening Control Center only if the slider
 /// is not already reachable. On macOS 27 it usually is: Control Center keeps
 /// the slider alive in its AX tree while the panel is closed.
-unsafe fn ensure_slider(app: AxElement, source: CgEventSource) -> Result<AxElement, String> {
-    if let Some(slider) = builtin_slider(app) {
+unsafe fn ensure_slider_modern(app: AxElement, source: CgEventSource) -> Result<AxElement, String> {
+    if let Some(slider) = builtin_slider_modern(app) {
         return Ok(slider);
     }
 
     open_control_center()?;
     for _ in 0..15 {
         thread::sleep(Duration::from_millis(100));
-        if let Some(slider) = builtin_slider(app) {
+        if let Some(slider) = builtin_slider_modern(app) {
             log::info!("builtin backlight: slider reached by opening Control Center");
             return Ok(slider);
         }
     }
     press_escape(source);
     Err("Control Center opened but exposes no brightness slider".into())
+}
+
+/// Before macOS 27 the hidden AXWindow of a closed popover can be stale, so
+/// close any popup and physically open the Display menu extra, then use the
+/// freshly visible tree.
+unsafe fn ensure_slider_legacy(app: AxElement, source: CgEventSource) -> Result<AxElement, String> {
+    let menu = find(app, 0, &|id, _| id == "com.apple.menuextra.display")
+        .ok_or_else(|| "macOS Display menu item was not found".to_string())?;
+    let position = point_attribute(menu, "AXPosition");
+    let size = size_attribute(menu, "AXSize");
+    CFRelease(menu as CfTypeRef);
+    let position = position.ok_or_else(|| "Display menu position is unavailable".to_string())?;
+    let size = size.ok_or_else(|| "Display menu size is unavailable".to_string())?;
+
+    press_escape(source);
+    thread::sleep(Duration::from_millis(180));
+    click(
+        source,
+        Point {
+            x: position.x + size.width / 2.0,
+            y: position.y + size.height / 2.0,
+        },
+    );
+    for _ in 0..10 {
+        thread::sleep(Duration::from_millis(60));
+        if let Some(slider) = builtin_slider_legacy(app) {
+            return Ok(slider);
+        }
+    }
+    Err("macOS Display brightness slider did not open".into())
 }
 
 /// Base cadence for the sampler thread. Control Center is the only other writer
@@ -614,7 +822,20 @@ fn sample_level(retained: &mut Option<(i32, AxElement, AxElement)>) -> Option<u8
         value
     }
 }
-/// Set the built-in backlight by writing the Control Center slider's `AXValue`.
+/// Set the built-in backlight through Control Center. The mechanism follows the
+/// macOS layout (see `Layout`); both read the value back so a write the panel
+/// ignored is reported rather than assumed.
+pub fn set(percent: u8) -> Result<u8, String> {
+    if !is_trusted(true) {
+        return Err("Accessibility permission is required; allow SayKnow Kit and try again".into());
+    }
+    match layout() {
+        Layout::Modern => set_modern(percent),
+        Layout::Legacy => set_legacy(percent),
+    }
+}
+
+/// macOS 27+: write the Control Center slider's `AXValue`.
 ///
 /// This is a different mechanism from the external monitors on purpose:
 /// externals speak DDC over the cable, the built-in panel has no such wire,
@@ -623,10 +844,7 @@ fn sample_level(retained: &mut Option<(i32, AxElement, AxElement)>) -> Option<u8
 /// (rather than dragging the thumb with synthetic mouse events) works with
 /// the panel closed, needs no cursor warp, and survived the macOS 27 change
 /// that stopped status items from receiving synthetic clicks.
-pub fn set(percent: u8) -> Result<u8, String> {
-    if !is_trusted(true) {
-        return Err("Accessibility permission is required; allow SayKnow Kit and try again".into());
-    }
+fn set_modern(percent: u8) -> Result<u8, String> {
     let pid = control_center_pid().ok_or_else(|| "ControlCenter is not running".to_string())?;
     unsafe {
         let app = AXUIElementCreateApplication(pid);
@@ -640,7 +858,7 @@ pub fn set(percent: u8) -> Result<u8, String> {
         }
 
         let result = (|| {
-            let slider = ensure_slider(app, source)?;
+            let slider = ensure_slider_modern(app, source)?;
             let before = value_number(slider).unwrap_or(-1.0);
             let target = (percent as f64 / 100.0).clamp(0.0, 1.0) as f32;
 
@@ -684,10 +902,131 @@ pub fn set(percent: u8) -> Result<u8, String> {
     }
 }
 
+/// Before macOS 27: open the Display popover and drag the slider thumb with
+/// synthetic mouse events, then put the cursor back where it was.
+fn set_legacy(percent: u8) -> Result<u8, String> {
+    let pid = control_center_pid().ok_or_else(|| "ControlCenter is not running".to_string())?;
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return Err("ControlCenter accessibility connection failed".into());
+        }
+        let source = CGEventSourceCreate(HID_SYSTEM_STATE);
+        if source.is_null() {
+            CFRelease(app as CfTypeRef);
+            return Err("macOS input source creation failed".into());
+        }
+        // Only put the cursor back if we know where it was; warping to a
+        // made-up (0, 0) would be worse than leaving it on the slider.
+        let cursor_event = CGEventCreate(ptr::null_mut());
+        let original_cursor = if cursor_event.is_null() {
+            None
+        } else {
+            let p = CGEventGetLocation(cursor_event);
+            CFRelease(cursor_event as CfTypeRef);
+            Some(p)
+        };
+
+        let result = ensure_slider_legacy(app, source).and_then(|slider| {
+            let dragged = drag_slider(slider, source, percent);
+            CFRelease(slider as CfTypeRef);
+            dragged
+        });
+
+        press_escape(source);
+        if let Some(cursor) = original_cursor {
+            let _ = CGWarpMouseCursorPosition(cursor);
+        }
+        CFRelease(source as CfTypeRef);
+        CFRelease(app as CfTypeRef);
+        result
+    }
+}
+
+/// Drag an open slider's thumb from its current value to `percent`, then read
+/// the value back. The caller owns `slider` and releases it.
+unsafe fn drag_slider(slider: AxElement, source: CgEventSource, percent: u8) -> Result<u8, String> {
+    let current = value_number(slider).unwrap_or(1.0).clamp(0.0, 1.0);
+    let position = point_attribute(slider, "AXPosition")
+        .ok_or_else(|| "Brightness slider position is unavailable".to_string())?;
+    let size = size_attribute(slider, "AXSize")
+        .ok_or_else(|| "Brightness slider size is unavailable".to_string())?;
+    let target = (percent as f64 / 100.0).clamp(0.0, 1.0);
+    let y = position.y + size.height / 2.0;
+    // AX reports the track bounds, while the thumb centre stops just inside
+    // them. Exact 0/1 coordinates miss the thumb hit target.
+    let thumb_x = |value: f64| position.x + size.width * value.clamp(0.02, 0.98);
+    let start = Point {
+        x: thumb_x(current),
+        y,
+    };
+    let end = Point {
+        x: thumb_x(target),
+        y,
+    };
+    let _ = CGWarpMouseCursorPosition(start);
+    thread::sleep(Duration::from_millis(45));
+    post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_DOWN, start, 0));
+    for step in 1..=10 {
+        let t = step as f64 / 10.0;
+        let point = Point {
+            x: start.x + (end.x - start.x) * t,
+            y,
+        };
+        post_event(CGEventCreateMouseEvent(
+            source,
+            LEFT_MOUSE_DRAGGED,
+            point,
+            0,
+        ));
+        thread::sleep(Duration::from_millis(18));
+    }
+    post_event(CGEventCreateMouseEvent(source, LEFT_MOUSE_UP, end, 0));
+    thread::sleep(Duration::from_millis(220));
+    let after = value_number(slider).unwrap_or(-1.0);
+    let actual = (after * 100.0).round().clamp(0.0, 100.0) as u8;
+    log::info!("builtin backlight (legacy drag): asked {percent}%, panel reads {actual}%");
+    if (after - target).abs() > 0.05 {
+        return Err(format!(
+            "brightness slider did not take the drag: asked {percent}%, panel reads {actual}%"
+        ));
+    }
+    Ok(actual)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn the_layout_follows_the_macos_major_version() {
+        assert_eq!(layout_for(Some("27.0")), Layout::Modern);
+        assert_eq!(layout_for(Some("27.1.2")), Layout::Modern);
+        assert_eq!(layout_for(Some("28.0")), Layout::Modern);
+        assert_eq!(layout_for(Some("26.4")), Layout::Legacy);
+        assert_eq!(layout_for(Some("15.6.1")), Layout::Legacy);
+        assert_eq!(layout_for(Some("14")), Layout::Legacy);
+        assert_eq!(layout_for(Some("11.7")), Layout::Legacy);
+    }
+
+    #[test]
+    fn an_unreadable_version_keeps_the_current_mechanism() {
+        assert_eq!(layout_for(None), Layout::Modern);
+        assert_eq!(layout_for(Some("")), Layout::Modern);
+        assert_eq!(layout_for(Some("beta")), Layout::Modern);
+    }
+
+    #[test]
+    fn this_machine_reports_a_version_and_a_layout() {
+        let line = describe_layout();
+        assert!(line.starts_with("macos="), "{line}");
+        assert!(line.contains("layout="), "{line}");
+        assert!(
+            os_product_version().is_some(),
+            "sysctl kern.osproductversion failed"
+        );
+    }
 
     #[test]
     fn translocated_bundles_are_recognized_by_path() {
