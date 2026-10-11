@@ -5,6 +5,7 @@ import {
   type Conversation,
 } from "@/lib/chat-history"
 import type { ChatImage } from "@/lib/chat-image"
+import { isReady, subscribe, syncState, whenReady } from "@/lib/sync-client"
 import { chat as openrouterChat, type ChatMessage, type ProviderId } from "@/lib/openrouter"
 
 const SYSTEM_PROMPT =
@@ -43,10 +44,17 @@ export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Arg
   const [activeTools, setActiveTools] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const writeFailuresRef = useRef(syncState().writeFailures)
 
   const refresh = useCallback(() => {
     setList(conversations.list())
     setCurrentId(conversations.currentId())
+    // E2: a native write that never became durable was rolled back.
+    const failures = syncState().writeFailures
+    if (failures !== writeFailuresRef.current) {
+      writeFailuresRef.current = failures
+      setError("대화를 저장하지 못했습니다. 다시 시도해 주세요.")
+    }
   }, [])
 
   // Cross-window sync.
@@ -57,7 +65,12 @@ export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Arg
       }
     }
     window.addEventListener("storage", onStorage)
-    return () => window.removeEventListener("storage", onStorage)
+    // The native cache changed (hydrate, `sync:chat-changed`, cutover).
+    const unsubscribe = subscribe(refresh)
+    return () => {
+      window.removeEventListener("storage", onStorage)
+      unsubscribe()
+    }
   }, [refresh])
 
   function ensureCurrent(): Conversation {
@@ -152,6 +165,8 @@ export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Arg
     async (text: string, images: ChatImage[] = []) => {
       const trimmed = text.trim()
       if (!trimmed && images.length === 0) return
+      // E5: on a native boot, act on the hydrated cache, not an empty one.
+      if (!isReady()) await whenReady()
       const conv = ensureCurrent()
       conversations.appendMessage(conv.id, {
         role: "user",
@@ -169,6 +184,7 @@ export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Arg
   const regenerate = useCallback(
     async (assistantId: string) => {
       if (!currentId) return
+      if (!isReady()) await whenReady()
       const conv = conversations.get(currentId)
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === assistantId)
@@ -188,6 +204,7 @@ export function useChat({ apiKey, baseURL, provider, model, fallbackModel }: Arg
     async (userId: string, newText: string, images: ChatImage[] = []) => {
       const trimmed = newText.trim()
       if ((!trimmed && images.length === 0) || !currentId) return
+      if (!isReady()) await whenReady()
       const conv = conversations.get(currentId)
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === userId)

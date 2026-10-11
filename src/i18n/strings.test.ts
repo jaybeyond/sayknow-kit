@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { UI_LOCALES, UI_STRINGS } from "./strings"
+import { NOTICE_TAGS } from "@/lib/sync-api"
 
 const REQUIRED_METRIC_KEYS = [
   "tools.metrics.title",
@@ -420,6 +421,130 @@ describe("Mac cleanup translations", () => {
     for (const locale of UI_LOCALES) {
       expect(UI_STRINGS[locale]["tools.mole.task.memory.hint"], locale).toContain("purge")
       expect(UI_STRINGS[locale]["tools.mole.task.memory.hint"], locale).toContain(unavailable[locale])
+    }
+  })
+})
+
+// G9 sync settings: the exact key set, identical in every locale, no empty
+// value, no raw identifier leaking into copy, and the AC 30 revocation limit.
+describe("sync settings translations", () => {
+  const syncKeys = (locale: (typeof UI_LOCALES)[number]) =>
+    Object.keys(UI_STRINGS[locale]).filter((k) => k === "settings.section.sync" || k.startsWith("settings.sync.")).sort()
+  /** Keys added by the G9 pass-1 fixes (U1-U6); pinned so a locale cannot lose one silently. */
+  const PASS1_KEYS = [
+    "settings.sync.connect.reconsentTitle",
+    "settings.sync.connect.reconsentDesc",
+    "settings.sync.restored.line",
+    "settings.sync.restored.kind.memo",
+    "settings.sync.restored.kind.conv",
+    "settings.sync.restored.kind.tr",
+    "settings.sync.restored.kind.policy",
+    "settings.sync.restored.kind.other",
+    "settings.sync.notice.unknown",
+    "settings.sync.advanced.devices",
+    "settings.sync.advanced.noDevices",
+    "settings.sync.advanced.thisDevice",
+    "settings.sync.advanced.removedDevice",
+    "settings.sync.advanced.lastSeen",
+    "settings.sync.advanced.neverSeen",
+    "settings.sync.advanced.removeLimit",
+  ]
+
+  it("has the same non-empty key set in all eight locales", () => {
+    const expected = syncKeys("ko")
+    expect(expected.length).toBeGreaterThan(150)
+    for (const locale of UI_LOCALES) {
+      expect(syncKeys(locale), locale).toEqual(expected)
+      for (const key of expected) {
+        const value = UI_STRINGS[locale][key]
+        expect(value?.trim(), `${locale}:${key}`).toBeTruthy()
+        // Copy never shows a key path or a snake_case code.
+        expect(value, `${locale}:${key}`).not.toMatch(/settings\.sync|\b[a-z]+_[a-z_]+\b/)
+      }
+    }
+  })
+
+  it("covers every engine notice variant, the pass-1 keys and the dialogs' placeholders", () => {
+    for (const locale of UI_LOCALES) {
+      const strings = UI_STRINGS[locale]
+      for (const tag of NOTICE_TAGS) expect(strings[`settings.sync.notice.${tag}`], `${locale}:${tag}`).toBeTruthy()
+      for (const key of PASS1_KEYS) expect(strings[key]?.trim(), `${locale}:${key}`).toBeTruthy()
+      // U4: the free-text device id is gone with the picker.
+      expect(strings["settings.sync.advanced.deviceId"], locale).toBeUndefined()
+      expect(strings["settings.sync.notice.other_vaults"], locale).toContain("{count}")
+      expect(strings["settings.sync.notice.manifest_copies"], locale).toContain("{count}")
+      expect(strings["settings.sync.restored.line"], locale).toContain("{count}")
+      expect(strings["settings.sync.advanced.removeLimit"], locale).toContain("{device}")
+      expect(strings["settings.sync.advanced.lastSeen"], locale).toContain("{when}")
+      expect(strings["settings.sync.vault.retry"], locale).toContain("{seconds}")
+      expect(strings["settings.sync.disconnect.typeWord"], locale).toContain("{word}")
+      for (const key of ["skip", "republish", "copy", "evicted", "done"]) {
+        expect(strings[`settings.sync.join.${key}`], `${locale}:${key}`).toContain("{count}")
+      }
+      for (const slot of ["{up}", "{down}", "{cycles}", "{quarantined}"]) {
+        expect(strings["settings.sync.status.countsLine"], `${locale}:${slot}`).toContain(slot)
+      }
+    }
+  })
+
+  it("U1: the RK dialog says the key is stored offline and this app does not keep it, in every locale", () => {
+    expect(UI_STRINGS.en["settings.sync.rk.showDesc"]).toBe(
+      "This key opens the vault. It is shown once, now. Store it offline; this app does not keep it.",
+    )
+    const parts = {
+      ko: ["오프라인에 보관", "보관하지 않습니다"],
+      en: ["offline", "does not keep it"],
+      ja: ["オフラインで保管", "保持しません"],
+      zh: ["离线保存", "不会保留"],
+      es: ["fuera de línea", "no la conserva"],
+      fr: ["hors ligne", "ne la garde pas"],
+      de: ["offline", "behält ihn nicht"],
+      vi: ["ngoại tuyến", "không giữ khóa"],
+    }
+    for (const locale of UI_LOCALES) {
+      const text = UI_STRINGS[locale]["settings.sync.rk.showDesc"]
+      for (const part of parts[locale]) expect(text, `${locale}:${part}`).toContain(part)
+    }
+  })
+
+  it("U4: the remove-device copy states that a removed device can still read the vault (AC 30)", () => {
+    const parts = {
+      ko: "계속 읽을 수 있습니다",
+      en: "can still read the vault",
+      ja: "読むことはできます",
+      zh: "仍可读取保管库",
+      es: "aún puede leer la bóveda",
+      fr: "peut encore lire le coffre",
+      de: "weiterhin lesen",
+      vi: "vẫn đọc được kho",
+    }
+    for (const locale of UI_LOCALES) {
+      for (const key of ["settings.sync.advanced.removeDeviceDesc", "settings.sync.advanced.removeLimit"]) {
+        expect(UI_STRINGS[locale][key], `${locale}:${key}`).toContain(parts[locale])
+      }
+    }
+  })
+
+  it("keeps the AC 30 revocation-limit wording and the D-1 wrong-key line", () => {
+    expect(UI_STRINGS.en["settings.sync.advanced.revocationLimit"]).toBe(
+      "Reissuing the key stops the old key from adding new devices. It does not lock out devices that are already connected, and it does not erase data they already have.",
+    )
+    expect(UI_STRINGS.en["settings.sync.join.wrongKey"]).toBe("This key doesn't open any vault in this storage.")
+    expect(UI_STRINGS.en["settings.sync.migration.deferred"]).toBe("Moving your existing data will retry at next launch.")
+    // Every locale states both halves of the limit: no lock-out, no erasure.
+    const limit = {
+      ko: ["차단되지 않고", "지워지지 않습니다"],
+      en: ["does not lock out", "does not erase"],
+      ja: ["締め出されず", "消えません"],
+      zh: ["不会锁住", "不会清除"],
+      es: ["No bloquea", "ni borra"],
+      fr: ["ne bloque pas", "n’efface pas"],
+      de: ["nicht ausgesperrt", "nicht gelöscht"],
+      vi: ["không chặn", "không xóa"],
+    }
+    for (const locale of UI_LOCALES) {
+      const text = UI_STRINGS[locale]["settings.sync.advanced.revocationLimit"]
+      for (const part of limit[locale]) expect(text, `${locale}:${part}`).toContain(part)
     }
   })
 })

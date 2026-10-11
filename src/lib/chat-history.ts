@@ -1,5 +1,15 @@
 import type { ChatImage } from "./chat-image"
 import { storage } from "./storage"
+import {
+  cachedConversations,
+  commitNative,
+  enqueue,
+  isNative,
+  setCachedConversations,
+  whenWritable,
+  wsMsg,
+  type QueuedOp,
+} from "./sync-client"
 
 export type ChatRole = "user" | "assistant"
 
@@ -60,8 +70,71 @@ function migrateLegacy(): void {
 
 migrateLegacy()
 
+/** The stored list: the native cache under `native`, else localStorage. */
 function readAll(): Conversation[] {
+  if (isNative()) return cachedConversations()
   return storage.get<Conversation[]>(CONVS_KEY) ?? []
+}
+
+/**
+ * Under `native` the trims are display-only: the cache keeps everything
+ * and nothing is ever deleted because of them.
+ */
+function display(conv: Conversation): Conversation {
+  if (!isNative() || conv.messages.length <= MAX_MSGS_PER_CONV) return conv
+  return { ...conv, messages: conv.messages.slice(-MAX_MSGS_PER_CONV) }
+}
+
+/**
+ * Persist `list` and queue `ops`. Under `native` the cache is updated only
+ * once the ops are durable (`commitNative`, E2); otherwise localStorage is
+ * written exactly as before and the ops are queued only during write-hold
+ * (`enqueue` is a no-op with the flag off). Quota eviction in `writeAll`
+ * never queues anything.
+ */
+function commit(list: Conversation[], ops: QueuedOp[]) {
+  if (isNative()) {
+    commitNative(ops, () => setCachedConversations(list))
+    return
+  }
+  writeAll(list)
+  enqueue(...ops)
+}
+
+/**
+ * The ops that turn the active path `prev` into `next`: every new message
+ * id becomes `msg_add` with the preceding message as parent, then
+ * `set_active` points at the new last id. A pure truncation only moves the
+ * active leaf (siblings stay in the native tree, so regenerate is safe). An
+ * empty `next` has no leaf to activate and emits nothing.
+ */
+export function diffMessages(convId: string, prev: ChatMsg[], next: ChatMsg[]): QueuedOp[] {
+  const ops: QueuedOp[] = []
+  const known = new Set(prev.map((m) => m.id))
+  next.forEach((m, i) => {
+    if (known.has(m.id)) return
+    ops.push({ op: "msg_add", conv: convId, msg: wsMsg(m), parent: i > 0 ? next[i - 1].id : null })
+  })
+  const leaf = next[next.length - 1]?.id
+  if (leaf && (ops.length > 0 || leaf !== prev[prev.length - 1]?.id)) {
+    ops.push({ op: "set_active", conv: convId, leaf })
+  }
+  return ops
+}
+
+/**
+ * E4: `next` is relative to the displayed window of the full native path
+ * `prev`; the hidden prefix before the window is kept. A list starting at a
+ * known message keeps everything before it; an empty or new-first list
+ * keeps exactly the hidden prefix, so a truncation lands on the message
+ * before the window and the first new message is parented to it. Without a
+ * hidden prefix an empty list stays empty (the documented deviation).
+ */
+function withHiddenPrefix(prev: ChatMsg[], next: ChatMsg[]): ChatMsg[] {
+  const off = Math.max(0, prev.length - MAX_MSGS_PER_CONV)
+  const at = next.length ? prev.findIndex((m) => m.id === next[0].id) : -1
+  const keep = at >= 0 ? at : off
+  return keep > 0 ? [...prev.slice(0, keep), ...next] : next
 }
 
 /**
@@ -91,13 +164,35 @@ function writeAll(list: Conversation[]) {
   }
 }
 
+function appendNow(id: string, next: ChatMsg) {
+  const all = [...readAll()]
+  const idx = all.findIndex((c) => c.id === id)
+  if (idx < 0) throw new Error("conversation not found: " + id)
+  const conv = all[idx]
+  const full = [...conv.messages, next]
+  const messages = isNative() ? full : full.slice(-MAX_MSGS_PER_CONV)
+  const isFirstUser = next.role === "user" && !conv.messages.some((m) => m.role === "user")
+  const title = isFirstUser ? genTitle(messages) : conv.title
+  all[idx] = {
+    ...conv,
+    messages,
+    title,
+    updatedAt: next.ts,
+  }
+  const ops = diffMessages(id, conv.messages, full)
+  if (title !== conv.title) ops.push({ op: "rename", conv: id, title })
+  commit(all, ops)
+}
+
 export const conversations = {
   list(): Conversation[] {
     // Most recently updated first.
-    return [...readAll()].sort((a, b) => b.updatedAt - a.updatedAt)
+    const sorted = [...readAll()].sort((a, b) => b.updatedAt - a.updatedAt)
+    return isNative() ? sorted.slice(0, MAX_CONVS).map(display) : sorted
   },
   get(id: string): Conversation | null {
-    return readAll().find((c) => c.id === id) ?? null
+    const found = readAll().find((c) => c.id === id) ?? null
+    return found && display(found)
   },
   currentId(): string | null {
     return storage.get<string>(CURRENT_KEY)
@@ -115,54 +210,58 @@ export const conversations = {
       createdAt: now,
       updatedAt: now,
     }
-    writeAll([conv, ...readAll()])
-    storage.set(CURRENT_KEY, conv.id)
+    // E5: on a native boot the write is held until the cache is hydrated.
+    whenWritable(() => {
+      commit([conv, ...readAll()], [{ op: "conv_create", conv: conv.id, title: conv.title }])
+      storage.set(CURRENT_KEY, conv.id)
+    })
     return conv
   },
   delete(id: string) {
-    const all = readAll().filter((c) => c.id !== id)
-    writeAll(all)
-    if (storage.get<string>(CURRENT_KEY) === id) {
-      const next = all[0]?.id ?? null
-      conversations.setCurrent(next)
-    }
+    whenWritable(() => {
+      const all = readAll().filter((c) => c.id !== id)
+      commit(all, [{ op: "conv_delete", conv: id }])
+      if (storage.get<string>(CURRENT_KEY) === id) {
+        const next = all[0]?.id ?? null
+        conversations.setCurrent(next)
+      }
+    })
   },
   rename(id: string, title: string) {
-    const all = readAll()
-    const idx = all.findIndex((c) => c.id === id)
-    if (idx < 0) return
-    all[idx] = { ...all[idx], title, updatedAt: Date.now() }
-    writeAll(all)
+    whenWritable(() => {
+      const all = [...readAll()]
+      const idx = all.findIndex((c) => c.id === id)
+      if (idx < 0) return
+      all[idx] = { ...all[idx], title, updatedAt: Date.now() }
+      commit(all, [{ op: "rename", conv: id, title }])
+    })
   },
-  /** Append a message to the conversation. Auto-generates title if first user msg. */
+  /**
+   * Append a message to the conversation. Auto-generates title if first user
+   * msg. Held until hydrate on a native boot (E5); the returned message is
+   * the one appended then, parented to the hydrated last message.
+   */
   appendMessage(id: string, msg: Omit<ChatMsg, "id" | "ts">): ChatMsg {
-    const all = readAll()
-    const idx = all.findIndex((c) => c.id === id)
-    if (idx < 0) throw new Error("conversation not found: " + id)
     const next: ChatMsg = { ...msg, id: genId(), ts: Date.now() }
-    const conv = all[idx]
-    const messages = [...conv.messages, next].slice(-MAX_MSGS_PER_CONV)
-    const isFirstUser = msg.role === "user" && !conv.messages.some((m) => m.role === "user")
-    all[idx] = {
-      ...conv,
-      messages,
-      title: isFirstUser ? genTitle(messages) : conv.title,
-      updatedAt: next.ts,
-    }
-    writeAll(all)
+    whenWritable(() => appendNow(id, next))
     return next
   },
   /** Replace the entire message list (used by truncate / edit / regenerate). */
   setMessages(id: string, messages: ChatMsg[]) {
-    const all = readAll()
-    const idx = all.findIndex((c) => c.id === id)
-    if (idx < 0) return
-    all[idx] = {
-      ...all[idx],
-      messages: messages.slice(-MAX_MSGS_PER_CONV),
-      updatedAt: Date.now(),
-    }
-    writeAll(all)
+    whenWritable(() => {
+      const all = [...readAll()]
+      const idx = all.findIndex((c) => c.id === id)
+      if (idx < 0) return
+      const prev = all[idx].messages
+      // E4: under native `messages` is relative to the display window.
+      const full = isNative() ? withHiddenPrefix(prev, messages) : messages
+      all[idx] = {
+        ...all[idx],
+        messages: isNative() ? full : messages.slice(-MAX_MSGS_PER_CONV),
+        updatedAt: Date.now(),
+      }
+      commit(all, diffMessages(id, prev, full))
+    })
   },
 }
 

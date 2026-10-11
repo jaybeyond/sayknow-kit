@@ -20,6 +20,7 @@ import {
   Power,
   Settings as SettingsIcon,
   Sparkles,
+  CloudSync,
 } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
@@ -41,6 +42,8 @@ import { ModelPicker } from "./ModelPicker"
 import { ProviderPicker } from "./ProviderPicker"
 import { GlossaryEditor } from "./GlossaryEditor"
 import { ShortcutsList } from "./ShortcutsList"
+import { SyncSection } from "./SyncSection"
+import { Row, SectionHeader } from "./settings-primitives"
 import { useModels } from "@/hooks/useModels"
 import {
   POPOVER_OPACITY_MAX,
@@ -98,9 +101,10 @@ type Section =
   | "glossary"
   | "prompt"
   | "monitor"
+  | "sync"
   | "about"
 
-const SECTIONS: readonly Section[] = ["general", "shortcuts", "connection", "glossary", "prompt", "monitor", "about"]
+const SECTIONS: readonly Section[] = ["general", "shortcuts", "connection", "glossary", "prompt", "monitor", "sync", "about"]
 
 function isSection(v: string): v is Section {
   return (SECTIONS as readonly string[]).includes(v)
@@ -158,6 +162,7 @@ export function SettingsWindow({
     { id: "glossary", label: t("settings.section.glossary"), icon: BookText },
     { id: "prompt", label: t("settings.section.prompt"), icon: Sparkles },
     { id: "monitor", label: t("settings.section.monitor"), icon: Activity },
+    { id: "sync", label: t("settings.section.sync"), icon: CloudSync },
     { id: "about", label: t("settings.section.about"), icon: Info },
   ]
 
@@ -245,6 +250,9 @@ export function SettingsWindow({
             )}
             {section === "monitor" && (
               <MonitorSection settings={settings} update={update} />
+            )}
+            {section === "sync" && (
+              <SyncSection uiLocale={settings.uiLocale} />
             )}
             {section === "about" && (
               <AboutSection settings={settings} />
@@ -983,44 +991,6 @@ function AboutSection({ settings }: { settings: Settings }) {
 
 
 /* ─────────── Helpers ─────────── */
-function SectionHeader({
-  icon: Icon,
-  title,
-}: {
-  icon: typeof SettingsIcon
-  title: string
-}) {
-  return (
-    <div className="flex items-center gap-2 pb-2" data-tauri-drag-region>
-      <Icon className="h-4 w-4 text-muted-foreground" />
-      <h2 className="text-base font-semibold">{title}</h2>
-    </div>
-  )
-}
-
-function Row({
-  label,
-  description,
-  children,
-}: {
-  label: string
-  description?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1">
-        <Label className="text-sm">{label}</Label>
-        {description && (
-          <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-        )}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  )
-}
 
 function ApiKeyRow({
   provider,

@@ -151,6 +151,44 @@
   }
 }
 
+/* ─── Sync settings (G9) ───
+   Banners and notices appear occasionally, so they enter once via
+   @starting-style: 180 ms opacity + scale from 0.97, strong ease-out. A
+   transition (not keyframes) so a notice replaced mid-entry retargets. The
+   5 s status poll re-renders in place and never re-triggers this. Pressables
+   get the press feedback only: their hover stays a color change, which the
+   Tailwind tokens already gate. */
+.sync-enter {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+.sync-press {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.sync-press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-enter {
+    transition: opacity 180ms ease;
+    @starting-style {
+      transform: none;
+    }
+  }
+  .sync-press,
+  .sync-press:active:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
+}
+
 /* ─── Input clear with dissolve ───
    From transitions.dev (MIT). Motion tokens as the original ships them; the
    choreography lives in src/lib/dissolve-clear.ts, which reads these on every

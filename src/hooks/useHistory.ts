@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { history, type HistoryEntry } from "@/lib/history"
+import { subscribe } from "@/lib/sync-client"
 
 export function useHistory() {
   const [entries, setEntries] = useState<HistoryEntry[]>(() => history.list())
@@ -14,9 +15,12 @@ export function useHistory() {
     }
     window.addEventListener("focus", refresh)
     window.addEventListener("storage", onStorage)
+    // The native cache changed (hydrate, `sync:chat-changed`, cutover).
+    const unsubscribe = subscribe(refresh)
     return () => {
       window.removeEventListener("focus", refresh)
       window.removeEventListener("storage", onStorage)
+      unsubscribe()
     }
   }, [])
 

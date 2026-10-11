@@ -57,13 +57,30 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pki-types = "1"
 webpki-roots = "1"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4", "v5"] }
+# End-to-end encrypted sync (src/sync): XChaCha20-Poly1305 envelopes, HKDF
+# subkeys, HMAC manifests. Keys are wiped with zeroize after use.
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+getrandom = "0.2"
+data-encoding = "2"
+# Local sync store (src/sync/store.rs): SQLite WAL, compiled in so every
+# platform runs the same engine version.
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "v5", "v7"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
+quick-xml = "0.39"
+percent-encoding = "2"
+url = "2"
 
 # Cancelling a turn must kill the whole process group a shell spawned, not
 # just the direct child; that needs a raw `kill(-pgid)`.
+[dev-dependencies]
+proptest = "1"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

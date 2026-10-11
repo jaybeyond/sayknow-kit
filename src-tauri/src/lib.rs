@@ -22,6 +22,7 @@ mod global_shortcuts;
 mod oauth_callback;
 mod cursor;
 mod cursor_chat;
+mod sync;
 
 mod system_metrics;
 mod system_monitor;
@@ -2346,6 +2347,25 @@ pub fn run() {
             speed_test::run_speed_test,
             speed_test::cancel_speed_test,
             system_monitor::set_system_monitor_config,
+            sync::commands::sync_get_status,
+            sync::commands::sync_set_enabled,
+            sync::commands::sync_connect_start,
+            sync::commands::sync_connect_cancel,
+            sync::commands::sync_disconnect,
+            sync::commands::sync_discover,
+            sync::commands::sync_create_vault,
+            sync::commands::sync_confirm_rk,
+            sync::commands::sync_join_preview,
+            sync::commands::sync_join_commit,
+            sync::commands::sync_rejoin,
+            sync::commands::sync_reissue_rk,
+            sync::commands::sync_remove_device,
+            sync::commands::sync_dismiss_notice,
+            sync::commands::sync_export_diagnostics,
+            sync::commands::sync_migrate_import_webstore,
+            sync::commands::sync_migrate_finalize,
+            sync::commands::sync_queue_apply,
+            sync::commands::sync_chat_load,
         ])
         .setup(|app| {
             eprintln!("[sayknow] setup hook entered");
@@ -2380,7 +2400,20 @@ pub fn run() {
             // the popover is visible or not — that's the whole point.
             let clipboard_handle = clipboard::ClipboardHandle::new();
             app.manage(clipboard_handle.clone());
-            clipboard::spawn_poller(app.handle().clone(), clipboard_handle);
+            let clipboard_load = clipboard::spawn_poller(app.handle().clone(), clipboard_handle.clone());
+
+            // E2EE sync (G7). Behind `sync-settings.json` (default off): with
+            // the flag off `boot` returns at once and nothing under `sync/`
+            // is opened, no provider is built, and no memo sink is installed.
+            let sync_runtime = std::sync::Arc::new(sync::commands::SyncRuntime::new(
+                app.path().app_data_dir().ok(),
+                sync::secrets::KeyringStore,
+                Box::new(sync::identity::current_install_fingerprint),
+            ));
+            app.manage(sync_runtime.clone());
+            let sync_host: std::sync::Arc<dyn sync::commands::Host> =
+                std::sync::Arc::new(sync::commands::AppHost { app: app.handle().clone(), clipboard: clipboard_handle });
+            sync_runtime.boot(&sync_host, clipboard_load);
 
             // Tracks the last show() time so the focus-loss handler can ignore
             // the brief blur that fires while the window is being raised.
@@ -2947,7 +2980,8 @@ mod space_behavior_tests {
 
 #[cfg(test)]
 mod credential_account_tests {
-    use super::{named_entry, OAUTH_PROVIDER_ACCOUNTS};
+    use super::{delete_secret, get_secret, named_entry, set_secret, OAUTH_PROVIDER_ACCOUNTS};
+    use crate::sync::secrets::{CloudProvider, SyncSecret};
 
     #[test]
     fn oauth_accounts_are_accepted_and_anything_else_is_refused() {
@@ -2991,6 +3025,33 @@ mod credential_account_tests {
             "",
         ] {
             assert!(named_entry(account).is_err(), "{account} must be refused");
+        }
+    }
+
+    #[test]
+    fn sync_secrets_are_unreachable_from_the_webview_commands() {
+        // AC 25: the vault key, device identity, and storage credentials live
+        // under `sync:` and are read only by Rust. Each command must refuse
+        // them before the Keychain is touched.
+        let vault_id = "0b5e2a8c-3d6f-4f1a-9c2e-7a4b1d9e8f60";
+        let fp = "c".repeat(64);
+        let mut accounts: Vec<String> = [
+            SyncSecret::Device { vault_id },
+            SyncSecret::VaultKey { vault_id },
+            SyncSecret::Credential { provider: CloudProvider::GoogleDrive, binding_fp: &fp },
+            SyncSecret::Credential { provider: CloudProvider::OneDrive, binding_fp: &fp },
+            SyncSecret::Credential { provider: CloudProvider::WebDav, binding_fp: &fp },
+            SyncSecret::Credential { provider: CloudProvider::R2, binding_fp: &fp },
+        ]
+        .iter()
+        .map(|secret| secret.account().unwrap().as_str().to_owned())
+        .collect();
+        accounts.extend(["sync:".to_owned(), "sync:vault:".to_owned(), "SYNC:vault:x".to_owned()]);
+        for account in accounts {
+            assert!(named_entry(&account).is_err(), "{account} must be refused");
+            assert!(get_secret(account.clone()).is_err(), "get {account}");
+            assert!(set_secret(account.clone(), "x".to_owned()).is_err(), "set {account}");
+            assert!(delete_secret(account.clone()).is_err(), "delete {account}");
         }
     }
 
