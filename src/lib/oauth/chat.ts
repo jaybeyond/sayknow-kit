@@ -245,6 +245,11 @@ export async function oauthChat(request: OAuthChatRequest): Promise<OAuthChatRes
   if (token.status === "reauth-required") {
     throw new OAuthAuthError(token.reason, request.provider)
   }
+  if (token.status === "unavailable") {
+    // Still signed in; the provider just could not be reached to renew the
+    // token. A network failure, not a reason to ask for a new sign-in.
+    throw new Error(token.reason)
+  }
 
   switch (request.provider) {
     case "anthropic":

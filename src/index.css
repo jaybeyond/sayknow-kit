@@ -151,6 +151,99 @@
   }
 }
 
+/* ─── Boot splash ───
+   Shown only while the popover works out whether the user is signed in, on
+   launch and after the idle reload. Rare, so it may carry a little motion:
+   the icon settles in, the name follows, and a thin track says work is
+   happening. CSS animations, not JS, because they keep running while the
+   page is still busy booting. The whole splash waits 120ms before showing,
+   so a quick answer never flashes it. */
+.boot-splash {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  opacity: 0;
+  animation: boot-splash-show 200ms cubic-bezier(0.23, 1, 0.32, 1) 120ms forwards;
+}
+.boot-splash-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 13px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+  user-select: none;
+  animation: boot-splash-icon-in 480ms cubic-bezier(0.23, 1, 0.32, 1) 120ms both;
+}
+.boot-splash-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  animation: boot-splash-rise 360ms cubic-bezier(0.23, 1, 0.32, 1) 180ms both;
+}
+.boot-splash-track {
+  position: relative;
+  width: 64px;
+  height: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--muted-foreground) 18%, transparent);
+  animation: boot-splash-rise 360ms cubic-bezier(0.23, 1, 0.32, 1) 240ms both;
+}
+.boot-splash-track > span {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: boot-splash-progress 1100ms linear infinite;
+}
+@keyframes boot-splash-show {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes boot-splash-icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(4px);
+  }
+}
+@keyframes boot-splash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes boot-splash-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the fade that says the app is arriving; drop the movement. */
+  .boot-splash-icon,
+  .boot-splash-name,
+  .boot-splash-track {
+    animation-name: boot-splash-fade;
+  }
+  .boot-splash-track > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+@keyframes boot-splash-fade {
+  from {
+    opacity: 0;
+  }
+}
+
 /* ─── Input clear with dissolve ───
    From transitions.dev (MIT). Motion tokens as the original ships them; the
    choreography lives in src/lib/dissolve-clear.ts, which reads these on every

@@ -6,6 +6,7 @@ import { popoverOpacity, useSettings } from "./hooks/useSettings"
 import { useTheme } from "./hooks/useTheme"
 import { useT } from "./i18n"
 import { LoginPanel } from "./components/LoginPanel"
+import { BootSplash } from "./components/BootSplash"
 import { TabbedPanel } from "./components/TabbedPanel"
 // The settings screen lives in its own window, so the popover should not pay
 // for it in the chunk it loads on every open.
@@ -105,9 +106,7 @@ function MainRoot() {
         className="popover-content appear h-full w-full"
       >
         {!loaded ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
+          <BootSplash label={t("clipboard.loading")} />
         ) : isLoggedIn ? (
           <TabbedPanel
             settings={settings}
