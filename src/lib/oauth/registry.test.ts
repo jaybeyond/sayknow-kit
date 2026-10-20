@@ -14,6 +14,10 @@ vi.mock("../secrets", () => ({
   },
 }))
 
+// The provider's answer to the token request. Each case sets what it returns.
+const http = vi.hoisted(() => ({ answer: async (): Promise<Response> => new Response("{}") }))
+vi.mock("../http", () => ({ httpFetch: () => http.answer() }))
+
 // The flows themselves are exercised against the real provider endpoints, not
 // here. These tests are about what `ensureAccessToken` does around them.
 const refreshAnthropic = vi.fn()
@@ -73,15 +77,81 @@ describe("ensureAccessToken", () => {
     expect(JSON.parse(vault.get(oauthAccount("anthropic")) ?? "{}")).toEqual(renewed)
   })
 
-  it("asks for re-auth and drops the credentials when refresh fails", async () => {
+  /** The refresh posts to the token endpoint, then fails the way a provider
+   *  flow does when that request did not give it a token. */
+  function refreshPostsThenFails(message: string) {
+    refreshAnthropic.mockImplementation(async (_token: string, fetch: typeof globalThis.fetch) => {
+      await fetch("https://token.example", { method: "POST" })
+      throw new Error(message)
+    })
+  }
+
+  it("asks for re-auth and drops the credentials when the provider refuses the refresh", async () => {
     vault.set(oauthAccount("anthropic"), JSON.stringify(stale))
-    refreshAnthropic.mockRejectedValue(new Error("invalid_grant"))
+    http.answer = async () => new Response('{"error":"invalid_grant"}', { status: 400 })
+    refreshPostsThenFails("invalid_grant")
 
     const result = await ensureAccessToken("anthropic")
 
     expect(result).toEqual({ status: "reauth-required", reason: "invalid_grant" })
     // Nothing may retry with a refresh token the provider just rejected.
     expect(vault.has(oauthAccount("anthropic"))).toBe(false)
+  })
+
+  it("keeps the sign-in when the provider cannot be reached (offline after waking)", async () => {
+    vault.set(oauthAccount("anthropic"), JSON.stringify(stale))
+    http.answer = async () => {
+      throw new TypeError("Load failed")
+    }
+    refreshAnthropic.mockImplementation(async (_token: string, fetch: typeof globalThis.fetch) =>
+      fetch("https://token.example", { method: "POST" }).then(() => live),
+    )
+
+    const result = await ensureAccessToken("anthropic")
+
+    expect(result).toEqual({ status: "unavailable", reason: "Load failed" })
+    expect(JSON.parse(vault.get(oauthAccount("anthropic")) ?? "{}")).toEqual(stale)
+  })
+
+  it.each([500, 503, 408, 429])("keeps the sign-in when the token endpoint answers %i", async (status) => {
+    vault.set(oauthAccount("anthropic"), JSON.stringify(stale))
+    http.answer = async () => new Response("busy", { status })
+    refreshPostsThenFails(`HTTP ${status}`)
+
+    const result = await ensureAccessToken("anthropic")
+
+    expect(result).toEqual({ status: "unavailable", reason: `HTTP ${status}` })
+    expect(vault.has(oauthAccount("anthropic"))).toBe(true)
+  })
+
+  it("does not judge the token by a refused request that is not the token POST", async () => {
+    vault.set(oauthAccount("anthropic"), JSON.stringify(stale))
+    http.answer = async () => new Response("not found", { status: 404 })
+    refreshAnthropic.mockImplementation(async (_token: string, fetch: typeof globalThis.fetch) => {
+      await fetch("https://discovery.example")
+      throw new Error("discovery failed")
+    })
+
+    expect(await ensureAccessToken("anthropic")).toMatchObject({ status: "unavailable" })
+    expect(vault.has(oauthAccount("anthropic"))).toBe(true)
+  })
+
+  it("runs one refresh for callers that arrive together", async () => {
+    vault.set(oauthAccount("anthropic"), JSON.stringify(stale))
+    const renewed = { ...live, access: "renewed-access" }
+    let finish!: (value: OAuthCredentials) => void
+    refreshAnthropic.mockImplementation(() => new Promise<OAuthCredentials>((r) => (finish = r)))
+
+    const first = ensureAccessToken("anthropic")
+    const second = ensureAccessToken("anthropic")
+    await vi.waitFor(() => expect(refreshAnthropic).toHaveBeenCalledTimes(1))
+    finish(renewed)
+
+    // A second refresh with the same single-use token would be refused and
+    // read as a revoked sign-in.
+    expect(await first).toEqual({ status: "ready", credentials: renewed })
+    expect(await second).toEqual({ status: "ready", credentials: renewed })
+    expect(refreshAnthropic).toHaveBeenCalledTimes(1)
   })
 
   it("asks for re-auth when an expired record carries no refresh token", async () => {

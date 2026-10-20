@@ -17,7 +17,7 @@ import {
   type ProviderId,
 } from "@/lib/openrouter"
 import { ensureAccessToken } from "@/lib/oauth/registry"
-import { OAUTH_REV_KEY } from "@/lib/oauth/store"
+import { OAUTH_REV_KEY, oauthStore } from "@/lib/oauth/store"
 import type { UILocaleSetting } from "@/i18n"
 import type { MenuBarReadout, SystemAlertKind } from "@/lib/system-monitor"
 
@@ -153,7 +153,10 @@ export function useSettings() {
   // rebuilds change the app's identity, so macOS re-asks on every update and
   // a refused prompt lands here.
   const [credentialError, setCredentialError] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
+  // The shared key and the per-provider keys are separate Keychain reads; the
+  // window must not decide "signed out" before both have answered.
+  const [sharedKeyRead, setSharedKeyRead] = useState(false)
+  const [providerKeysRead, setProviderKeysRead] = useState(false)
   // Resolved OAuth connection state, tagged with the provider it belongs to so
   // a stale answer cannot be read as the current provider's.
   const [oauthState, setOauthState] = useState<{ provider: string; ready: boolean } | null>(null)
@@ -168,7 +171,7 @@ export function useSettings() {
         setCredentialError(null)
       })
       .catch((e) => setCredentialError(String(e)))
-      .finally(() => setLoaded(true))
+      .finally(() => setSharedKeyRead(true))
     void namedSecret
       .get(DEEPL_ACCOUNT)
       .then(setDeeplKey)
@@ -176,11 +179,18 @@ export function useSettings() {
     void readProviderKeys()
       .then(setProviderKeys)
       .catch((e) => setCredentialError(String(e)))
+      .finally(() => setProviderKeysRead(true))
   }, [])
 
   // An OAuth provider is connected when a stored token is live, or can be
   // refreshed. That is a Keychain read plus possibly a network round-trip, so
   // it is resolved here rather than derived inline.
+  //
+  // The stored record answers first: if one is there the user is signed in,
+  // and the window can open on the app while the token is renewed. Waiting
+  // for the renewal instead held a relaunch on the splash (or, before, the
+  // login screen) for as long as the network took. The renewal then has the
+  // last word — a refused token does sign out.
   //
   // The result is tagged with the provider it was resolved for. Without that,
   // switching providers would show the previous one's answer until the new
@@ -189,13 +199,25 @@ export function useSettings() {
   useEffect(() => {
     const oauthProvider = parseOAuthProvider(prefs.provider)
     if (!oauthProvider) return
+    const provider = prefs.provider
     let cancelled = false
+    let renewed = false
+    void oauthStore
+      .get(oauthProvider)
+      .then((stored) => {
+        if (!cancelled && !renewed) setOauthState({ provider, ready: stored !== null })
+      })
+      .catch(() => {})
     void ensureAccessToken(oauthProvider)
       .then((state) => {
-        if (!cancelled) setOauthState({ provider: prefs.provider, ready: state.status === "ready" })
+        renewed = true
+        // "unavailable" is still signed in: the token could not be renewed
+        // this moment (no network yet after waking), and is kept.
+        if (!cancelled) setOauthState({ provider, ready: state.status === "ready" || state.status === "unavailable" })
       })
       .catch(() => {
-        if (!cancelled) setOauthState({ provider: prefs.provider, ready: false })
+        renewed = true
+        if (!cancelled) setOauthState({ provider, ready: false })
       })
     return () => {
       cancelled = true
@@ -291,6 +313,19 @@ export function useSettings() {
     : endpointPreset(prefs.provider)?.requiresKey
       ? activeKey.length > 0
       : prefs.baseURL.trim().length > 0
+
+  // Loaded means the sign-in question has an answer: every credential read
+  // has come back, and an OAuth provider's token check has finished. Before
+  // that, "not signed in" is only "not read yet", and showing the login
+  // screen for it is what made a relaunch look like a first run. Once
+  // answered it stays answered — later checks (a provider switch, a sign-in
+  // in progress) must not swap the screen back to the splash.
+  const answered =
+    sharedKeyRead &&
+    providerKeysRead &&
+    (!isOAuthProvider(prefs.provider) || oauthState?.provider === prefs.provider)
+  const [loaded, setLoaded] = useState(false)
+  if (answered && !loaded) setLoaded(true)
 
   // Sign-in/out inside *this* window does not raise a `storage` event — that
   // only reaches other windows — so the OAuth check has to be nudged directly.
