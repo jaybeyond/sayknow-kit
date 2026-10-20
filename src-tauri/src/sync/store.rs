@@ -86,7 +86,7 @@ use super::envelope::{
     check_segment, open, segment_ref, ObjectAddress, ObjectKind, SegmentHeader, ENVELOPE_VERSION,
 };
 use super::identity::{genesis_chain_head, DeviceIdentity, LocalIdentity};
-use super::merge::{project, EntityState, Projection};
+use super::merge::{project, EntityState, Projection, PROJECTION_VERSION};
 use super::ops::{
     body_hash, canonical_json, check_plaintext, content_hash, refs, remap_ref, segment_hash, Dot, Hlc, Kind, OpBody,
     OpError, SegOp, Segment, FORMAT_V, MAX_STORED,
@@ -138,6 +138,11 @@ CREATE TABLE chain_nodes(vault_id TEXT NOT NULL, device_id TEXT NOT NULL, head B
 "#, r#"
 -- G8 E3: sha256 of each applied queue op, the newest QUEUE_HASH_WINDOW qseqs.
 CREATE TABLE queue_op_hashes(qseq INTEGER PRIMARY KEY, op_hash BLOB NOT NULL);
+"#, r#"
+-- G10 A15: `fork_range_obs` looks ops up by entity; lineage routing looks
+-- memo_lineage up by `routed_to`.
+CREATE INDEX ops_by_entity ON ops(vault_id, entity_kind, entity_id);
+CREATE INDEX memo_lineage_by_route ON memo_lineage(vault_id, routed_to);
 "#];
 
 /// How many applied queue qseqs keep their op hash (E3): a replay inside
@@ -453,7 +458,14 @@ impl RawOp {
 }
 
 fn parse_kind(text: &str) -> Result<Kind, StoreError> {
-    serde_json::from_value(Value::String(text.to_owned())).map_err(corrupt)
+    // The inverse of `Kind::as_str`, without a serde round trip per row.
+    match text {
+        "memo" => Ok(Kind::Memo),
+        "conv" => Ok(Kind::Conv),
+        "tr" => Ok(Kind::Tr),
+        "policy" => Ok(Kind::Policy),
+        other => Err(corrupt(format!("entity kind {other}"))),
+    }
 }
 
 fn insert_op_row(
@@ -514,16 +526,17 @@ fn load_forks(conn: &Connection, vault: &str) -> Result<Forks, StoreError> {
 
 /// Every (body, dot) of the vault, loaded into a fresh op set.
 fn load_set(conn: &Connection, vault: &str) -> Result<(OpSet, Forks), StoreError> {
-    let mut stmt = conn.prepare(&format!(
+    // Cached: this is the hottest statement in the store (every memo command,
+    // every applied segment and every projection read runs it).
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT d.device_id, d.seq, {OP_COLS} FROM op_dots d
          JOIN ops o ON o.vault_id = d.vault_id AND o.op_id = d.op_id
          WHERE d.vault_id = ?1 ORDER BY d.device_id, d.seq, d.op_id"
     ))?;
-    let rows = stmt
-        .query_map(params![vault], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?, RawOp::read(r, 2)?)))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let rows = stmt.query_map(params![vault], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?, RawOp::read(r, 2)?)))?;
     let mut set = OpSet::new();
-    for (device, seq, raw) in rows {
+    for row in rows {
+        let (device, seq, raw) = row?;
         // Every row here was validated before it was stored, so an op error
         // (a float payload, an id that no longer parses) is local damage.
         set.insert(raw.body()?, Dot { device, seq }).map_err(|e| corrupt(format!("stored op: {e}")))?;
@@ -767,6 +780,14 @@ fn insert_local_in(
     Ok((body, dot))
 }
 
+/// `meta` key holding the [`PROJECTION_VERSION`] the persisted projection
+/// rows were written by.
+const META_PROJECTION_VERSION: &str = "projection_version";
+
+fn meta_get_conn(conn: &Connection, key: &str) -> Result<Option<String>, StoreError> {
+    Ok(conn.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| r.get(0)).optional()?)
+}
+
 fn meta_set_conn(conn: &Connection, key: &str, value: &str) -> Result<(), StoreError> {
     conn.execute(
         "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -795,61 +816,187 @@ fn insert_blobs_in(conn: &Connection, vault: &str, blobs: &[BlobRow]) -> Result<
     Ok(())
 }
 
-/// Recomputes the vault projection and persists it (§4.4 re-projection).
+/// Recomputes the vault projection and persists it in full (§4.4
+/// re-projection). Invariant kept by this and [`reproject_delta`]: after
+/// every committed op-writing transaction, `memo_lineage` (per vault) and,
+/// for the active vault, `entities` / `msg_tree` mirror the committed
+/// projection.
 fn reproject_conn(conn: &Connection, vault: &str) -> Result<Projection, StoreError> {
     let (set, forks) = load_set(conn, vault)?;
     let projection = project(&set, &forks)?;
     conn.execute("DELETE FROM memo_lineage WHERE vault_id = ?1", params![vault])?;
-    for (op_id, routed_to) in &projection.memo_lineage {
-        let Some(entry) = set.get(op_id) else { continue };
-        let base = refs(&entry.body).first().map(|s| (*s).to_owned());
-        conn.execute(
-            "INSERT INTO memo_lineage(vault_id, memo_id, op_id, base_op_id, routed_to) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![vault, entry.body.entity_id, op_id, base, routed_to],
-        )?;
-    }
+    persist_lineage_rows(conn, vault, &set, projection.memo_lineage.iter())?;
     if active_vault(conn)?.as_deref() == Some(vault) {
         persist_entities(conn, &set, &projection)?;
     }
     Ok(projection)
 }
 
-fn persist_entities(conn: &Connection, set: &OpSet, projection: &Projection) -> Result<(), StoreError> {
-    let evicted: BTreeSet<(String, String)> = {
-        let mut stmt = conn.prepare("SELECT kind, id FROM entities WHERE evicted_local = 1")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        rows.collect::<Result<_, _>>()?
-    };
-    conn.execute("DELETE FROM entities", [])?;
-    conn.execute("DELETE FROM msg_tree", [])?;
-    for ((kind, id), state) in &projection.entities {
-        let value = serde_json::to_value(state).map_err(corrupt)?;
-        let deleted = matches!(state, EntityState::Deleted);
-        let is_evicted = evicted.contains(&(kind.as_str().to_owned(), id.clone()));
-        conn.execute(
-            "INSERT INTO entities(kind, id, state_json, deleted, evicted_local) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![kind.as_str(), id, json_text(&value)?, deleted, is_evicted],
-        )?;
+/// [`reproject_conn`] that writes only what changed. Preconditions, both
+/// the caller's to keep inside one transaction: `set`/`forks` are exactly
+/// what `load_set` returns for the connection's current state, and
+/// `before` is the projection the persisted rows mirror right now (the
+/// projection of the same connection before this transaction's inserts,
+/// with the active vault unchanged since the last re-projection). Under
+/// the invariant on [`reproject_conn`] the result is row-for-row what a full
+/// rewrite would produce, without rewriting the rows a command leaves alone.
+fn reproject_delta(
+    conn: &Connection,
+    vault: &str,
+    set: &OpSet,
+    forks: &Forks,
+    before: &Projection,
+) -> Result<Projection, StoreError> {
+    let projection = project(set, forks)?;
+    // Lineage: rows that are gone, then rows that are new or re-routed.
+    let mut gone = conn.prepare_cached("DELETE FROM memo_lineage WHERE vault_id = ?1 AND op_id = ?2")?;
+    for op_id in before.memo_lineage.keys() {
+        if !projection.memo_lineage.contains_key(op_id) {
+            gone.execute(params![vault, op_id])?;
+        }
+    }
+    let changed = projection.memo_lineage.iter().filter(|(op_id, to)| before.memo_lineage.get(*op_id) != Some(to));
+    persist_lineage_rows(conn, vault, set, changed)?;
+    if active_vault(conn)?.as_deref() == Some(vault) {
+        persist_entities_delta(conn, set, before, &projection)?;
+    }
+    Ok(projection)
+}
+
+/// Upserts the given lineage rows (the caller deleted whatever must go).
+fn persist_lineage_rows<'a>(
+    conn: &Connection,
+    vault: &str,
+    set: &OpSet,
+    rows: impl Iterator<Item = (&'a String, &'a String)>,
+) -> Result<(), StoreError> {
+    let mut insert = conn.prepare_cached(
+        "INSERT INTO memo_lineage(vault_id, memo_id, op_id, base_op_id, routed_to) VALUES(?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(vault_id, op_id) DO UPDATE SET
+             memo_id = excluded.memo_id, base_op_id = excluded.base_op_id, routed_to = excluded.routed_to",
+    )?;
+    for (op_id, routed_to) in rows {
+        let Some(entry) = set.get(op_id) else { continue };
+        let base = refs(&entry.body).first().copied();
+        insert.execute(params![vault, entry.body.entity_id, op_id, base, routed_to])?;
+    }
+    Ok(())
+}
+
+const MSG_TREE_INSERT: &str =
+    "INSERT OR REPLACE INTO msg_tree(conv_id, msg_id, parent_id, created_hlc) VALUES(?1, ?2, ?3, ?4)";
+
+/// `(state_json, deleted)` of an `entities` row.
+fn entity_row(state: &EntityState) -> Result<(String, bool), StoreError> {
+    let value = serde_json::to_value(state).map_err(corrupt)?;
+    Ok((json_text(&value)?, matches!(state, EntityState::Deleted)))
+}
+
+/// The `msg_tree` rows of one conversation (the caller cleared the old ones).
+fn insert_msg_rows(
+    insert_msg: &mut rusqlite::CachedStatement<'_>,
+    set: &OpSet,
+    conv_id: &str,
+    conv: &super::merge::ConvState,
+) -> Result<(), StoreError> {
+    for (msg_id, msg) in &conv.messages {
+        let hlc = match set.get(&msg.op_id) {
+            Some(entry) => Some(json_text(&serde_json::to_value(entry.body.hlc).map_err(corrupt)?)?),
+            None => None,
+        };
+        insert_msg.execute(params![conv_id, msg_id, msg.parent_id, hlc])?;
+    }
+    Ok(())
+}
+
+/// One entity's rows as [`persist_entities`] writes them: the `entities`
+/// row is upserted keeping `evicted_local`; a conversation key always has
+/// its old `msg_tree` rows cleared first (a tombstoned conversation keeps
+/// none), then the live messages re-inserted.
+fn persist_entity_row(
+    conn: &Connection,
+    set: &OpSet,
+    kind: Kind,
+    id: &str,
+    state: &EntityState,
+) -> Result<(), StoreError> {
+    let (state_json, deleted) = entity_row(state)?;
+    conn.prepare_cached(
+        "INSERT INTO entities(kind, id, state_json, deleted, evicted_local) VALUES(?1, ?2, ?3, ?4, 0)
+         ON CONFLICT(kind, id) DO UPDATE SET state_json = excluded.state_json, deleted = excluded.deleted",
+    )?
+    .execute(params![kind.as_str(), id, state_json, deleted])?;
+    if kind == Kind::Conv {
+        conn.prepare_cached("DELETE FROM msg_tree WHERE conv_id = ?1")?.execute(params![id])?;
         if let EntityState::Conv(conv) = state {
-            for (msg_id, msg) in &conv.messages {
-                let hlc = match set.get(&msg.op_id) {
-                    Some(entry) => Some(json_text(&serde_json::to_value(entry.body.hlc).map_err(corrupt)?)?),
-                    None => None,
-                };
-                conn.execute(
-                    "INSERT OR REPLACE INTO msg_tree(conv_id, msg_id, parent_id, created_hlc) VALUES(?1, ?2, ?3, ?4)",
-                    params![id, msg_id, msg.parent_id, hlc],
-                )?;
+            insert_msg_rows(&mut conn.prepare_cached(MSG_TREE_INSERT)?, set, id, conv)?;
+        }
+    }
+    Ok(())
+}
+
+/// [`persist_entities`] for the entities whose state differs between
+/// `before` and `after`; everything else is already on disk.
+fn persist_entities_delta(
+    conn: &Connection,
+    set: &OpSet,
+    before: &Projection,
+    after: &Projection,
+) -> Result<(), StoreError> {
+    for (key, state) in &after.entities {
+        if before.entities.get(key) != Some(state) {
+            persist_entity_row(conn, set, key.0, &key.1, state)?;
+        }
+    }
+    let mut drop_entity = conn.prepare_cached("DELETE FROM entities WHERE kind = ?1 AND id = ?2")?;
+    let mut drop_msgs = conn.prepare_cached("DELETE FROM msg_tree WHERE conv_id = ?1")?;
+    for key in before.entities.keys() {
+        if !after.entities.contains_key(key) {
+            drop_entity.execute(params![key.0.as_str(), key.1])?;
+            if key.0 == Kind::Conv {
+                drop_msgs.execute(params![key.1])?;
             }
         }
     }
     Ok(())
 }
 
+/// Rewrites `entities` and `msg_tree` from `projection` (every applied
+/// segment or snapshot, checked/queue batches, vault switch, rotation).
+/// Cached statements and one serialisation per row: this is on the path of
+/// every remote apply, so its cost is sync latency.
+fn persist_entities(conn: &Connection, set: &OpSet, projection: &Projection) -> Result<(), StoreError> {
+    let evicted: BTreeSet<(String, String)> = {
+        let mut stmt = conn.prepare_cached("SELECT kind, id FROM entities WHERE evicted_local = 1")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    conn.execute("DELETE FROM entities", [])?;
+    conn.execute("DELETE FROM msg_tree", [])?;
+    let mut insert_entity = conn
+        .prepare_cached("INSERT INTO entities(kind, id, state_json, deleted, evicted_local) VALUES(?1, ?2, ?3, ?4, ?5)")?;
+    let mut insert_msg = conn.prepare_cached(MSG_TREE_INSERT)?;
+    for ((kind, id), state) in &projection.entities {
+        let (state_json, deleted) = entity_row(state)?;
+        let is_evicted = evicted.contains(&(kind.as_str().to_owned(), id.clone()));
+        insert_entity.execute(params![kind.as_str(), id, state_json, deleted, is_evicted])?;
+        if let EntityState::Conv(conv) = state {
+            insert_msg_rows(&mut insert_msg, set, id, conv)?;
+        }
+    }
+    Ok(())
+}
+
 /// Ops of fork ranges (`seq >= F[d]`) touching the same entity, directly or
-/// through memo lineage routing (§4.4 obs rule (ii)).
+/// through memo lineage routing (§4.4 obs rule (ii)). A vault with no
+/// recorded fork (the usual case) has no fork range, so nothing to scan.
 fn fork_range_obs(conn: &Connection, vault: &str, kind: Kind, entity_id: &str) -> Result<Vec<String>, StoreError> {
-    let mut stmt = conn.prepare(
+    let forked: bool =
+        conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM forks WHERE vault_id = ?1)")?.query_row(params![vault], |r| r.get(0))?;
+    if !forked {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare_cached(
         "SELECT DISTINCT d.op_id FROM op_dots d
          JOIN forks f ON f.vault_id = d.vault_id AND f.device_id = d.device_id AND d.seq >= f.fork_start
          JOIN ops o ON o.vault_id = d.vault_id AND o.op_id = d.op_id
@@ -957,6 +1104,19 @@ impl Store {
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
             tx.commit()?;
         }
+        // The persisted projection was written by whatever `project()` the
+        // last build had. If that differs from ours, rewrite it once so the
+        // incremental path (`reproject_delta`) diffs against rows this code
+        // produced.
+        let stamp = PROJECTION_VERSION.to_string();
+        if meta_get_conn(&self.conn, META_PROJECTION_VERSION)?.as_deref() != Some(stamp.as_str()) {
+            let tx = self.conn.transaction()?;
+            if let Some(vault) = active_vault(&tx)? {
+                reproject_conn(&tx, &vault)?;
+            }
+            meta_set_conn(&tx, META_PROJECTION_VERSION, &stamp)?;
+            tx.commit()?;
+        }
         Ok(())
     }
 
@@ -973,13 +1133,20 @@ impl Store {
         active_vault(&self.conn)
     }
 
+    /// Test seam for the active vault (production switches through
+    /// [`Store::commit_vault_switch`]). Re-projects in the same transaction
+    /// so `entities` / `msg_tree` mirror the newly active vault, the
+    /// invariant [`reproject_delta`] relies on.
     #[cfg_attr(not(test), allow(dead_code))] // only tests call this so far
     pub(crate) fn set_active_vault(&mut self, vault: &str) -> Result<(), StoreError> {
-        self.conn.execute(
+        let tx = self.conn.transaction()?;
+        tx.execute(
             "INSERT INTO meta(key, value) VALUES('active_vault_id', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![vault],
         )?;
+        reproject_conn(&tx, vault)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1044,7 +1211,10 @@ impl Store {
     /// `never`), blobs go to `blobs` plus `vault_blob_map` as `pending`, meta
     /// rows are upserted, and the projection is recomputed once at the end.
     /// All or nothing: any invalid body stores nothing and consumes no seq.
-    /// Every returned op carries the final projection hash.
+    /// Every returned op carries the final projection hash. Production uses
+    /// [`Store::insert_local_batch_checked`] (migration) and
+    /// [`Store::plan_local_batch`] (memo commands).
+    #[cfg_attr(not(test), allow(dead_code))] // only tests call this so far
     pub(crate) fn insert_local_batch(
         &mut self,
         vault: &str,
@@ -1120,6 +1290,45 @@ impl Store {
         rows.map(|r| u64::try_from(r?).map_err(|_| corrupt("negative qseq"))).collect()
     }
 
+    /// Own ops planned against the current projection, in one transaction
+    /// (G10 A15; the memo-command path). Contract: one SQL load and one
+    /// projection serve both the plan and the re-projection; the planner
+    /// sees exactly the projection its ops are inserted against; an empty
+    /// plan inserts nothing and commits nothing; only the rows the ops
+    /// changed are rewritten ([`reproject_delta`]). Same op semantics as
+    /// [`Store::insert_local_batch`] (upload state `never`, all or nothing).
+    pub(crate) fn plan_local_batch<T>(
+        &mut self,
+        vault: &str,
+        plan: impl FnOnce(&Projection) -> (Vec<OpBody>, T),
+    ) -> Result<(Vec<LocalOp>, T), StoreError> {
+        let tx = self.conn.transaction()?;
+        let (mut set, forks) = load_set(&tx, vault)?;
+        let current = project(&set, &forks)?;
+        let (bodies, out) = plan(&current);
+        if bodies.is_empty() {
+            return Ok((Vec::new(), out));
+        }
+        let device = identity_row(&tx, vault)?.device_id;
+        let mut stored = Vec::with_capacity(bodies.len());
+        for body in bodies {
+            let (body, dot) = insert_local_in(&tx, vault, &device, body, UploadState::Never)?;
+            // Keep the loaded set in step with the row just written, so the
+            // re-projection below needs no second load. A local op is a new
+            // op id at a fresh own seq: never an alias, never a fork.
+            let inserted = set.insert(body.clone(), dot.clone()).map_err(|e| corrupt(format!("local op: {e}")))?;
+            if inserted.outcome != super::causal::Insert::New || inserted.fork_started {
+                return Err(corrupt(format!("local op {} is not new in its own set", body.op_id)));
+            }
+            stored.push((body, dot));
+        }
+        let projection = reproject_delta(&tx, vault, &set, &forks, &current)?;
+        tx.commit()?;
+        let stored =
+            stored.into_iter().map(|(body, dot)| LocalOp { body, dot, projection_hash: projection.hash }).collect();
+        Ok((stored, out))
+    }
+
     fn batch_in(
         &mut self,
         vault: &str,
@@ -1152,7 +1361,7 @@ impl Store {
     }
 
     pub(crate) fn meta_get(&self, key: &str) -> Result<Option<String>, StoreError> {
-        Ok(self.conn.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| r.get(0)).optional()?)
+        meta_get_conn(&self.conn, key)
     }
 
     pub(crate) fn meta_set(&mut self, key: &str, value: &str) -> Result<(), StoreError> {
@@ -1439,7 +1648,7 @@ impl Store {
         seal: impl FnOnce(&Segment, &[u8]) -> Result<Vec<u8>, CryptoError>,
     ) -> Result<Option<PendingSegment>, StoreError> {
         let mut seal = Some(seal);
-        let mut sealed = self.seal_pending_capped(vault, usize::MAX, |segment, plain| match seal.take() {
+        let mut sealed = self.seal_pending_capped(vault, usize::MAX, now_ms(), |segment, plain| match seal.take() {
             Some(seal) => seal(segment, plain),
             None => unreachable!("an uncapped seal makes one segment"),
         })?;
@@ -1792,11 +2001,14 @@ impl Store {
     /// Snapshot catch-up (§4.5): the reader's cursor is behind a compacted
     /// stream. One transaction: every op at every dot (alias / quarantine /
     /// fork exactly as for segments), the snapshot's forks, then each other
-    /// device's cursor moves up to the snapshot frontier. Streams that are
-    /// held, forked, retired, or forked in the snapshot are never moved (they
-    /// are relisted instead), and our own current id is never a cursor. A
-    /// moved cursor has no chain head: the snapshot carries none, so the next
-    /// segment of that stream is accepted on seq continuity alone.
+    /// device's cursor moves up to the snapshot frontier. An `ok` cursor
+    /// moves and keeps its state; a `retired` cursor (our own retired id,
+    /// G10: the clone compacted the shared stream before we rotated) moves
+    /// and stays retired. Streams that are held, forked, or forked in the
+    /// snapshot are never moved (they are relisted instead), and our own
+    /// current id is never a cursor. A moved cursor has no chain head: the
+    /// snapshot carries none, so the next segment of that stream is accepted
+    /// on seq continuity alone.
     /// An invalid op quarantines the snapshot (`snap_key`) and writes nothing.
     pub(crate) fn apply_snapshot(
         &mut self,
@@ -1846,11 +2058,13 @@ impl Store {
                 continue;
             }
             let advance = match read_cursor(&tx, vault, device)? {
-                None => true,
-                Some(c) => c.state == CursorState::Ok && c.applied_seq < *seq,
+                None => Some(CursorState::Ok),
+                Some(c) if c.applied_seq >= *seq => None,
+                Some(c) if matches!(c.state, CursorState::Ok | CursorState::Retired) => Some(c.state),
+                Some(_) => None,
             };
-            if advance {
-                let next = Cursor { applied_seq: *seq, chain_head: None, state: CursorState::Ok };
+            if let Some(state) = advance {
+                let next = Cursor { applied_seq: *seq, chain_head: None, state };
                 put_cursor(&tx, vault, device, &next)?;
             }
         }
@@ -1927,12 +2141,15 @@ impl Store {
     /// [`Store::seal_pending`] split so that no segment's canonical plaintext
     /// exceeds `cap` (A4): consecutive segments, each chained to the one
     /// before, all persisted in one transaction before any put. `seal` is
-    /// called once per segment. Returns the sealed segments (empty when
-    /// nothing is unsealed).
+    /// called once per segment. `now` stamps `created_at`, the 30-day
+    /// compaction trigger: the engine passes its cycle clock so the trigger
+    /// and the stamp agree. Returns the sealed segments (empty when nothing
+    /// is unsealed).
     pub(crate) fn seal_pending_capped(
         &mut self,
         vault: &str,
         cap: usize,
+        now: u64,
         mut seal: impl FnMut(&Segment, &[u8]) -> Result<Vec<u8>, CryptoError>,
     ) -> Result<Vec<PendingSegment>, StoreError> {
         let tx = self.conn.transaction()?;
@@ -1996,7 +2213,7 @@ impl Store {
             tx.execute(
                 "INSERT INTO pending_segments(vault_id, device_id, first_seq, last_seq, bytes, created_at)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-                params![vault, id.device_id, first, last, bytes, now_ms()],
+                params![vault, id.device_id, first, last, bytes, now],
             )?;
             prev = segment_hash(&segment)?;
             tx.execute(
@@ -2568,6 +2785,38 @@ mod tests {
         let empty = dir.0.join("sync").join("empty.db");
         Connection::open(&empty).unwrap().execute_batch("CREATE TABLE other(x);").unwrap();
         assert_eq!(Store::peek_meta(&empty, "migration_state").unwrap(), None);
+    }
+
+    /// G10 A1: rows an older `project()` wrote are rewritten once on open
+    /// (the incremental path diffs against them), and a matching version
+    /// leaves the file alone.
+    #[test]
+    fn open_rewrites_the_projection_once_when_the_projection_version_changes() {
+        let dir = TempDir::new("projection-version");
+        let path = dir.0.join("sync").join("sync.db");
+        {
+            let mut store = Store::open(&path).unwrap();
+            store.init_identity(&identity("dev-a")).unwrap();
+            store.set_active_vault(VAULT).unwrap();
+            local(&mut store, create(1, 1_000, M, "x"));
+            assert_eq!(store.meta_get(META_PROJECTION_VERSION).unwrap().as_deref(), Some("1"));
+            // Simulate rows an older build left behind: a stale entity row
+            // and an older version stamp.
+            store
+                .conn()
+                .execute("INSERT INTO entities(kind, id, state_json, deleted, evicted_local) VALUES('memo', 'stale', '{}', 0, 0)", [])
+                .unwrap();
+            store.conn().execute("UPDATE meta SET value = '0' WHERE key = ?1", [META_PROJECTION_VERSION]).unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.meta_get(META_PROJECTION_VERSION).unwrap().as_deref(), Some("1"));
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM entities WHERE id = 'stale'"), 0, "rewritten from the ops");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM entities"), 1);
+        let after_heal = store.dump_state().unwrap();
+        drop(store);
+        // Same version: open leaves the rows exactly as they are.
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.dump_state().unwrap(), after_heal);
     }
 
     #[test]
@@ -3280,5 +3529,99 @@ mod tests {
         let err = store.insert_local_batch("vault-x", vec![], vec![], vec![("k".into(), "v".into())]).unwrap_err();
         assert!(matches!(err, StoreError::NoIdentity));
         assert_eq!(store.meta_get("k").unwrap(), None);
+    }
+
+    /// G10 A15: the planned path re-projects from its in-memory set and
+    /// writes only the rows that changed; the persisted projection (hash,
+    /// `entities` incl. `evicted_local`, `msg_tree`, `memo_lineage`) must be
+    /// exactly what a full SQL load and rewrite produce, across memo edits,
+    /// a new conversation message, a tombstone and a lineage change.
+    #[test]
+    fn planned_batch_projects_like_the_loaded_path() {
+        use crate::sync::sim_tests::op;
+        let conv = "0190a000-0000-7000-8000-0000000000cc";
+        let msg = |n: u64, wall: u64, id: &str, parent: Option<&str>| {
+            op(
+                n,
+                wall,
+                Kind::Conv,
+                conv,
+                "msg.add",
+                serde_json::json!({"conv_id": conv, "msg_id": id, "parent_id": parent, "role": "user",
+                                   "content": id, "attachments": [], "ts": wall}),
+            )
+        };
+        let seed = |store: &mut Store| {
+            local(store, create(1, 1_000, M, "x"));
+            local(store, create(2, 2_000, K, "k"));
+            local(store, op(3, 3_000, Kind::Conv, conv, "create", serde_json::json!({"title": "t"})));
+            local(store, msg(4, 4_000, "m1", None));
+            // An evicted row must keep its flag through an unrelated write.
+            store.conn().execute("UPDATE entities SET evicted_local = 1 WHERE id = ?1", [K]).unwrap();
+        };
+        let batch = || {
+            vec![
+                edit(5, 5_000, M, 1, "y"),
+                crate::sync::sim_tests::delete(6, 6_000, K),
+                msg(7, 7_000, "m2", Some("m1")),
+                create(8, 8_000, "0190a000-0000-7000-8000-0000000000dd", "new"),
+            ]
+        };
+
+        let mut planned = device("a");
+        seed(&mut planned);
+        let (ops, seen) = planned.plan_local_batch(VAULT, |current| (batch(), current.entities.len())).unwrap();
+        assert_eq!(seen, 3, "the planner saw the projection before its own ops");
+        assert_eq!(ops.len(), 4);
+        assert_eq!(ops[0].dot, Dot { device: "a".to_owned(), seq: 5 });
+        assert_eq!(ops[3].dot, Dot { device: "a".to_owned(), seq: 8 });
+        assert_eq!(ops[3].body.ctx, BTreeMap::from([("a".to_owned(), 7)]), "ctx advanced per op");
+        let planned_hash = ops[0].projection_hash;
+        let planned_rows = planned.dump_state().unwrap();
+
+        // The same ops through the sequential full-rewrite path.
+        let mut full = device("a");
+        seed(&mut full);
+        let mut last = None;
+        for body in batch() {
+            last = Some(full.insert_local_op(VAULT, body, UploadState::Never).unwrap());
+        }
+        assert_eq!(last.unwrap().projection_hash, planned_hash, "same projection hash");
+        assert_eq!(planned_rows, full.dump_state().unwrap(), "same persisted rows");
+
+        // And a full rewrite over the planned store's own rows changes nothing.
+        let reloaded = reproject_conn(planned.conn(), VAULT).unwrap();
+        assert_eq!(reloaded.hash, planned_hash);
+        assert_eq!(planned.dump_state().unwrap(), planned_rows);
+        assert_eq!(count(&planned, "SELECT COUNT(*) FROM msg_tree"), 2);
+        assert_eq!(count(&planned, "SELECT COUNT(*) FROM entities WHERE evicted_local = 1"), 1);
+        assert_eq!(count(&planned, &format!("SELECT deleted FROM entities WHERE id = '{K}'")), 1, "tombstone");
+    }
+
+    #[test]
+    fn planned_batch_with_no_ops_commits_nothing() {
+        let mut store = device("a");
+        local(&mut store, create(1, 1_000, M, "x"));
+        let before = store.dump_state().unwrap();
+        let (ops, out) = store.plan_local_batch(VAULT, |_| (Vec::new(), 7u8)).unwrap();
+        assert!(ops.is_empty());
+        assert_eq!(out, 7);
+        assert_eq!(store.dump_state().unwrap(), before);
+        let next = store.insert_local_op(VAULT, edit(5, 5_000, M, 1, "next"), UploadState::Never).unwrap();
+        assert_eq!(next.dot.seq, 2, "no seq consumed");
+    }
+
+    #[test]
+    fn planned_batch_is_all_or_nothing() {
+        let mut store = device("a");
+        local(&mut store, create(1, 1_000, M, "x"));
+        let before = store.dump_state().unwrap();
+        let mut bad = create(3, 3_000, K, "z");
+        bad.payload = serde_json::json!({"text": 1});
+        let err = store.plan_local_batch(VAULT, |_| (vec![edit(2, 2_000, M, 1, "y"), bad], ())).unwrap_err();
+        assert!(!matches!(err, StoreError::NoIdentity), "{err:?}");
+        assert_eq!(store.dump_state().unwrap(), before, "nothing stored");
+        let err = store.plan_local_batch("vault-x", |_| (vec![create(9, 9_000, K, "w")], ())).unwrap_err();
+        assert!(matches!(err, StoreError::NoIdentity), "{err:?}");
     }
 }

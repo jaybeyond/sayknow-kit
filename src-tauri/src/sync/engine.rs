@@ -1171,6 +1171,12 @@ where
         store.meta_set(META_CHECKPOINT_RESTORED, "")?;
     }
     ctx.engine.last_record = None;
+    // G10: a snapshot applied while `old` was still our own id skipped the
+    // frontier entry for `old` (an own stream never gets a cursor). Now that
+    // `old` is a retired stream read like any other, those snapshots must be
+    // applied again so its cursor reaches the compacted frontier; applying a
+    // snapshot is idempotent, so forgetting the session set is enough.
+    ctx.engine.applied_snaps.clear();
     ctx.stats.rotated();
     let labels: Vec<&'static str> = triggers.iter().map(|t| trigger_label(*t)).collect();
     log_event(
@@ -1402,9 +1408,12 @@ pub(crate) struct CatchUp {
 }
 
 /// Whether the next listed segment `first` lies past what a stream in
-/// `state` has applied, with nothing (a snapshot) covering the hole.
+/// `state` has applied, with nothing (a snapshot) covering the hole. A
+/// retired own id is relisted in full, so its covered ranges come back as
+/// duplicates and only a range past `applied + 1` is a gap (G10: a clone
+/// that compacted the shared stream before we rotated).
 fn stream_gap(state: Option<CursorState>, applied: u64, first: u64) -> bool {
-    state.is_none_or(|s| s == CursorState::Ok) && first > applied.saturating_add(1)
+    state.is_none_or(|s| matches!(s, CursorState::Ok | CursorState::Retired)) && first > applied.saturating_add(1)
 }
 
 /// Whether a listed segment is worth fetching for a stream in `state`.
@@ -1645,6 +1654,11 @@ where
     for key in wanted {
         let Some(address) = ObjectAddress::from_remote_key(&key, ctx.key_epoch) else { continue };
         let copies = ObjectStore::get_all(ctx.provider, &key).await?;
+        if copies.is_empty() {
+            // Listed but not readable yet (lag) or already gone: nothing was
+            // applied, so the name stays wanted for the next cycle.
+            continue;
+        }
         for copy in &copies {
             ctx.stats.downloaded(copy.bytes.len());
         }
@@ -1846,7 +1860,7 @@ where
     }
     let next = identity::advance_generation(ctx.secrets, &keychain)?;
     let epoch = ctx.key_epoch;
-    let sealed = store.seal_pending_capped(vault, SEGMENT_PLAIN_CAP, |segment, plain| {
+    let sealed = store.seal_pending_capped(vault, SEGMENT_PLAIN_CAP, (ctx.now)(), |segment, plain| {
         let address = ObjectAddress::segment(vault, epoch, &segment.device_id, segment.first_seq, segment.last_seq);
         seal(&keys.seg, &address, plain)
     })?;
@@ -3942,13 +3956,13 @@ mod tests {
         for n in 1..=3 {
             crate::sync::sim_tests::local(&mut store, create(n, 100 * n, &format!("m{n}"), &"q".repeat(600)));
         }
-        let segs = store.seal_pending_capped(crate::sync::sim_tests::VAULT, 1_000, |_, plain| Ok(plain.to_vec())).unwrap();
+        let segs = store.seal_pending_capped(crate::sync::sim_tests::VAULT, 1_000, 0, |_, plain| Ok(plain.to_vec())).unwrap();
         assert_eq!(segs.iter().map(|s| (s.first_seq, s.last_seq)).collect::<Vec<_>>(), [(1, 1), (2, 2), (3, 3)]);
         let decoded: Vec<Segment> = segs.iter().map(|s| serde_json::from_slice(&s.bytes).unwrap()).collect();
         for pair in decoded.windows(2) {
             assert_eq!(pair[1].prev_seg_hash, hex(&segment_hash(&pair[0]).unwrap()));
         }
-        assert!(store.seal_pending_capped(crate::sync::sim_tests::VAULT, 1_000, |_, p| Ok(p.to_vec())).unwrap().is_empty());
+        assert!(store.seal_pending_capped(crate::sync::sim_tests::VAULT, 1_000, 0, |_, p| Ok(p.to_vec())).unwrap().is_empty());
     }
 
     // -- D2: scheduler -------------------------------------------------------------

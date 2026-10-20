@@ -32,6 +32,7 @@ pub(crate) mod recovery;
 #[cfg(test)] mod redteam_g6_tests;
 #[cfg(test)] mod redteam_g7_tests;
 #[cfg(test)] mod redteam_g9_tests;
+#[cfg(test)] mod redteam_g10_tests;
 pub(crate) mod rotation;
 pub(crate) mod secrets;
 #[cfg(test)] mod sim3;

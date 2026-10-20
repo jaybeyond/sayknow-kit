@@ -2991,7 +2991,7 @@ fn d10a_seal_split_at_exactly_the_cap_and_one_byte_over() {
         store
     };
     let mut probe = build();
-    let whole = probe.seal_pending_capped(SIM, usize::MAX, |_, plain| Ok(plain.to_vec())).unwrap();
+    let whole = probe.seal_pending_capped(SIM, usize::MAX, 0, |_, plain| Ok(plain.to_vec())).unwrap();
     assert_eq!(whole.len(), 1);
     let segment = crate::sync::ops::Segment::decode(&whole[0].bytes).unwrap();
     let sizes: usize = segment
@@ -3004,7 +3004,7 @@ fn d10a_seal_split_at_exactly_the_cap_and_one_byte_over() {
         let mut store = build();
         let mut plains = Vec::new();
         let segs = store
-            .seal_pending_capped(SIM, cap, |_, plain| {
+            .seal_pending_capped(SIM, cap, 0, |_, plain| {
                 plains.push(plain.len());
                 Ok(plain.to_vec())
             })

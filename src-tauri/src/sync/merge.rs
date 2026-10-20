@@ -27,6 +27,13 @@ use super::ops::{canonical_json, Kind, OpError};
 
 pub(crate) type EntityKey = (Kind, String);
 
+/// Bump when [`project`] (or the lineage routing it records) changes what
+/// it produces for the same op set. The store rewrites its persisted
+/// projection once on open when this differs from the stored value, so the
+/// incremental re-projection path never diffs against rows an older build
+/// wrote.
+pub(crate) const PROJECTION_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum EntityState {

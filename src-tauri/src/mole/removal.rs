@@ -2569,13 +2569,26 @@ mod native {
             assert_eq!(std::fs::read(&related_path).unwrap(), b"fixture");
         }
 
+        /// A disposable directory of agent-created fixtures under the temp
+        /// dir. The permission tests assert `permissions` succeeds on these,
+        /// which `writable_local_volume` only allows on a local volume that
+        /// honours ownership: a `TMPDIR` on a "noowners" external volume is
+        /// refused up front with the reason, not as a confusing
+        /// `mole_permission_required` deep inside a test.
         struct Fixture(PathBuf);
         impl Fixture {
             fn new() -> Self {
-                let root = std::env::temp_dir()
-                    .canonicalize()
-                    .unwrap()
-                    .join(format!("sayknow-removal-{}", id()));
+                let base = std::env::temp_dir().canonicalize().unwrap();
+                let name = std::ffi::CString::new(base.as_os_str().as_bytes()).unwrap();
+                let mut volume = std::mem::MaybeUninit::<libc::statfs>::uninit();
+                assert_eq!(unsafe { libc::statfs(name.as_ptr(), volume.as_mut_ptr()) }, 0);
+                let flags = unsafe { volume.assume_init() }.f_flags;
+                assert!(
+                    writable_local_volume(flags),
+                    "fixture tests need a local, writable, ownership-honouring temp dir; {} has statfs flags {flags:#x}",
+                    base.display()
+                );
+                let root = base.join(format!("sayknow-removal-{}", id()));
                 std::fs::create_dir(&root).unwrap();
                 Self(root)
             }
@@ -2587,17 +2600,17 @@ mod native {
             }
         }
         impl Drop for Fixture {
+            /// Best effort and never panics: a cleanup panic while a failed
+            /// test is already unwinding aborts the whole test binary.
             fn drop(&mut self) {
                 // Only agent-created immediate fixture children; never recurse.
-                for entry in std::fs::read_dir(&self.0).unwrap() {
-                    let path = entry.unwrap().path();
-                    if std::fs::symlink_metadata(&path).unwrap().is_dir() {
-                        std::fs::remove_dir(path).unwrap();
-                    } else {
-                        std::fs::remove_file(path).unwrap();
-                    }
+                let Ok(entries) = std::fs::read_dir(&self.0) else { return };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let is_dir = std::fs::symlink_metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
+                    let _ = if is_dir { std::fs::remove_dir(&path) } else { std::fs::remove_file(&path) };
                 }
-                std::fs::remove_dir(&self.0).unwrap();
+                let _ = std::fs::remove_dir(&self.0);
             }
         }
         #[test]

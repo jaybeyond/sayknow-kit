@@ -325,9 +325,13 @@ fn ac16b_clone_delete_does_not_remove_the_originals_unseen_edit() {
     assert!(a2.dots_of(VAULT, &oid(2)).unwrap().is_empty(), "the rejected original has no dot");
     assert_eq!(a2.quarantine_rows(VAULT).unwrap().len(), 1);
 
-    // A′ reads its retired id like another device: y applies, no quarantine.
+    // A′ reads its retired id like another device: the range it covered
+    // before the clone (seq 1) is a Duplicate no-op (the engine relists a
+    // retired stream in full, G10), y applies, no quarantine, nothing held.
     let outcomes = sync_stream(&mut a2, &remote, "a", &all);
-    assert!(outcomes.iter().all(|o| matches!(o, ApplyOutcome::Applied { conflicts: 0, .. })), "{outcomes:?}");
+    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    assert!(matches!(outcomes[0], ApplyOutcome::Duplicate), "{outcomes:?}");
+    assert!(matches!(outcomes[1], ApplyOutcome::Applied { conflicts: 0, .. }), "{outcomes:?}");
     assert_eq!(a2.cursor(VAULT, "a").unwrap().unwrap().state, CursorState::Retired);
     assert!(publish(&mut a2, &mut remote).unwrap().1);
     sync_stream(&mut a, &remote, "a2", &all);
@@ -631,8 +635,11 @@ fn ac16c_common_op_published_by_original_and_clone_is_one_logical_op() {
     outcomes.extend(sync_stream(&mut c, &remote, "a2", &all));
     outcomes.extend(sync_stream(&mut c, &remote, "a", &all));
     outcomes.extend(sync_stream(&mut a, &remote, "a2", &all));
-    outcomes.extend(sync_stream(&mut a2, &remote, "a", &all));
     assert!(outcomes.iter().all(|o| matches!(o, ApplyOutcome::Applied { conflicts: 0, .. })), "{outcomes:?}");
+    // A′ relists its retired id in full (G10): the pre-clone range (a, 1) is
+    // a Duplicate no-op and the original's u at (a, 2) applies.
+    let own = sync_stream(&mut a2, &remote, "a", &all);
+    assert!(matches!(own.as_slice(), [ApplyOutcome::Duplicate, ApplyOutcome::Applied { conflicts: 0, .. }]), "{own:?}");
 
     let dots = vec![super::ops::Dot { device: "a".to_owned(), seq: 2 }, super::ops::Dot { device: "a2".to_owned(), seq: 1 }];
     for (name, store) in [("a", &a), ("a2", &a2), ("b", &b), ("c", &c)] {

@@ -197,6 +197,9 @@ struct View {
     hidden_prefixes: Mutex<Vec<String>>,
     /// Drive copies this reader does not see yet (listings and `get_all`).
     hidden_refs: Mutex<BTreeSet<String>>,
+    /// Keys this reader lists but whose content is not readable yet
+    /// (`get_all` answers no copies: list-before-read visibility).
+    unreadable_keys: Mutex<BTreeSet<String>>,
     /// `get` answers these bytes instead (a stale read).
     stale: Mutex<BTreeMap<String, Vec<u8>>>,
     faults: Mutex<VecDeque<(FaultOp, ProviderError)>>,
@@ -218,6 +221,7 @@ impl View {
         self.lag_ms.store(0, Ordering::SeqCst);
         lock(&self.hidden_prefixes).clear();
         lock(&self.hidden_refs).clear();
+        lock(&self.unreadable_keys).clear();
         lock(&self.stale).clear();
         lock(&self.faults).clear();
         *lock(&self.sticky_put) = None;
@@ -328,6 +332,9 @@ impl ObjectStore for Lens<'_> {
 
     async fn get_all(&self, key: &str) -> Result<Vec<RemoteObject>, ProviderError> {
         self.view.fault(FaultOp::Get)?;
+        if lock(&self.view.unreadable_keys).contains(key) {
+            return Ok(Vec::new());
+        }
         let all = self.world.fake.get_all(key).await?;
         let hidden = lock(&self.view.hidden_refs).clone();
         Ok(all.into_iter().filter(|c| !hidden.contains(&c.provider_ref)).collect())
@@ -753,6 +760,168 @@ async fn retired_stream_later_original_segments_apply_on_the_rotated_clone() {
     assert_converged(&[&r.a, &r.a2]);
 }
 
+/// The clone compacts the shared stream before the original rotates (the
+/// s7 soak seed 1592590337 shape): A′ writes under `dev-a`, rotates when it
+/// notices A, snapshots `dev-a` and deletes the shared segments; A, whose
+/// own id is now retired at a verified prefix below that frontier, must
+/// reach the clone's later writes through the snapshot — never a held
+/// `dev-a` cursor.
+async fn compacted_before_rotation() -> Rotated {
+    let w = World::with_vault(true);
+    let dek = SecretKey::from_bytes([5; 32]);
+    let mut a = Dev::member("A", VAULT, "dev-a", &dek);
+    a.create_memo(&w, M, "base");
+    ok_cycle(&mut a, &w).await;
+    let dir = TempDir::new("sim3-compacted");
+    let mut a2 = a.clone_into(&dir, "A'");
+    // The original keeps writing but does not sync; the clone writes, syncs
+    // and ages its segments past the compaction threshold.
+    w.advance(1_000);
+    a.edit_memo(&w, M, "original, unsynced");
+    a2.edit_memo(&w, M, "clone 1");
+    ok_cycle(&mut a2, &w).await;
+    w.advance(1_000);
+    a2.edit_memo(&w, M, "clone 2");
+    ok_cycle(&mut a2, &w).await;
+    w.advance(MAX_SEGMENT_AGE_MS + 24 * 60 * 60 * 1000);
+    ok_cycle(&mut a2, &w).await;
+    assert!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).is_empty(), "the clone compacted the shared stream away");
+    assert_eq!(w.keys(&format!("v1/{VAULT}/snap/dev-a/")).len(), 1);
+    // A later clone write the original can only reach past the snapshot.
+    w.advance(1_000);
+    a2.edit_memo(&w, M, "clone 3");
+    let report = ok_cycle(&mut a2, &w).await;
+    let log = w.keys(&format!("v1/{VAULT}/log/"));
+    assert_eq!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).len(), 1, "report {report:?}; clone id {}; log {log:?}", a2.device());
+    Rotated { w, dek, a, a2 }
+}
+
+/// (d) The original rotates (T4/T5: foreign content under its id), its
+/// retired `dev-a` cursor moves up to the snapshot frontier and the clone's
+/// later segment applies: nothing held, nothing quarantined, convergence.
+#[tokio::test]
+async fn retired_stream_compacted_by_the_clone_catches_up_through_the_snapshot() {
+    let mut r = compacted_before_rotation().await;
+    r.w.advance(1_000);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(rotation(&report).is_some(), "{report:?}");
+    assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{report:?}");
+    for _ in 0..2 {
+        r.w.advance(1_000);
+        let report = ok_cycle(&mut r.a, &r.w).await;
+        assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{report:?}");
+    }
+    assert!(r.a.held_cursors().is_empty(), "{:?}", r.a.held_cursors());
+    assert!(r.a.quarantine().is_empty(), "{:?}", r.a.quarantine());
+    let cursor = lock(&r.a.store).cursor(VAULT, "dev-a").unwrap().unwrap();
+    assert_eq!(cursor.state, CursorState::Retired);
+    assert_eq!(cursor.applied_seq, 4, "1 (shared) + clone 1..3");
+    let mut devs = [&mut r.a, &mut r.a2];
+    quiesce(&r.w, &mut devs, 8).await;
+    assert_converged(&[&r.a, &r.a2]);
+    // Both the clone's last edit and the original's unsynced edit survive.
+    let projection = r.a.projection();
+    let texts: Vec<String> = projection
+        .entities
+        .values()
+        .filter_map(|s| match s {
+            EntityState::Memo(m) => Some(m.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.iter().any(|t| t == "clone 3"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "original, unsynced"), "{texts:?}");
+}
+
+/// (e) The snapshot is listed before its content is readable: the gap is
+/// retried (not held), the snapshot name stays wanted for the next cycle,
+/// and catch-up completes once it reads.
+#[tokio::test]
+async fn retired_stream_gap_waits_for_an_unreadable_snapshot_then_catches_up() {
+    let mut r = compacted_before_rotation().await;
+    let snap_key = r.w.keys(&format!("v1/{VAULT}/snap/dev-a/")).remove(0);
+    lock(&r.a.view.unreadable_keys).insert(snap_key.clone());
+    r.w.advance(1_000);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(rotation(&report).is_some(), "{report:?}");
+    assert!(report.notices.contains(&EngineNotice::StreamGap), "{report:?}");
+    assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{report:?}");
+    assert!(r.a.held_cursors().is_empty(), "{:?}", r.a.held_cursors());
+    // Still unreadable: still a gap, still not held.
+    r.w.advance(1_000);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(report.notices.contains(&EngineNotice::StreamGap), "{report:?}");
+    assert!(r.a.held_cursors().is_empty(), "{:?}", r.a.held_cursors());
+    // Readable now: the retried snapshot applies and the tail follows.
+    lock(&r.a.view.unreadable_keys).clear();
+    r.w.advance(1_000);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(!report.notices.contains(&EngineNotice::StreamGap), "{report:?}");
+    assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{report:?}");
+    let cursor = lock(&r.a.store).cursor(VAULT, "dev-a").unwrap().unwrap();
+    assert_eq!((cursor.state, cursor.applied_seq), (CursorState::Retired, 4));
+    assert!(r.a.quarantine().is_empty(), "{:?}", r.a.quarantine());
+    let mut devs = [&mut r.a, &mut r.a2];
+    quiesce(&r.w, &mut devs, 8).await;
+    assert_converged(&[&r.a, &r.a2]);
+}
+
+/// (f) The original reads the clone's snapshot while `dev-a` is still its
+/// own id (the frontier entry for an own id is skipped: no cursor), rotates
+/// only later, and must still bring the retired `dev-a` cursor up to the
+/// compacted frontier: the session's applied-snapshot set is forgotten by
+/// the rotation so the same snapshot applies again, now with a cursor to
+/// move (s7 seed 1592590337 after the compaction-clock fix: `B` stayed at
+/// `retired`/0 with three entities missing while every other device agreed).
+#[tokio::test]
+async fn retired_stream_snapshot_read_under_the_own_id_reapplies_after_rotation() {
+    let w = World::with_vault(true);
+    let dek = SecretKey::from_bytes([5; 32]);
+    let mut a = Dev::member("A", VAULT, "dev-a", &dek);
+    a.create_memo(&w, M, "base");
+    ok_cycle(&mut a, &w).await;
+    w.advance(1_000);
+    a.edit_memo(&w, M, "original 2");
+    ok_cycle(&mut a, &w).await;
+    assert_eq!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).len(), 2);
+    let dir = TempDir::new("sim3-own-id-snap");
+    let mut a2 = a.clone_into(&dir, "A'");
+    // The clone writes nothing: it only ages the shared segments past the
+    // compaction threshold and snapshots them away. The record still says
+    // what the original sealed, so the original has nothing to rotate on and
+    // reads the snapshot while `dev-a` is still its own id.
+    w.advance(MAX_SEGMENT_AGE_MS + 24 * 60 * 60 * 1000);
+    ok_cycle(&mut a2, &w).await;
+    assert!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).is_empty(), "the clone compacted the shared stream away");
+    assert_eq!(w.keys(&format!("v1/{VAULT}/snap/dev-a/")).len(), 1);
+    w.advance(1_000);
+    let report = ok_cycle(&mut a, &w).await;
+    assert!(rotation(&report).is_none(), "nothing under dev-a to rotate on yet: {report:?}");
+    assert!(lock(&a.store).cursor(VAULT, "dev-a").unwrap().is_none(), "an own id never gets a cursor");
+    assert_eq!(a.memo_text(M).as_deref(), Some("original 2"));
+    // Now the clone writes under `dev-a`: foreign content past what the
+    // original sealed, so the original rotates on its next cycle.
+    w.advance(1_000);
+    a2.edit_memo(&w, M, "clone 3");
+    ok_cycle(&mut a2, &w).await;
+    assert_eq!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).len(), 1);
+    w.advance(1_000);
+    let report = ok_cycle(&mut a, &w).await;
+    assert!(rotation(&report).is_some(), "{report:?}");
+    for _ in 0..3 {
+        w.advance(1_000);
+        let report = ok_cycle(&mut a, &w).await;
+        assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{report:?}");
+    }
+    let cursor = lock(&a.store).cursor(VAULT, "dev-a").unwrap().unwrap();
+    assert_eq!((cursor.state, cursor.applied_seq), (CursorState::Retired, 3), "1..2 (shared, via the snapshot) + clone 3");
+    assert_eq!(a.memo_text(M).as_deref(), Some("clone 3"));
+    assert!(a.held_cursors().is_empty(), "{:?}", a.held_cursors());
+    assert!(a.quarantine().is_empty(), "{:?}", a.quarantine());
+    let mut devs = [&mut a, &mut a2];
+    quiesce(&w, &mut devs, 8).await;
+    assert_converged(&[&a, &a2]);
+}
 // ===========================================================================
 // 2. AC 16c
 // ===========================================================================
@@ -1789,4 +1958,159 @@ fn perf_a12_migration_import_and_chat_load_with_10k_messages() {
         millis(verify)
     );
     println!("G10-PERF sync_chat_load messages=10000 ms_median={:.1} ms_max={:.1}", loads[loads.len() / 2], loads[loads.len() - 1]);
+}
+
+// ===========================================================================
+// --- redteam_g10 ---
+// Surfaces 3 (rotate clears `applied_snaps`) and 5 (compaction by the cycle
+// clock) at engine level; the store-level cases live in redteam_g10_tests.rs.
+// ===========================================================================
+
+/// `(device, applied_seq)` of every cursor this device holds.
+fn cursor_seqs(dev: &Dev) -> BTreeMap<String, u64> {
+    let store = lock(&dev.store);
+    let mut stmt = store.conn().prepare("SELECT remote_device_id, applied_seq FROM cursors WHERE vault_id = ?1").unwrap();
+    stmt.query_map([&dev.vault], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64))).unwrap().map(Result::unwrap).collect()
+}
+
+fn assert_cursors_monotone(label: &str, before: &BTreeMap<String, u64>, after: &BTreeMap<String, u64>) {
+    for (device, seq) in before {
+        let now = after.get(device).copied().unwrap_or(0);
+        assert!(now >= *seq, "{label}: cursor {device} moved back {seq} -> {now}; before {before:?}, after {after:?}");
+    }
+}
+
+/// (3) After the rotation forgets the session's applied-snapshot set, the
+/// snapshot is applied once more (one extra download) and then remembered
+/// again: later cycles neither re-download it nor report a change, and no
+/// cursor ever moves backwards while the same snapshot is read again.
+#[tokio::test]
+async fn redteam_g10_rotation_reapplies_snapshots_once_then_remembers_them() {
+    let mut r = compacted_before_rotation().await;
+    let snap_key = r.w.keys(&format!("v1/{VAULT}/snap/dev-a/")).remove(0);
+    let snap_bytes: usize = r.w.fake.copies(&snap_key).iter().map(Vec::len).sum();
+    assert!(snap_bytes > 0);
+    let downloaded = |d: &Dev| d.stats.snapshot().download_bytes as usize;
+
+    r.w.advance(1_000);
+    let before = cursor_seqs(&r.a);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(rotation(&report).is_some(), "{report:?}");
+    assert_cursors_monotone("rotation cycle", &before, &cursor_seqs(&r.a));
+    let mut last = downloaded(&r.a);
+    let mut deltas = Vec::new();
+    let mut changed = Vec::new();
+    for i in 0..4 {
+        r.w.advance(1_000);
+        let before = cursor_seqs(&r.a);
+        let report = ok_cycle(&mut r.a, &r.w).await;
+        assert!(!report.notices.contains(&EngineNotice::StreamHeld), "cycle {i}: {report:?}");
+        assert_cursors_monotone(&format!("cycle {i}"), &before, &cursor_seqs(&r.a));
+        let now = downloaded(&r.a);
+        deltas.push(now - last);
+        changed.push(report.changed);
+        last = now;
+    }
+    // The retired `dev-a` stream is relisted in full every cycle (G3), so a
+    // constant per-cycle download remains; the snapshot must not be part of
+    // it after the cycle that re-applied it.
+    let steady = deltas[deltas.len() - 1];
+    assert_eq!(deltas[deltas.len() - 2], steady, "steady state after the re-apply: {deltas:?}");
+    assert!(steady < snap_bytes, "the snapshot is not re-downloaded every cycle: deltas {deltas:?}, snapshot {snap_bytes}");
+    assert!(
+        deltas.iter().filter(|d| **d >= snap_bytes).count() <= 1,
+        "the snapshot is re-fetched at most once after the rotation: {deltas:?} (snapshot {snap_bytes} bytes)"
+    );
+    assert!(!changed[changed.len() - 1] && !changed[changed.len() - 2], "no projection change once settled: {changed:?}");
+    let cursor = lock(&r.a.store).cursor(VAULT, "dev-a").unwrap().unwrap();
+    assert_eq!((cursor.state, cursor.applied_seq), (CursorState::Retired, 4));
+    let mut devs = [&mut r.a, &mut r.a2];
+    quiesce(&r.w, &mut devs, 8).await;
+    assert_converged(&[&r.a, &r.a2]);
+}
+
+/// (3b) Two snapshots in play, the older read again after the newer one:
+/// the clone compacts a second time after the original rotated, a third
+/// device joins late and reads both, and three cycles later every cursor on
+/// every device is where it was or further.
+#[tokio::test]
+async fn redteam_g10_older_snapshot_after_a_newer_one_never_moves_a_cursor_back() {
+    let mut r = compacted_before_rotation().await;
+    r.w.advance(1_000);
+    let report = ok_cycle(&mut r.a, &r.w).await;
+    assert!(rotation(&report).is_some(), "{report:?}");
+    {
+        let mut devs = [&mut r.a, &mut r.a2];
+        quiesce(&r.w, &mut devs, 8).await;
+    }
+    // The clone ages its own stream past the threshold and compacts again:
+    // a second, newer snapshot (under the clone's id) next to the old one.
+    r.w.advance(1_000);
+    r.a2.edit_memo(&r.w, M, "clone 4");
+    ok_cycle(&mut r.a2, &r.w).await;
+    r.w.advance(MAX_SEGMENT_AGE_MS + 24 * 60 * 60 * 1000);
+    ok_cycle(&mut r.a2, &r.w).await;
+    let snaps = r.w.keys(&format!("v1/{VAULT}/snap/"));
+    assert!(snaps.len() >= 2, "{snaps:?}");
+    // A late joiner reads every snapshot (BTreeSet key order: whichever is
+    // "older" by name comes first or second) and then the tail.
+    let mut c = Dev::member("C", VAULT, "dev-c", &r.dek);
+    let mut seqs: Vec<BTreeMap<String, u64>> = Vec::new();
+    for dev in [&r.a, &r.a2, &c] {
+        seqs.push(cursor_seqs(dev));
+    }
+    for round in 0..3 {
+        for (i, dev) in [&mut r.a, &mut r.a2, &mut c].into_iter().enumerate() {
+            r.w.advance(1_000);
+            let report = ok_cycle(dev, &r.w).await;
+            assert!(!report.notices.contains(&EngineNotice::StreamHeld), "{} round {round}: {report:?}", dev.label);
+            let now = cursor_seqs(dev);
+            assert_cursors_monotone(&format!("{} round {round}", dev.label), &seqs[i], &now);
+            seqs[i] = now;
+        }
+    }
+    let mut devs = [&mut r.a, &mut r.a2, &mut c];
+    quiesce(&r.w, &mut devs, 10).await;
+    assert_converged(&[&r.a, &r.a2, &c]);
+    assert_eq!(c.memo_text(M).as_deref(), Some("clone 4"));
+    assert!(c.quarantine().is_empty(), "{:?}", c.quarantine());
+}
+
+/// (5) The simulator's cycle clock sits far behind the wall clock. A
+/// segment sealed by the engine is stamped with the cycle clock, so the
+/// 30-day trigger is not due until the cycle clock itself advances by
+/// `MAX_SEGMENT_AGE_MS` — and then compaction really runs.
+#[tokio::test]
+async fn redteam_g10_compaction_waits_for_the_cycle_clock_not_the_wall_clock() {
+    let w = World::with_vault(true);
+    // 400 days behind the wall clock.
+    let far_behind = now_ms() - 400 * 24 * 60 * 60 * 1000;
+    w.now.store(far_behind, Ordering::SeqCst);
+    let dek = SecretKey::from_bytes([6; 32]);
+    let mut a = Dev::member("A", VAULT, "dev-a", &dek);
+    a.create_memo(&w, M, "base");
+    let report = ok_cycle(&mut a, &w).await;
+    assert_eq!(report.uploaded_segments, 1, "{report:?}");
+    {
+        let store = lock(&a.store);
+        let pending = store.pending_segments(VAULT, "dev-a").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].2, far_behind, "created_at is the cycle clock, not the wall clock");
+        assert!(!crate::sync::compaction::compaction_due(&store, VAULT, w.now()).unwrap());
+        // The trap the fix removes: judged by the wall clock it would be due now.
+        assert!(crate::sync::compaction::compaction_due(&store, VAULT, now_ms()).unwrap());
+    }
+    // One ms short of the threshold on the cycle clock: still not due, no snapshot.
+    w.advance(MAX_SEGMENT_AGE_MS - 1);
+    let report = ok_cycle(&mut a, &w).await;
+    assert_eq!(report.uploaded_segments, 0, "{report:?}");
+    assert!(!crate::sync::compaction::compaction_due(&lock(&a.store), VAULT, w.now()).unwrap());
+    assert!(w.keys(&format!("v1/{VAULT}/snap/")).is_empty(), "not due yet");
+    assert_eq!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).len(), 1);
+    // At the threshold: due, and the cycle compacts.
+    w.advance(1);
+    assert!(crate::sync::compaction::compaction_due(&lock(&a.store), VAULT, w.now()).unwrap());
+    let report = ok_cycle(&mut a, &w).await;
+    assert_eq!(w.keys(&format!("v1/{VAULT}/snap/dev-a/")).len(), 1, "{report:?}");
+    assert!(w.keys(&format!("v1/{VAULT}/log/dev-a/")).is_empty(), "the aged segment is compacted away");
 }

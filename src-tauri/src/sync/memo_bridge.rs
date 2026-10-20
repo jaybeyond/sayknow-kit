@@ -121,7 +121,8 @@ pub(crate) fn memo_ops(
     ops
 }
 
-/// The store-backed sink: one `insert_local_batch` transaction per call.
+/// The store-backed sink: one `plan_local_batch` transaction per call (the
+/// projection is loaded once, to plan the ops and to re-project after them).
 pub(crate) struct StoreMemoSink {
     pub(crate) store: Arc<Mutex<Store>>,
     pub(crate) vault: String,
@@ -146,47 +147,47 @@ impl StoreMemoSink {
         }
     }
 
-    fn insert(&self, store: &mut Store, bodies: Vec<OpBody>) -> Result<(), String> {
-        if bodies.is_empty() {
-            return Ok(());
-        }
-        store.insert_local_batch(&self.vault, bodies, Vec::new(), Vec::new()).map(|_| ()).map_err(|e| e.to_string())
+    /// Plans the bodies against the current projection and inserts them in
+    /// the same transaction; `T` is whatever the planner wants back.
+    fn plan<T>(&self, store: &mut Store, plan: impl FnOnce(&Projection) -> (Vec<OpBody>, T)) -> Result<T, String> {
+        store.plan_local_batch(&self.vault, plan).map(|(_, out)| out).map_err(|e| e.to_string())
     }
 }
 
 impl MemoSink for StoreMemoSink {
     fn changed(&self, before: Option<&ClipEntry>, after: Option<&ClipEntry>) -> Result<Option<String>, String> {
-        let Some(entry_id) = after.or(before).filter(|e| e.kind == EntryKind::Memo).map(|e| e.id.clone()) else {
+        let Some(entry) = after.or(before).filter(|e| e.kind == EntryKind::Memo).map(|e| e.id.clone()) else {
             return Ok(None);
         };
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let projection = store.projection(&self.vault).map_err(|e| e.to_string())?;
-        let resolved = resolve_memo_id(&projection, &entry_id);
-        let state = projection.entities.get(&(Kind::Memo, resolved.clone()));
-        let rebind = |e: Option<&ClipEntry>, id: &str| {
-            e.filter(|e| e.id == entry_id).map(|e| ClipEntry { id: id.to_owned(), ..e.clone() })
-        };
-        let after = rebind(after, &resolved);
-        let (entity_id, ops) = match (state, &after) {
-            // The entity was deleted (remotely, before the mirror ran) and the
-            // user still holds the memo: recreate it under a fresh id.
-            (Some(EntityState::Deleted), Some(after)) if after.kind == EntryKind::Memo => {
-                let fresh = uuid::Uuid::now_v7().hyphenated().to_string();
-                let after = ClipEntry { id: fresh.clone(), ..after.clone() };
-                (fresh.clone(), memo_ops(&fresh, None, None, Some(&after)))
-            }
-            _ => {
-                let head = match state {
-                    Some(EntityState::Memo(m)) => Some(m),
-                    _ => None,
-                };
-                let before = rebind(before, &resolved);
-                (resolved.clone(), memo_ops(&resolved, head, before.as_ref(), after.as_ref()))
-            }
-        };
-        let bodies = ops.into_iter().map(|(op_type, payload)| self.body(&entity_id, op_type, payload)).collect();
-        self.insert(&mut store, bodies)?;
-        Ok((after.is_some() && entity_id != entry_id).then_some(entity_id))
+        self.plan(&mut store, move |projection| {
+            let resolved = resolve_memo_id(projection, &entry);
+            let state = projection.entities.get(&(Kind::Memo, resolved.clone()));
+            let rebind = |e: Option<&ClipEntry>, id: &str| {
+                e.filter(|e| e.id == entry).map(|e| ClipEntry { id: id.to_owned(), ..e.clone() })
+            };
+            let after = rebind(after, &resolved);
+            let (entity_id, ops) = match (state, &after) {
+                // The entity was deleted (remotely, before the mirror ran) and
+                // the user still holds the memo: recreate it under a fresh id.
+                (Some(EntityState::Deleted), Some(after)) if after.kind == EntryKind::Memo => {
+                    let fresh = uuid::Uuid::now_v7().hyphenated().to_string();
+                    let after = ClipEntry { id: fresh.clone(), ..after.clone() };
+                    (fresh.clone(), memo_ops(&fresh, None, None, Some(&after)))
+                }
+                _ => {
+                    let head = match state {
+                        Some(EntityState::Memo(m)) => Some(m),
+                        _ => None,
+                    };
+                    let before = rebind(before, &resolved);
+                    (resolved.clone(), memo_ops(&resolved, head, before.as_ref(), after.as_ref()))
+                }
+            };
+            let bodies = ops.into_iter().map(|(op_type, payload)| self.body(&entity_id, op_type, payload)).collect();
+            let rebound = (after.is_some() && entity_id != entry).then_some(entity_id);
+            (bodies, rebound)
+        })
     }
 
     fn delete_all(&self, ids: &[String]) -> Result<(), String> {
@@ -194,10 +195,10 @@ impl MemoSink for StoreMemoSink {
             return Ok(());
         }
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let projection = store.projection(&self.vault).map_err(|e| e.to_string())?;
-        let unique: BTreeSet<String> = ids.iter().map(|id| resolve_memo_id(&projection, id)).collect();
-        let bodies = unique.iter().map(|id| self.body(id, "delete", json!({}))).collect();
-        self.insert(&mut store, bodies)
+        self.plan(&mut store, |projection| {
+            let unique: BTreeSet<String> = ids.iter().map(|id| resolve_memo_id(projection, id)).collect();
+            (unique.iter().map(|id| self.body(id, "delete", json!({}))).collect(), ())
+        })
     }
 }
 
