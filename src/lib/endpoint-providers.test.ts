@@ -10,6 +10,7 @@ import {
   endpointPreset,
   fetchModels,
   isChatModel,
+  DEMONROUTE_BASE,
   NVIDIA_BASE,
   PROVIDER_PRESETS,
   ZAI_BASE,
@@ -46,8 +47,14 @@ describe("provider presets", () => {
       requiresKey: true,
       keyAccount: "zai_api_key",
     })
+    expect(PROVIDER_PRESETS.demonroute).toMatchObject({
+      baseURL: DEMONROUTE_BASE,
+      requiresKey: true,
+      keyAccount: "demonroute_api_key",
+    })
     expect(PROVIDER_PRESETS.nvidia.defaultModel).toBeTruthy()
     expect(PROVIDER_PRESETS.zai.defaultModel).toBeTruthy()
+    expect(PROVIDER_PRESETS.demonroute.defaultModel).toBeTruthy()
     // OpenRouter / OCP / Custom keep sharing the original key.
     expect(PROVIDER_PRESETS.openrouter.keyAccount).toBeUndefined()
     expect(PROVIDER_PRESETS.custom.keyAccount).toBeUndefined()
@@ -55,6 +62,7 @@ describe("provider presets", () => {
 
   it("only recognises endpoint ids as endpoint presets", () => {
     expect(endpointPreset("zai")?.label).toBe("Z.AI")
+    expect(endpointPreset("demonroute")?.label).toBe("Demon Route")
     expect(endpointPreset("oauth:anthropic")).toBeNull()
     expect(endpointPreset("toString")).toBeNull()
   })
