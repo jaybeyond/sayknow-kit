@@ -39,7 +39,7 @@ type Props = {
   compact?: boolean
 }
 
-const PROVIDER_ORDER: EndpointProviderId[] = ["openrouter", "nvidia", "zai", "custom"]
+const PROVIDER_ORDER: EndpointProviderId[] = ["openrouter", "nvidia", "zai", "demonroute", "custom"]
 
 /** z.ai bills the same key two ways, each on its own path. */
 const ZAI_PLANS = [

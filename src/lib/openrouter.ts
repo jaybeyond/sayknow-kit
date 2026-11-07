@@ -16,6 +16,7 @@ export const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1"
 export const ZAI_BASE = "https://api.z.ai/api/paas/v4"
 /** z.ai GLM Coding Plan: same key, subscription billing, its own path. */
 export const ZAI_CODING_BASE = "https://api.z.ai/api/coding/paas/v4"
+export const DEMONROUTE_BASE = "https://api.demonroute.com/v1"
 
 /**
  * Which backend answers a request.
@@ -50,7 +51,7 @@ export function isOAuthProvider(value: string): value is OAuthProviderRef {
  * OAuth providers are intentionally absent: they have no user-editable base
  * URL and no key field, so they are described by `OAUTH_PROVIDERS` instead.
  */
-export type EndpointProviderId = "openrouter" | "nvidia" | "zai" | "ocp" | "custom"
+export type EndpointProviderId = "openrouter" | "nvidia" | "zai" | "demonroute" | "ocp" | "custom"
 
 export type ProviderPreset = {
   label: string
@@ -101,6 +102,16 @@ export const PROVIDER_PRESETS: Record<EndpointProviderId, ProviderPreset> = {
     keyAccount: "zai_api_key",
     keyPlaceholder: "API key",
     keyUrl: "https://z.ai/manage-apikey/apikey-list",
+  },
+  demonroute: {
+    label: "Demon Route",
+    baseURL: DEMONROUTE_BASE,
+    description: "1,700+ uncensored open-weight models (roleplay, abliterated, free lane)",
+    defaultModel: "dphn/Dolphin-Mistral-24B-Venice-Edition",
+    requiresKey: true,
+    keyAccount: "demonroute_api_key",
+    keyPlaceholder: "sk-...",
+    keyUrl: "https://demonroute.com",
   },
   ocp: {
     label: "OCP (Claude Pro/Max — fast)",

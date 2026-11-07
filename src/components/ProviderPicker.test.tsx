@@ -7,7 +7,7 @@ vi.mock("@/hooks/useProviderProbe", () => ({ useProviderProbe: () => "idle" }))
 vi.mock("@/components/OAuthProviderCard", () => ({ OAuthProviderCard: () => null }))
 
 import { ProviderPicker } from "./ProviderPicker"
-import { NVIDIA_BASE, OPENROUTER_BASE, ZAI_BASE, ZAI_CODING_BASE } from "@/lib/openrouter"
+import { DEMONROUTE_BASE, NVIDIA_BASE, OPENROUTER_BASE, ZAI_BASE, ZAI_CODING_BASE } from "@/lib/openrouter"
 
 afterEach(() => cleanup())
 
@@ -52,5 +52,16 @@ describe("ProviderPicker", () => {
   it("shows the plan switch only for z.ai", () => {
     mount("openrouter", OPENROUTER_BASE)
     expect(screen.queryByRole("radiogroup")).toBeNull()
+  })
+
+  it("offers Demon Route and switches to its endpoint and default model", () => {
+    const onChange = mount("openrouter", OPENROUTER_BASE)
+    fireEvent.click(screen.getByText("provider.preset.demonroute"))
+    expect(onChange).toHaveBeenLastCalledWith({
+      provider: "demonroute",
+      baseURL: DEMONROUTE_BASE,
+      model: "dphn/Dolphin-Mistral-24B-Venice-Edition",
+      fallbackModel: "",
+    })
   })
 })
